@@ -1,0 +1,40 @@
+name: Backend
+
+on:
+  push:
+    paths: ['backend/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dejavu
+          POSTGRES_PASSWORD: dejavu
+          POSTGRES_DB: dejavu
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dejavu" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dejavu:dejavu@localhost:5432/dejavu
+      JWT_ACCESS_SECRET: ci-only-secret-that-is-long-enough-1234567890
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:e2e

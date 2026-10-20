@@ -21,8 +21,11 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  // NestJS 11 runs on CommonJS.
+  moduleFormat        = "cjs"
+  importFileExtension = ""
 }
 
 datasource db {

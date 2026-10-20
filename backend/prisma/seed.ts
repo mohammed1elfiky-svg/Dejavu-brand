@@ -1,7 +1,7 @@
 import "dotenv/config";
-import { randomBytes, scryptSync } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { AccountType, NormalBalance, PrismaClient } from "../src/generated/prisma/client";
+import { hashPasswordSync as hashPassword } from "../src/auth/password";
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
@@ -123,11 +123,6 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
     permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales"],
   },
 };
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  return `scrypt$${salt}$${scryptSync(password, salt, 64).toString("hex")}`;
-}
 
 const ymd = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d));
 

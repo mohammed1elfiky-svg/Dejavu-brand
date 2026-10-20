@@ -19,7 +19,8 @@ backend/
     schema.prisma        هيكل قاعدة البيانات الكامل
     migrations/          الـ migrations (الجداول + قواعد السلامة المحاسبية)
     seed.ts              دليل الحسابات، الأدوار والصلاحيات، السنة المالية، الإعدادات
-  prisma.config.ts
+  src/                 الـ API (NestJS)
+  test/                اختبارات e2e
 android/                 (المرحلة القادمة) تطبيق العملاء + تطبيق الإدارة
 docs/
 docker-compose.yml       PostgreSQL + Redis للتطوير
@@ -32,10 +33,10 @@ docker compose up -d                # PostgreSQL 16 + Redis
 cd backend
 cp .env.example .env
 npm install
-npx prisma migrate deploy           # إنشاء الجداول + Triggers + Views
-npx prisma generate
+npm run db:deploy                   # إنشاء الجداول + Triggers + Views
 npm run db:seed                     # البيانات الأساسية
-npm run db:studio                   # (اختياري) استعراض البيانات
+npm run start:dev                   # http://localhost:3000/api/v1 — التوثيق على /docs
+npm run test:e2e                    # الاختبارات الشاملة
 ```
 
 المستخدم الافتراضي للإدارة: `admin@dejavu.local` / `ChangeMe!2026`
@@ -44,7 +45,8 @@ npm run db:studio                   # (اختياري) استعراض البيا
 ## خارطة الطريق
 
 - [x] **المرحلة 1**: التقنيات + هيكلية قاعدة البيانات + دليل الحسابات + قواعد السلامة المحاسبية
-- [ ] **المرحلة 2**: الـ Backend API (المصادقة، الكتالوج، الطلبات، المخزون، محرك الترحيل المحاسبي، التقارير)
+- [x] **المرحلة 2 (أ)**: الـ Backend API — المصادقة والصلاحيات، المنتجات والمخزون، الطلبات والمبيعات مع القيود المحاسبية التلقائية ([التفاصيل](backend/README.md))
+- [ ] **المرحلة 2 (ب)**: المشتريات والموردون، المصروفات، مرتجعات المبيعات، تسوية شركات الشحن، الجرد، التقارير (قائمة الدخل، الميزانية، المبيعات)
 - [ ] **المرحلة 3**: تطبيق العملاء (أندرويد)
 - [ ] **المرحلة 4**: تطبيق الإدارة (أندرويد)
 - [ ] **المرحلة 5**: بوابة الدفع، الإشعارات، النشر و CI/CD

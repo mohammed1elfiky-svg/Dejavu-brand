@@ -1,0 +1,440 @@
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { Order, OrderStatus, PaymentMethod, PaymentStatus, Prisma, ShipmentStatus, StockMovementType } from '../generated/prisma/client';
+import { LedgerService } from '../accounting/ledger.service';
+import { AuditService } from '../common/audit.service';
+import { paginated } from '../common/dto/pagination.dto';
+import { SequenceService } from '../common/sequence.service';
+import { parseDateOnly } from '../common/utils/dates';
+import { dec, money, sum } from '../common/utils/money';
+import { StockService } from '../inventory/stock.service';
+import { PrismaService, Tx } from '../prisma/prisma.service';
+import { CartService } from './cart.service';
+import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
+import { PaymentsService } from './payments.service';
+import { revenueSplit } from './pricing';
+import { getSetting } from './settings';
+
+const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  PENDING: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  CONFIRMED: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+  PROCESSING: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+  SHIPPED: [OrderStatus.DELIVERED],
+  DELIVERED: [OrderStatus.COMPLETED],
+  COMPLETED: [],
+  CANCELLED: [],
+  // Returns are handled by the sales-returns flow.
+  RETURNED: [],
+};
+
+const CUSTOMER_CANCELLABLE: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
+
+/** What the customer app may see: no costs, no internal notes. */
+const customerOrderSelect = {
+  id: true,
+  number: true,
+  status: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  shippingAddress: true,
+  subtotal: true,
+  discountTotal: true,
+  shippingFee: true,
+  taxTotal: true,
+  grandTotal: true,
+  amountPaid: true,
+  customerNote: true,
+  placedAt: true,
+  confirmedAt: true,
+  deliveredAt: true,
+  cancelledAt: true,
+  cancelReason: true,
+  coupon: { select: { code: true } },
+  items: {
+    select: {
+      id: true,
+      variantId: true,
+      productName: true,
+      sku: true,
+      size: true,
+      color: true,
+      quantity: true,
+      unitPrice: true,
+      discount: true,
+      taxAmount: true,
+      lineTotal: true,
+      returnedQty: true,
+    },
+  },
+  statusHistory: { orderBy: { createdAt: 'asc' }, select: { toStatus: true, createdAt: true } },
+  shipments: { select: { carrier: true, trackingNumber: true, status: true, shippedAt: true, deliveredAt: true } },
+} satisfies Prisma.OrderSelect;
+
+const adminOrderInclude = {
+  customer: { select: { id: true, code: true, name: true, phone: true } },
+  coupon: { select: { id: true, code: true } },
+  items: true,
+  payments: { orderBy: { createdAt: 'asc' } },
+  shipments: true,
+  statusHistory: { orderBy: { createdAt: 'asc' }, include: { changedBy: { select: { id: true, name: true } } } },
+} satisfies Prisma.OrderInclude;
+
+@Injectable()
+export class OrdersService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cart: CartService,
+    private readonly stock: StockService,
+    private readonly ledger: LedgerService,
+    private readonly payments: PaymentsService,
+    private readonly sequences: SequenceService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // ------------------------------------------------------------- checkout ---
+
+  async checkout(customerId: string, dto: CheckoutDto) {
+    const orderId = await this.prisma.$transaction(async (tx) => {
+      // Serialise checkouts of the same cart (e.g. a double-tapped "Place order").
+      await tx.$queryRaw`SELECT id FROM carts WHERE customer_id = ${customerId}::uuid FOR UPDATE`;
+      const quote = await this.cart.quote(tx, customerId, dto.addressId);
+      this.cart.assertCheckoutable(quote);
+
+      const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true } });
+      if (!warehouse) throw new UnprocessableEntityException('No default warehouse is configured');
+      const address = await tx.customerAddress.findUniqueOrThrow({ where: { id: dto.addressId } });
+
+      // Reserve in a stable order; the conditional UPDATE is the real oversell guard.
+      for (const line of [...quote.lines].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
+        await this.stock.reserve(tx, line.variantId, warehouse.id, line.quantity);
+      }
+
+      if (quote.coupon) {
+        const claimed = await tx.$executeRaw`
+          UPDATE coupons SET used_count = used_count + 1
+          WHERE id = ${quote.coupon.id}::uuid AND (usage_limit IS NULL OR used_count < usage_limit)`;
+        if (!claimed) throw new UnprocessableEntityException('Coupon usage limit reached');
+      }
+
+      const p = quote.pricing;
+      const order = await tx.order.create({
+        data: {
+          number: await this.sequences.next(tx, 'SO'),
+          customerId,
+          addressId: address.id,
+          warehouseId: warehouse.id,
+          couponId: quote.coupon?.id,
+          paymentMethod: dto.paymentMethod,
+          shippingAddress: snapshotAddress(address),
+          subtotal: p.subtotal,
+          discountTotal: p.discountTotal,
+          shippingFee: p.shippingFee,
+          taxTotal: p.taxTotal,
+          grandTotal: p.grandTotal,
+          customerNote: dto.customerNote,
+          items: {
+            create: quote.lines.map((l, i) => ({
+              variantId: l.variantId,
+              productName: l.productName,
+              sku: l.sku,
+              size: l.size,
+              color: l.color,
+              quantity: l.quantity,
+              unitPrice: p.lines[i].unitPrice,
+              discount: p.lines[i].discount,
+              taxRate: p.lines[i].taxRate,
+              taxAmount: p.lines[i].taxAmount,
+              lineTotal: p.lines[i].lineTotal,
+              // Provisional; replaced with the actual issue cost when shipped.
+              unitCost: l.avgCost,
+            })),
+          },
+          statusHistory: { create: { toStatus: OrderStatus.PENDING } },
+        },
+      });
+
+      if (quote.coupon) {
+        await tx.couponUsage.create({ data: { couponId: quote.coupon.id, customerId, orderId: order.id } });
+      }
+      const cart = await tx.cart.findUniqueOrThrow({ where: { customerId } });
+      await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+      await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
+      return order.id;
+    });
+    return this.customerOrderById(customerId, orderId);
+  }
+
+  // -------------------------------------------------------- customer side ---
+
+  async customerOrders(customerId: string, q: { page: number; pageSize: number; skip: number }) {
+    const where = { customerId };
+    const [items, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          paymentStatus: true,
+          grandTotal: true,
+          placedAt: true,
+          _count: { select: { items: true } },
+        },
+        orderBy: { placedAt: 'desc' },
+        skip: q.skip,
+        take: q.pageSize,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+    return paginated(items, total, q);
+  }
+
+  async customerOrder(customerId: string, number: string) {
+    const order = await this.prisma.order.findFirst({ where: { number, customerId }, select: customerOrderSelect });
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
+
+  private async customerOrderById(customerId: string, id: string) {
+    return this.prisma.order.findFirstOrThrow({ where: { id, customerId }, select: customerOrderSelect });
+  }
+
+  async customerCancel(customerId: string, number: string, reason: string) {
+    const found = await this.prisma.order.findFirst({ where: { number, customerId }, select: { id: true } });
+    if (!found) throw new NotFoundException('Order not found');
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, found.id);
+      if (!CUSTOMER_CANCELLABLE.includes(order.status)) {
+        throw new ForbiddenException('This order can no longer be cancelled; please contact support');
+      }
+      await this.cancel(tx, order, reason, null);
+    });
+    return this.customerOrder(customerId, number);
+  }
+
+  // ----------------------------------------------------------- admin side ---
+
+  async adminList(q: AdminOrdersQueryDto) {
+    const contains = q.q ? { contains: q.q, mode: 'insensitive' as const } : undefined;
+    const where: Prisma.OrderWhereInput = {
+      status: q.status,
+      paymentStatus: q.paymentStatus,
+      placedAt: {
+        gte: q.from ? parseDateOnly(q.from) : undefined,
+        lt: q.to ? new Date(parseDateOnly(q.to).getTime() + 86_400_000) : undefined,
+      },
+      ...(contains && {
+        OR: [{ number: contains }, { customer: { OR: [{ name: contains }, { phone: contains }] } }],
+      }),
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        include: { customer: { select: { id: true, name: true, phone: true } }, _count: { select: { items: true } } },
+        orderBy: { placedAt: 'desc' },
+        skip: q.skip,
+        take: q.pageSize,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+    return paginated(items, total, q);
+  }
+
+  async adminGet(id: string) {
+    const order = await this.prisma.order.findUnique({ where: { id }, include: adminOrderInclude });
+    if (!order) throw new NotFoundException('Order not found');
+    const journalEntries = await this.prisma.journalEntry.findMany({
+      where: { sourceId: { in: [order.id, ...order.payments.map((p) => p.id)] } },
+      include: { lines: { orderBy: { lineNo: 'asc' }, include: { account: { select: { code: true, nameAr: true, nameEn: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    const costOfGoods = money(sum(order.items.map((i) => dec(i.unitCost).mul(i.quantity))));
+    const netRevenue = dec(order.grandTotal).sub(order.taxTotal);
+    return {
+      ...order,
+      balanceDue: money(dec(order.grandTotal).sub(order.amountPaid)),
+      profit: { netRevenue, costOfGoods, grossProfit: netRevenue.sub(costOfGoods) },
+      journalEntries,
+    };
+  }
+
+  async changeStatus(id: string, dto: ChangeOrderStatusDto, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id);
+      if (!TRANSITIONS[order.status].includes(dto.status)) {
+        throw new UnprocessableEntityException(`Cannot change order from ${order.status} to ${dto.status}`);
+      }
+      switch (dto.status) {
+        case OrderStatus.CANCELLED:
+          return this.cancel(tx, order, dto.note ?? 'Cancelled by staff', userId);
+        case OrderStatus.SHIPPED:
+          return this.ship(tx, order, dto, userId);
+        case OrderStatus.DELIVERED:
+          return this.deliver(tx, order, dto.note, userId);
+        default:
+          return this.transition(tx, order, dto.status, dto.note, userId, {
+            confirmedAt: dto.status === OrderStatus.CONFIRMED ? new Date() : undefined,
+          });
+      }
+    });
+    return this.adminGet(id);
+  }
+
+  async recordPayment(id: string, dto: RecordPaymentDto, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id);
+      const { order: updated } = await this.payments.receive(tx, order, dto, userId);
+      await this.autoConfirm(tx, updated, userId);
+    });
+    return this.adminGet(id);
+  }
+
+  async refund(id: string, dto: RefundDto, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, id);
+      await this.payments.refund(tx, order, dto, userId);
+    });
+    return this.adminGet(id);
+  }
+
+  // ------------------------------------------------------ state handlers ---
+
+  private async transition(
+    tx: Tx,
+    order: Order,
+    to: OrderStatus,
+    note: string | undefined,
+    userId: string | null,
+    extra: Prisma.OrderUpdateInput = {},
+  ) {
+    await tx.order.update({ where: { id: order.id }, data: { status: to, ...extra } });
+    await tx.orderStatusHistory.create({
+      data: { orderId: order.id, fromStatus: order.status, toStatus: to, note, changedById: userId },
+    });
+    await this.audit.log(
+      { userId, action: 'UPDATE', entityType: 'Order', entityId: order.id, before: { status: order.status }, after: { status: to, note } },
+      tx,
+    );
+  }
+
+  /** Releases reserved stock and gives the coupon use back. Money stays as a customer advance until refunded. */
+  private async cancel(tx: Tx, order: Order, reason: string, userId: string | null) {
+    const items = await tx.orderItem.findMany({ where: { orderId: order.id }, orderBy: { variantId: 'asc' } });
+    for (const item of items) {
+      await this.stock.release(tx, item.variantId, order.warehouseId, item.quantity);
+    }
+    if (order.couponId) {
+      await tx.couponUsage.deleteMany({ where: { orderId: order.id } });
+      await tx.coupon.update({ where: { id: order.couponId }, data: { usedCount: { decrement: 1 } } });
+    }
+    await this.transition(tx, order, OrderStatus.CANCELLED, reason, userId, {
+      cancelledAt: new Date(),
+      cancelReason: reason,
+    });
+  }
+
+  /**
+   * Issues stock and recognises the sale:
+   *   Dr AR / Dr Sales discounts  —  Cr Sales / Cr VAT output / Cr Shipping income
+   *   Dr COGS                     —  Cr Inventory
+   *   Dr Customer advances        —  Cr AR          (for anything prepaid)
+   */
+  private async ship(tx: Tx, order: Order, dto: ChangeOrderStatusDto, userId: string) {
+    const items = await tx.orderItem.findMany({ where: { orderId: order.id }, orderBy: { variantId: 'asc' } });
+    const costs = [];
+    for (const item of items) {
+      const issued = await this.stock.stockOut(tx, {
+        type: StockMovementType.SALE,
+        variantId: item.variantId,
+        warehouseId: order.warehouseId,
+        quantity: item.quantity,
+        fromReserved: true,
+        sourceType: 'ORDER',
+        sourceId: order.id,
+        note: order.number,
+        userId,
+      });
+      await tx.orderItem.update({ where: { id: item.id }, data: { unitCost: issued.unitCost } });
+      costs.push(issued.value);
+    }
+    const cogs = sum(costs);
+    const r = revenueSplit({
+      grandTotal: dec(order.grandTotal),
+      discountTotal: dec(order.discountTotal),
+      shippingFee: dec(order.shippingFee),
+      taxTotal: dec(order.taxTotal),
+    });
+    const prepaid = dec(order.amountPaid);
+    const customerId = order.customerId;
+
+    await this.ledger.post(tx, {
+      description: `Sales invoice for order ${order.number}`,
+      sourceType: 'SALES_ORDER',
+      sourceId: order.id,
+      userId,
+      lines: [
+        { account: 'AR', debit: r.receivable, customerId },
+        { account: 'SALES_DISCOUNTS', debit: r.discounts },
+        { account: 'SALES', credit: r.sales },
+        { account: 'VAT_OUTPUT', credit: r.tax },
+        { account: 'SHIPPING_INCOME', credit: r.shipping },
+        { account: 'COGS', debit: cogs },
+        { account: 'INVENTORY', credit: cogs },
+        { account: 'CUSTOMER_ADVANCES', debit: prepaid, customerId },
+        { account: 'AR', credit: prepaid, customerId },
+      ],
+    });
+
+    const isCod = order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
+    await tx.shipment.create({
+      data: {
+        orderId: order.id,
+        carrier: dto.carrier ?? 'in-house',
+        trackingNumber: dto.trackingNumber,
+        status: ShipmentStatus.IN_TRANSIT,
+        codAmount: isCod ? money(dec(order.grandTotal).sub(prepaid)) : 0,
+        shippedAt: new Date(),
+      },
+    });
+    await this.transition(tx, order, OrderStatus.SHIPPED, dto.note, userId);
+  }
+
+  /** On delivery, cash collected by the courier becomes a receivable from the courier. */
+  private async deliver(tx: Tx, order: Order, note: string | undefined, userId: string) {
+    await tx.shipment.updateMany({
+      where: { orderId: order.id, status: { not: ShipmentStatus.DELIVERED } },
+      data: { status: ShipmentStatus.DELIVERED, deliveredAt: new Date() },
+    });
+    const due = dec(order.grandTotal).sub(order.amountPaid);
+    let current = order;
+    if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY && due.isPositive()) {
+      current = (await this.payments.receive(tx, order, { method: PaymentMethod.CASH_ON_DELIVERY, amount: due }, userId)).order;
+    }
+    await this.transition(tx, current, OrderStatus.DELIVERED, note, userId, { deliveredAt: new Date() });
+  }
+
+  private async autoConfirm(tx: Tx, order: Order, userId: string) {
+    if (order.status !== OrderStatus.PENDING || order.paymentStatus !== PaymentStatus.PAID) return;
+    if (!(await getSetting(tx, 'orders.autoConfirmPaid', true))) return;
+    await this.transition(tx, order, OrderStatus.CONFIRMED, 'Auto-confirmed after full payment', userId, {
+      confirmedAt: new Date(),
+    });
+  }
+
+  /** Serialises all state changes of one order. */
+  private async lockOrder(tx: Tx, id: string): Promise<Order> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM orders WHERE id = ${id}::uuid FOR UPDATE`;
+    if (!rows.length) throw new NotFoundException('Order not found');
+    return tx.order.findUniqueOrThrow({ where: { id } });
+  }
+}
+
+function snapshotAddress(a: Prisma.CustomerAddressGetPayload<object>) {
+  const { id: _id, customerId: _c, createdAt: _cr, updatedAt: _u, isDefault: _d, latitude, longitude, ...rest } = a;
+  return { ...rest, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null };
+}
+

@@ -1,0 +1,78 @@
+name: Android
+
+on:
+  push:
+    paths: ['android/**', 'backend/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'backend/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+jobs:
+  # Pure Kotlin modules (models, API client, repositories) against a real backend with demo data.
+  contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dejavu
+          POSTGRES_PASSWORD: dejavu
+          POSTGRES_DB: dejavu
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dejavu" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dejavu:dejavu@localhost:5432/dejavu
+      JWT_ACCESS_SECRET: ci-only-secret-that-is-long-enough-1234567890
+      AUTH_RATE_LIMIT: '1000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Start backend with demo data
+        working-directory: backend
+        run: |
+          npm ci
+          npm run db:deploy && npm run db:seed && npm run db:seed:demo
+          nohup node dist/main.js > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/v1/health && break; sleep 1; done
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Kotlin unit + contract tests
+        working-directory: android
+        env:
+          DEJAVU_API_URL: http://localhost:3000/api/v1/
+        run: ./gradlew -PjvmOnly=true test --console=plain
+      - name: Backend log
+        if: failure()
+        run: tail -100 backend/api.log
+
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Newest available versions (informational)
+        continue-on-error: true
+        run: |
+          for a in com/android/tools/build/gradle androidx/compose/compose-bom; do
+            echo "$a: $(curl -sL https://dl.google.com/dl/android/maven2/$a/maven-metadata.xml | grep -oE '<release>[^<]+' | sed 's/<release>//')"
+          done
+      - name: Build and unit-test the customer app
+        working-directory: android
+        run: ./gradlew :app-customer:assembleDebug :app-customer:testDebugUnitTest --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejavu-customer-debug-apk
+          path: android/app-customer/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

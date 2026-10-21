@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "D" monogram in brand gold, inside the adaptive-icon safe zone (66dp of 108dp). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#B08D57"
+        android:pathData="M38,32h16c13.3,0 22,8.7 22,22s-8.7,22 -22,22H38V32zM46,40v28h8c8.6,0 14,-5.4 14,-14s-5.4,-14 -14,-14h-8z" />
+</vector>

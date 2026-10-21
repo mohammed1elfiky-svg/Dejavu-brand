@@ -9,11 +9,13 @@ import {
 } from './admin-sales.controller';
 import { CartService } from './cart.service';
 import { CourierSettlementsService } from './courier-settlements.service';
-import { AdminExchangeRatesController, StoreCurrenciesController } from './currency.controller';
+import { AdminCurrenciesController, StoreCurrenciesController } from './currency.controller';
 import { CustomersService } from './customers.service';
 import { OrdersService } from './orders.service';
 import { OnlinePaymentsService } from './online-payments.service';
 import { PaymentsController } from './payments.controller';
+import { AdminPosController } from './pos.controller';
+import { PosService } from './pos.service';
 import { PaymentsService } from './payments.service';
 import { ReturnsService } from './returns.service';
 import {
@@ -36,13 +38,14 @@ import {
     StorePaymentMethodsController,
     PaymentsController,
     StoreCurrenciesController,
-    AdminExchangeRatesController,
+    AdminCurrenciesController,
     AdminOrdersController,
     AdminReturnsController,
     AdminCustomersController,
     AdminSalesSettingsController,
     AdminCourierSettlementsController,
+    AdminPosController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, ReturnsService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService],
 })
 export class SalesModule {}

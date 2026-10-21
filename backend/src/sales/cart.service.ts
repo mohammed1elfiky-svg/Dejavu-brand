@@ -4,6 +4,7 @@ import { dec } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { AddCartItemDto } from './dto/sales.dto';
 import { priceOrder, PricingResult } from './pricing';
+import { activePromotions, promotedPrice } from '../catalog/promotions';
 import { getSetting } from './settings';
 
 const MAX_LINE_QTY = 20;
@@ -31,7 +32,7 @@ const cartInclude = {
               basePrice: true,
               status: true,
               taxRate: { select: { rate: true, isActive: true } },
-              images: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
+              images: { orderBy: { sortOrder: 'asc' }, select: { url: true, color: true } },
             },
           },
         },
@@ -140,7 +141,7 @@ export class CartService {
         slug: v.product.slug,
         size: v.size,
         color: v.color,
-        imageUrl: v.product.images[0]?.url ?? null,
+        imageUrl: (v.product.images.find((img) => img.color && img.color === v.color) ?? v.product.images[0])?.url ?? null,
         quantity: item.quantity,
         availableQty: Math.max(availableQty, 0),
         avgCost: v.avgCost.toString(),
@@ -161,10 +162,11 @@ export class CartService {
     if (shippingProblem) problems.push(shippingProblem);
 
     const pricesIncludeTax = await getSetting(tx, 'tax.pricesIncludeTax', true);
+    const promos = await activePromotions(tx, items.map((i) => i.variant.product.id));
     const pricingLines = items.map((item) => ({
       variantId: item.variant.id,
       quantity: item.quantity,
-      unitPrice: item.variant.price ?? item.variant.product.basePrice,
+      unitPrice: promotedPrice(item.variant.price ?? item.variant.product.basePrice, promos.get(item.variant.product.id)),
       taxRate: item.variant.product.taxRate?.isActive ? item.variant.product.taxRate.rate : 0,
     }));
 

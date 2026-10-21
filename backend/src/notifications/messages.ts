@@ -1,11 +1,11 @@
-import { Currency, NotificationType, OrderStatus, PaymentMethod } from '../generated/prisma/client';
+import { NotificationType, OrderStatus, PaymentMethod } from '../generated/prisma/client';
 import { formatAmount } from '../common/currency.service';
 import { DecimalLike } from '../common/utils/money';
 import { NewNotification } from './notifications.service';
 
 /** Customer-facing texts (Arabic, gender-neutral). */
 
-type Priced = { number: string; currency: Currency; exchangeRate: DecimalLike };
+type Priced = { number: string; currency: string; exchangeRate: DecimalLike };
 
 /** A SAR amount shown in the order's own currency, at its locked rate. */
 export const orderAmount = (order: Pick<Priced, 'currency' | 'exchangeRate'>, amountSar: DecimalLike) =>

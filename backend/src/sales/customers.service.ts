@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
-import { normalizePhone } from '../auth/dto/auth.dto';
+import { normalizePhone, PHONE_REGEX } from '../auth/dto/auth.dto';
+import { SequenceService } from '../common/sequence.service';
 import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { dec, money } from '../common/utils/money';
@@ -20,6 +21,7 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly sequences: SequenceService,
   ) {}
 
   // ------------------------------------------------------------ addresses ---
@@ -76,6 +78,21 @@ export class CustomersService {
       this.prisma.customer.count({ where }),
     ]);
     return paginated(items, total, q);
+  }
+
+  /** A customer added by staff (no app login yet; they can register later with the same phone). */
+  async quickCreate(dto: { name: string; phone: string }, userId: string) {
+    if (!PHONE_REGEX.test(dto.phone)) throw new BadRequestException('Enter a valid Yemeni, Saudi or Egyptian mobile number');
+    const phone = normalizePhone(dto.phone);
+    if (await this.prisma.customer.findUnique({ where: { phone } })) throw new ConflictException('A customer with this phone already exists');
+    const customer = await this.prisma.$transaction(async (tx) =>
+      tx.customer.create({
+        data: { name: dto.name, phone, code: await this.sequences.next(tx, 'CUS', { year: 0 }) },
+        select: { id: true, code: true, name: true, phone: true, status: true, createdAt: true },
+      }),
+    );
+    await this.audit.log({ userId, action: 'CREATE', entityType: 'Customer', entityId: customer.id, after: customer });
+    return customer;
   }
 
   async getCustomer(id: string) {

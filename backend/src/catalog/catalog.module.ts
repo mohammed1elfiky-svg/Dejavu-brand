@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
-import { AdminCatalogController, StoreCatalogController } from './catalog.controller';
+import { AdminCatalogController, AdminPromotionsController, StoreCatalogController } from './catalog.controller';
 import { CatalogService } from './catalog.service';
+import { PromotionsService } from './promotions.service';
 
 @Module({
   imports: [InventoryModule],
-  controllers: [AdminCatalogController, StoreCatalogController],
-  providers: [CatalogService],
+  controllers: [AdminCatalogController, StoreCatalogController, AdminPromotionsController],
+  providers: [CatalogService, PromotionsService],
 })
 export class CatalogModule {}

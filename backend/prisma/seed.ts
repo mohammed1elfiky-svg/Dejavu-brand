@@ -30,8 +30,11 @@ const ACCOUNTS: AccountSeed[] = [
   { code: "1104", ar: "مستحقات بوابات الدفع", en: "Payment Gateway Clearing", parent: "11", cash: true, key: "GATEWAY_CLEARING" },
   { code: "1105", ar: "مستحقات شركات الشحن (تحصيل عند الاستلام)", en: "COD Receivable from Couriers", parent: "11", key: "COD_RECEIVABLE" },
   { code: "1110", ar: "العملاء (ذمم مدينة)", en: "Accounts Receivable", parent: "11", key: "AR" },
+  { code: "1111", ar: "حسابات العملاء الجارية (آجل ومحافظ)", en: "Customer Current Accounts", parent: "11", key: "CUSTOMER_ACCOUNTS" },
   { code: "1120", ar: "المخزون", en: "Inventory", parent: "11", key: "INVENTORY" },
   { code: "1130", ar: "ضريبة القيمة المضافة - مدخلات", en: "VAT Input", parent: "11", key: "VAT_INPUT" },
+  { code: "1140", ar: "صناديق الكاشير", en: "Cashier Drawers", parent: "11", group: true },
+  { code: "1150", ar: "الخزائن والحسابات البنكية", en: "Safes & Bank Accounts", parent: "11", group: true },
   { code: "12", ar: "الأصول الثابتة", en: "Fixed Assets", parent: "1", group: true },
   { code: "1201", ar: "الأثاث والتجهيزات", en: "Furniture & Fixtures", parent: "12" },
   { code: "1202", ar: "أجهزة ومعدات", en: "Equipment", parent: "12" },
@@ -58,6 +61,7 @@ const ACCOUNTS: AccountSeed[] = [
   { code: "4102", ar: "مردودات المبيعات", en: "Sales Returns", parent: "4", key: "SALES_RETURNS" },
   { code: "4103", ar: "خصومات المبيعات", en: "Sales Discounts", parent: "4", key: "SALES_DISCOUNTS" },
   { code: "4104", ar: "إيرادات الشحن", en: "Shipping Income", parent: "4", key: "SHIPPING_INCOME" },
+  { code: "4105", ar: "أرباح وخسائر فروق العملات", en: "Exchange Gains & Losses", parent: "4", key: "FX_DIFFERENCE" },
   { code: "4199", ar: "إيرادات أخرى", en: "Other Income", parent: "4" },
 
   // 5 — Expenses
@@ -92,10 +96,10 @@ const PERMISSIONS: Record<string, string[]> = {
   dashboard: ["dashboard.view"],
   catalog: ["products.read", "products.write", "categories.write"],
   inventory: ["stock.read", "stock.adjust", "stock.transfer", "stock.count"],
-  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage"],
+  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage", "promotions.manage", "pos.sell"],
   customers: ["customers.read", "customers.write"],
   purchasing: ["suppliers.manage", "purchases.read", "purchases.write", "purchases.receive"],
-  payments: ["payments.read", "payments.record", "supplier_payments.record"],
+  payments: ["payments.read", "payments.record", "supplier_payments.record", "cashboxes.manage", "wallet.manage"],
   expenses: ["expenses.read", "expenses.write", "expenses.approve"],
   accounting: ["accounts.manage", "journal.read", "journal.write", "journal.post", "journal.reverse", "periods.close"],
   reports: ["reports.sales", "reports.inventory", "reports.financial"],
@@ -108,7 +112,7 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
     description: "Accounting, expenses, payments and financial reports",
     permissions: [
       "dashboard.view", "orders.read", "customers.read", "purchases.read", "suppliers.manage",
-      "payments.read", "payments.record", "supplier_payments.record",
+      "payments.read", "payments.record", "supplier_payments.record", "cashboxes.manage", "wallet.manage",
       "expenses.read", "expenses.write", "expenses.approve",
       "accounts.manage", "journal.read", "journal.write", "journal.post", "journal.reverse", "periods.close",
       "reports.sales", "reports.financial", "reports.inventory", "stock.read",
@@ -120,7 +124,11 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
   },
   sales: {
     description: "Order handling and customer service",
-    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales"],
+    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales", "pos.sell"],
+  },
+  cashier: {
+    description: "Point of sale: sells at the till and sees only their own cash drawers",
+    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell"],
   },
 };
 
@@ -204,6 +212,71 @@ async function seedFiscalYear(year: number) {
   }
 }
 
+// Sales currencies with starting rates (units per 1 SAR); update them from the admin app.
+const CURRENCIES = [
+  { code: "SAR", nameAr: "ريال سعودي", nameEn: "Saudi Riyal", symbol: "ر.س", decimals: 2, isBase: true, show: true, sort: 0 },
+  { code: "YER", nameAr: "ريال يمني", nameEn: "Yemeni Rial", symbol: "ر.ي", decimals: 0, rate: "140", show: true, sort: 1 },
+  { code: "YEQ", nameAr: "ريال يمني قعيطي", nameEn: "Yemeni Rial (new notes)", symbol: "ر.ي.ق", decimals: 0, rate: "425", show: false, sort: 2 },
+  { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$", decimals: 2, rate: "0.266667", show: false, sort: 3 },
+];
+
+async function seedCurrencies() {
+  for (const c of CURRENCIES) {
+    // Existing currencies keep whatever the store changed since.
+    const existing = await prisma.currency.findUnique({ where: { code: c.code } });
+    if (!existing) {
+      await prisma.currency.create({
+        data: { code: c.code, nameAr: c.nameAr, nameEn: c.nameEn, symbol: c.symbol, decimals: c.decimals, isBase: !!c.isBase, showInCustomerApp: c.show, sortOrder: c.sort },
+      });
+    }
+    if (c.rate && !(await prisma.exchangeRate.count({ where: { currency: c.code } }))) {
+      await prisma.exchangeRate.create({ data: { currency: c.code, rate: c.rate, note: "Initial rate, please update" } });
+    }
+  }
+}
+
+/** Opens a safe or bank box with its own account under group 1150. */
+async function openBox(name: string, kind: "VAULT" | "BANK", currency: string) {
+  const group = await prisma.account.findUniqueOrThrow({ where: { code: "1150" } });
+  const siblings = await prisma.account.findMany({ where: { parentId: group.id }, select: { code: true } });
+  const next = siblings.reduce((n, a) => Math.max(n, Number(a.code.slice(4)) || 0), 0) + 1;
+  const account = await prisma.account.create({
+    data: {
+      code: `1150${String(next).padStart(3, "0")}`, nameAr: name, nameEn: name, type: group.type, normalBalance: group.normalBalance,
+      parentId: group.id, level: group.level + 1, isPostable: true, isCashOrBank: true,
+    },
+  });
+  await prisma.cashBox.create({ data: { name, kind, currency, accountId: account.id } });
+}
+
+/**
+ * The main cash box and bank account become the SAR safe and bank boxes (carrying any
+ * balance they already had), and every other active currency gets a safe and a bank box.
+ */
+async function seedTreasury() {
+  for (const [key, kind, name] of [["CASH", "VAULT", "الخزينة الرئيسية - ريال سعودي"], ["BANK", "BANK", "البنك - ريال سعودي"]] as const) {
+    const account = await prisma.account.findUniqueOrThrow({ where: { systemKey: key } });
+    if (await prisma.cashBox.findUnique({ where: { accountId: account.id } })) continue;
+    const box = await prisma.cashBox.create({ data: { name, kind, currency: "SAR", accountId: account.id } });
+    const agg = await prisma.journalLine.aggregate({
+      where: { accountId: account.id, journalEntry: { status: { in: ["POSTED", "REVERSED"] } } },
+      _sum: { debit: true, credit: true },
+    });
+    const balance = Number(agg._sum.debit ?? 0) - Number(agg._sum.credit ?? 0);
+    if (balance !== 0) {
+      await prisma.cashBoxEntry.create({
+        data: { cashBoxId: box.id, amount: balance.toFixed(2), baseAmount: balance.toFixed(2), sourceType: "OPENING_BALANCE", note: "Balance before cash boxes" },
+      });
+    }
+  }
+  const currencies = await prisma.currency.findMany({ where: { isActive: true, isBase: false } });
+  for (const c of currencies) {
+    for (const [kind, label] of [["VAULT", "الخزينة الرئيسية"], ["BANK", "البنك"]] as const) {
+      if (!(await prisma.cashBox.findFirst({ where: { kind, currency: c.code } }))) await openBox(`${label} - ${c.nameAr}`, kind, c.code);
+    }
+  }
+}
+
 async function main() {
   const acc = await seedAccounts();
   await seedAccess();
@@ -230,7 +303,7 @@ async function main() {
   const settings: Record<string, unknown> = {
     "store.name": "Dejavu",
     "store.locale": "ar",
-    "store.timezone": "Africa/Cairo",
+    "store.timezone": "Asia/Aden",
     "orders.autoConfirmPaid": true,
     "inventory.costingMethod": "WEIGHTED_AVERAGE",
     "tax.pricesIncludeTax": true,
@@ -240,10 +313,14 @@ async function main() {
   }
   // Base currency of all prices, costs and the ledger (YER is a sales currency converted from it).
   await prisma.setting.upsert({ where: { key: "store.currency" }, update: { value: "SAR" }, create: { key: "store.currency", value: "SAR" } });
-  // Starting YER rate so the YER option works out of the box; update it from the admin app.
-  if (!(await prisma.exchangeRate.count({ where: { currency: "YER" } }))) {
-    await prisma.exchangeRate.create({ data: { currency: "YER", rate: "140", note: "Initial rate, please update" } });
-  }
+  await seedCurrencies();
+  await seedTreasury();
+  // Anonymous buyer for cash sales at the till without a named customer.
+  await prisma.customer.upsert({
+    where: { code: "CUS-WALKIN" },
+    update: {},
+    create: { code: "CUS-WALKIN", name: "عميل نقدي", phone: "WALKIN", notes: "Walk-in POS customer (system)" },
+  });
 
   console.log(`Seeded ${ACCOUNTS.length} accounts, ${Object.keys(ROLES).length} roles, fiscal year and defaults.`);
 }

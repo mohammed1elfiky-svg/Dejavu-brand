@@ -11,6 +11,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { validateEnv } from './config/env';
 import { ExpensesModule } from './expenses/expenses.module';
+import { FilesModule } from './files/files.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -18,6 +19,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
+import { TreasuryModule } from './treasury/treasury.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -30,6 +32,8 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     UsersModule,
     AccountingModule,
+    FilesModule,
+    TreasuryModule,
     CatalogModule,
     InventoryModule,
     SalesModule,

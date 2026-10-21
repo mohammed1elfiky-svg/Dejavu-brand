@@ -12,7 +12,10 @@ import {
   UpdateProductDto,
   NewVariantDto,
   UpdateVariantDto,
+  PromotionDto,
+  UpdatePromotionDto,
 } from './dto/catalog.dto';
+import { PromotionsService } from './promotions.service';
 
 @ApiTags('Admin · Catalog')
 @Controller('admin')
@@ -106,5 +109,42 @@ export class StoreCatalogController {
   @Get('products/:slug')
   product(@Param('slug') slug: string) {
     return this.catalog.storeProduct(slug);
+  }
+}
+
+@ApiTags('Admin · Promotions')
+@Controller('admin/promotions')
+export class AdminPromotionsController {
+  constructor(private readonly promotions: PromotionsService) {}
+
+  @RequirePermissions('products.read')
+  @Get()
+  list() {
+    return this.promotions.list();
+  }
+
+  @RequirePermissions('products.read')
+  @Get(':id')
+  get(@Param('id', ParseUUIDPipe) id: string) {
+    return this.promotions.get(id);
+  }
+
+  @RequirePermissions('promotions.manage')
+  @Post()
+  create(@Body() dto: PromotionDto, @CurrentUser() u: AuthPrincipal) {
+    return this.promotions.create(dto, u.id);
+  }
+
+  @RequirePermissions('promotions.manage')
+  @Patch(':id')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePromotionDto, @CurrentUser() u: AuthPrincipal) {
+    return this.promotions.update(id, dto, u.id);
+  }
+
+  @RequirePermissions('promotions.manage')
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.promotions.remove(id, u.id);
   }
 }

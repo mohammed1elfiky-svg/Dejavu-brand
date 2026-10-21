@@ -5,6 +5,7 @@ import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
+import { activePromotions, promotedPrice } from './promotions';
 import {
   AdminProductsQueryDto,
   CreateCategoryDto,
@@ -42,7 +43,7 @@ const storeProductSelect = {
   ratingAvg: true,
   ratingCount: true,
   category: { select: { id: true, slug: true, nameAr: true, nameEn: true } },
-  images: { orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true, variantId: true } },
+  images: { orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true, variantId: true, color: true } },
   variants: {
     where: { isActive: true },
     orderBy: { sku: 'asc' },
@@ -61,12 +62,28 @@ const storeProductSelect = {
 
 type StoreProductRow = Prisma.ProductGetPayload<{ select: typeof storeProductSelect }>;
 
-const presentStoreProduct = ({ variants, ...p }: StoreProductRow) => {
+/** Shopper view of a product: running promotion applied, original price shown struck through. */
+const presentStoreProduct = ({ variants, ...p }: StoreProductRow, promos: Awaited<ReturnType<typeof activePromotions>>) => {
+  const promo = promos.get(p.id);
   const shaped = variants.map(({ stockLevels, price, ...v }) => {
     const available = stockLevels.reduce((n, s) => n + s.onHand - s.reserved, 0);
-    return { ...v, price: price ?? p.basePrice, availableQty: available, inStock: available > 0 };
+    const shelf = price ?? p.basePrice;
+    return {
+      ...v,
+      price: promotedPrice(shelf, promo),
+      compareAtPrice: promo ? shelf : null,
+      availableQty: available,
+      inStock: available > 0,
+    };
   });
-  return { ...p, inStock: shaped.some((v) => v.inStock), variants: shaped };
+  return {
+    ...p,
+    basePrice: promotedPrice(p.basePrice, promo),
+    compareAtPrice: promo ? p.basePrice : p.compareAtPrice,
+    promotion: promo ? { name: promo.name, percent: promo.percent, endsAt: promo.endsAt } : null,
+    inStock: shaped.some((v) => v.inStock),
+    variants: shaped,
+  };
 };
 
 @Injectable()
@@ -182,14 +199,21 @@ export class CatalogService {
     const { variants, images, ...fields } = dto;
 
     const product = await this.prisma.$transaction(async (tx) => {
+      const skuNumber = fields.skuNumber ?? (await this.nextSkuNumber(tx));
+      // Variants are numbered 1..n inside the product; their SKU defaults to "<skuNumber>-<n>".
+      const numbered = variants.map((v, i) => ({ ...v, variantNo: i + 1, sku: v.sku ?? `${skuNumber}-${i + 1}` }));
       const created = await tx.product.create({
-        data: { ...fields, taxRateId, variants: { create: variants.map(variantData) } },
+        data: { ...fields, skuNumber, taxRateId, variants: { create: numbered.map((v) => ({ ...variantData(v), variantNo: v.variantNo })) } },
         include: { variants: true },
       });
       if (images?.length) {
         await tx.productImage.createMany({ data: this.imageRows(created.id, images, created.variants.map((v) => v.id)) });
       }
-      await this.openingStock(tx, variants.map((v) => ({ ...v, id: created.variants.find((c) => c.sku === v.sku)!.id })), userId);
+      await this.openingStock(
+        tx,
+        numbered.map((v) => ({ ...v, unitCost: v.unitCost ?? fields.costPrice ?? '0', id: created.variants.find((c) => c.sku === v.sku)!.id })),
+        userId,
+      );
       return created;
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Product', entityId: product.id, after: dto });
@@ -202,16 +226,34 @@ export class CatalogService {
     if (dto.status === ProductStatus.ACTIVE && !before.variants.some((v) => v.isActive)) {
       throw new BadRequestException('A product needs at least one active variant to be published');
     }
-    await this.prisma.product.update({ where: { id }, data: dto });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.product.update({ where: { id }, data: dto });
+      // The product cost is the cost of pieces not yet valued (nothing in stock).
+      if (dto.costPrice !== undefined) {
+        await tx.$executeRaw`
+          UPDATE product_variants v SET avg_cost = ${dto.costPrice}::numeric
+          WHERE v.product_id = ${id}::uuid
+            AND NOT EXISTS (SELECT 1 FROM stock_levels s WHERE s.variant_id = v.id AND s.on_hand > 0)`;
+      }
+    });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Product', entityId: id, after: dto });
     return this.getProduct(id);
   }
 
   async addVariant(productId: string, dto: NewVariantDto, userId: string) {
-    await this.getProduct(productId);
+    const product = await this.getProduct(productId);
     const variant = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.productVariant.create({ data: { ...variantData(dto), productId } });
-      await this.openingStock(tx, [{ ...dto, id: created.id }], userId);
+      await tx.$queryRaw`SELECT id FROM products WHERE id = ${productId}::uuid FOR UPDATE`;
+      // Older products get their numeric SKU now, so new variants can follow the pattern.
+      const skuNumber = product.skuNumber ?? (await this.nextSkuNumber(tx));
+      if (!product.skuNumber) await tx.product.update({ where: { id: productId }, data: { skuNumber } });
+      const last = await tx.productVariant.aggregate({ where: { productId }, _max: { variantNo: true } });
+      const variantNo = Math.max(last._max.variantNo ?? 0, product.variants.length) + 1;
+      if (variantNo > 1000) throw new BadRequestException('A product can have at most 1000 variants');
+      const created = await tx.productVariant.create({
+        data: { ...variantData({ ...dto, sku: dto.sku ?? `${skuNumber}-${variantNo}` }), variantNo, productId, avgCost: product.costPrice },
+      });
+      await this.openingStock(tx, [{ ...dto, unitCost: dto.unitCost ?? product.costPrice.toString(), id: created.id }], userId);
       return created;
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'ProductVariant', entityId: variant.id, after: dto });
@@ -248,12 +290,21 @@ export class CatalogService {
   }
 
   private imageRows(productId: string, images: ProductImageDto[], variantIds: string[]) {
+    if (images.length > 10) throw new BadRequestException('A product can have at most 10 images');
     return images.map((img, i) => {
       if (img.variantId && !variantIds.includes(img.variantId)) {
         throw new BadRequestException(`Image ${i + 1}: variant does not belong to this product`);
       }
-      return { productId, url: img.url, variantId: img.variantId, altText: img.altText, sortOrder: img.sortOrder ?? i };
+      return { productId, url: img.url, variantId: img.variantId, color: img.color, altText: img.altText, sortOrder: img.sortOrder ?? i };
     });
+  }
+
+  /** Next free numeric product SKU, from 100 up to 100000. */
+  private async nextSkuNumber(tx: Tx): Promise<number> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product_sku_number'))`;
+    const [{ next }] = await tx.$queryRaw<{ next: number }[]>`SELECT (COALESCE(MAX(sku_number), 99) + 1)::int AS next FROM products`;
+    if (next > 100000) throw new BadRequestException('All product SKU numbers (100-100000) are in use');
+    return next;
   }
 
   private async defaultTaxRateId() {
@@ -264,7 +315,12 @@ export class CatalogService {
   private searchFilter(term: string): Prisma.ProductWhereInput {
     const contains = { contains: term, mode: 'insensitive' as const };
     return {
-      OR: [{ nameAr: contains }, { nameEn: contains }, { variants: { some: { OR: [{ sku: contains }, { barcode: term }] } } }],
+      OR: [
+        { nameAr: contains },
+        { nameEn: contains },
+        ...(/^\d{3,6}$/.test(term) ? [{ skuNumber: Number(term) }] : []),
+        { variants: { some: { OR: [{ sku: contains }, { barcode: term }] } } },
+      ],
     };
   }
 
@@ -291,7 +347,12 @@ export class CatalogService {
       this.prisma.product.findMany({ where, select: storeProductSelect, orderBy, skip: q.skip, take: q.pageSize }),
       this.prisma.product.count({ where }),
     ]);
-    return paginated(rows.map(presentStoreProduct), total, q);
+    const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
+    return paginated(
+      rows.map((r) => presentStoreProduct(r, promos)),
+      total,
+      q,
+    );
   }
 
   async storeProduct(slug: string) {
@@ -300,7 +361,7 @@ export class CatalogService {
       select: storeProductSelect,
     });
     if (!row) throw new NotFoundException('Product not found');
-    return presentStoreProduct(row);
+    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]));
   }
 }
 

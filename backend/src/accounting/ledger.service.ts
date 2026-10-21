@@ -4,7 +4,8 @@ import { JournalEntryStatus, JournalSourceType } from '../generated/prisma/clien
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
 import { businessDate } from '../common/utils/dates';
-import { DecimalLike, money, sum, ZERO } from '../common/utils/money';
+import { dec, DecimalLike, money, sum, ZERO } from '../common/utils/money';
+import { BASE_CURRENCY, inCurrency } from '../common/currency.service';
 import { Tx } from '../prisma/prisma.service';
 
 /** System accounts referenced by posting rules (accounts.system_key). */
@@ -31,7 +32,9 @@ export type SystemAccount =
   | 'COGS'
   | 'INVENTORY_ADJUSTMENT'
   | 'SHIPPING_EXPENSE'
-  | 'GATEWAY_FEES';
+  | 'GATEWAY_FEES'
+  | 'CUSTOMER_ACCOUNTS'
+  | 'FX_DIFFERENCE';
 
 export interface PostingLine {
   /** Either a system key or a concrete account id. */
@@ -41,6 +44,11 @@ export interface PostingLine {
   description?: string;
   customerId?: string;
   supplierId?: string;
+  /**
+   * What physically moved, for lines on a cash box or a customer account: the amount
+   * (positive) in the box's / account's currency. Required for non-SAR holders.
+   */
+  holder?: { currency: string; amount: DecimalLike };
 }
 
 export interface PostingRequest {
@@ -115,7 +123,49 @@ export class LedgerService {
         },
       },
     });
+    await this.recordHolderMovements(tx, entry.id, req, lines, accountIds);
     return this.markPosted(tx, entry.id, req.userId ?? null);
+  }
+
+  /**
+   * Mirrors every line on a cash box or on the customer-accounts ledger into the
+   * holder's own running balance (in its currency), so drawers, safes and customer
+   * wallets always agree with the general ledger.
+   */
+  private async recordHolderMovements(
+    tx: Tx,
+    journalEntryId: string,
+    req: PostingRequest,
+    lines: (PostingLine & { debit: ReturnType<typeof money>; credit: ReturnType<typeof money> })[],
+    accountIds: string[],
+  ) {
+    const [boxes, customerAccounts] = await Promise.all([
+      tx.cashBox.findMany({ where: { accountId: { in: accountIds } }, include: { account: { select: { code: true } } } }),
+      tx.account.findUnique({ where: { systemKey: 'CUSTOMER_ACCOUNTS' }, select: { id: true } }),
+    ]);
+    for (const [i, l] of lines.entries()) {
+      const sign = l.debit.gt(0) ? 1 : -1;
+      const base = l.debit.gt(0) ? l.debit : l.credit.neg();
+      const box = boxes.find((b) => b.accountId === accountIds[i]);
+      const common = { sourceType: req.sourceType, sourceId: req.sourceId, journalEntryId, note: req.description, createdById: req.userId ?? null };
+      if (box) {
+        let amount = base;
+        if (box.currency !== BASE_CURRENCY) {
+          if (l.holder?.currency !== box.currency) {
+            throw new UnprocessableEntityException(`${box.name} (${box.account.code}) holds ${box.currency}; pick a box in ${l.holder?.currency ?? BASE_CURRENCY}`);
+          }
+          amount = inCurrency(dec(l.holder.amount).abs(), box.currency).mul(sign);
+        } else if (l.holder && l.holder.currency !== BASE_CURRENCY) {
+          throw new UnprocessableEntityException(`${box.name} holds ${BASE_CURRENCY}; pick a box in ${l.holder.currency}`);
+        }
+        await tx.cashBoxEntry.create({ data: { ...common, cashBoxId: box.id, amount, baseAmount: base } });
+      } else if (customerAccounts && accountIds[i] === customerAccounts.id) {
+        if (!l.customerId) throw new UnprocessableEntityException('Customer account lines need a customer');
+        const currency = l.holder?.currency ?? BASE_CURRENCY;
+        const amount = l.holder ? inCurrency(dec(l.holder.amount).abs(), currency).mul(sign) : base;
+        await tx.customerAccountEntry.create({ data: { ...common, customerId: l.customerId, currency, amount, baseAmount: base } });
+      }
+    }
   }
 
   /** Posts an existing DRAFT entry (manual journal entries). */
@@ -129,6 +179,14 @@ export class LedgerService {
       throw new UnprocessableEntityException(`Entry ${entry.number} is unbalanced (debit ${d}, credit ${c})`);
     }
     await this.openPeriodFor(tx, entry.entryDate);
+    // Manual entries can move SAR boxes; foreign-currency boxes go through the treasury screens.
+    await this.recordHolderMovements(
+      tx,
+      entryId,
+      { description: entry.description, sourceType: entry.sourceType, sourceId: entry.sourceId ?? undefined, userId, lines: [] },
+      entry.lines.map((l) => ({ account: { id: l.accountId }, debit: money(l.debit), credit: money(l.credit), customerId: l.customerId ?? undefined })),
+      entry.lines.map((l) => l.accountId),
+    );
     return this.markPosted(tx, entryId, userId);
   }
 
@@ -139,6 +197,26 @@ export class LedgerService {
     if (original.status !== JournalEntryStatus.POSTED) {
       throw new BadRequestException('Only posted entries can be reversed');
     }
+
+    // Lines that moved money in a box or customer account move it back by the same amount.
+    const [boxEntries, customerEntries] = await Promise.all([
+      tx.cashBoxEntry.findMany({ where: { journalEntryId: original.id }, include: { cashBox: { select: { accountId: true, currency: true } } } }),
+      tx.customerAccountEntry.findMany({ where: { journalEntryId: original.id } }),
+    ]);
+    const holderOf = (l: (typeof original.lines)[number]) => {
+      const net = dec(l.debit).sub(l.credit);
+      const bi = boxEntries.findIndex((e) => e.cashBox.accountId === l.accountId && dec(e.baseAmount).eq(net));
+      if (bi >= 0) {
+        const [e] = boxEntries.splice(bi, 1);
+        return { currency: e.cashBox.currency, amount: dec(e.amount).abs() };
+      }
+      const ci = customerEntries.findIndex((e) => e.customerId === l.customerId && dec(e.baseAmount).eq(net));
+      if (ci >= 0) {
+        const [e] = customerEntries.splice(ci, 1);
+        return { currency: e.currency, amount: dec(e.amount).abs() };
+      }
+      return undefined;
+    };
 
     const reversal = await this.post(tx, {
       description: `Reversal of ${original.number}: ${reason}`,
@@ -155,6 +233,7 @@ export class LedgerService {
           description: l.description ?? undefined,
           customerId: l.customerId ?? undefined,
           supplierId: l.supplierId ?? undefined,
+          holder: holderOf(l),
         })),
     });
     await tx.journalEntry.update({ where: { id: original.id }, data: { status: JournalEntryStatus.REVERSED } });

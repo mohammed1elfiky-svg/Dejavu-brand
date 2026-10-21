@@ -64,22 +64,27 @@ describe('Product variants with initial stock (e2e)', () => {
     expect(inventory.debit.toString()).toBe('284');
   });
 
-  it('needs a cost for any initial quantity, and rolls back everything if one is missing', async () => {
-    await http
+  it("values initial stock at the product's cost when a variant has none of its own", async () => {
+    const res = await http
       .post(
         '/admin/products',
         {
           categoryId,
-          nameAr: 'منتج ناقص',
-          nameEn: 'Incomplete',
-          slug: `incomplete-${run}`,
+          nameAr: 'منتج بتكلفة موحدة',
+          nameEn: 'Shared cost',
+          slug: `shared-cost-${run}`,
           basePrice: '50',
-          variants: [{ sku: sku('X'), size: 'S', initialQuantity: 3 }],
+          costPrice: '20',
+          variants: [{ size: 'S', initialQuantity: 3 }, { size: 'M' }],
         },
         admin,
       )
-      .expect(400);
-    expect(await prisma.product.count({ where: { slug: `incomplete-${run}` } })).toBe(0);
+      .expect(201);
+    // SKUs are numbered automatically: <product number>-<n>.
+    const n = res.body.skuNumber as number;
+    expect(n).toBeGreaterThanOrEqual(100);
+    expect(res.body.variants.map((v: { sku: string }) => v.sku)).toEqual([`${n}-1`, `${n}-2`]);
+    expect(res.body.variants[0].avgCost).toBe('20');
   });
 
   it('adds a new color later with its own stock, and edits a variant', async () => {

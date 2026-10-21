@@ -109,10 +109,21 @@ enum PaymentStatus {
   REFUNDED
 }
 
-/// Sales currencies. SAR is the base: every stored amount, cost and journal line is in SAR.
-enum Currency {
-  SAR
-  YER
+enum OrderChannel {
+  ONLINE // customer app
+  POS // in-store cashier
+}
+
+enum CashBoxKind {
+  CASHIER // one per cashier per currency
+  VAULT // main safe
+  BANK // bank / exchange-house account
+}
+
+enum TopUpStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum PaymentMethod {
@@ -122,6 +133,8 @@ enum PaymentMethod {
   BANK_TRANSFER
   INSTAPAY
   CASH
+  /// Charged to the customer's own account (wallet balance or credit sale).
+  CUSTOMER_ACCOUNT
 }
 
 enum TransactionStatus {
@@ -202,6 +215,8 @@ enum JournalSourceType {
   STOCK_ADJUSTMENT
   OPENING_BALANCE
   CLOSING
+  CASH_TRANSFER
+  WALLET_TOPUP
 }
 
 enum NotificationType {
@@ -209,6 +224,7 @@ enum NotificationType {
   PROMOTION
   LOW_STOCK
   SYSTEM
+  WALLET
 }
 
 enum AuditAction {
@@ -257,6 +273,9 @@ model User {
   salesReturnsHandled   SalesReturn[]
   supplierPayments      SupplierPayment[]
   courierSettlements    CourierSettlement[]
+  posOrders             Order[]              @relation("OrderCashier")
+  cashBoxes             CashBox[]
+  topUpsReviewed        WalletTopUp[]
 
   @@map("users")
 }
@@ -328,17 +347,19 @@ model Customer {
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
-  account       Account?          @relation(fields: [accountId], references: [id])
-  addresses     CustomerAddress[]
-  devices       Device[]          @relation("CustomerDevices")
-  refreshTokens RefreshToken[]    @relation("CustomerTokens")
-  cart          Cart?
-  orders        Order[]
-  wishlist      WishlistItem[]
-  reviews       ProductReview[]
-  couponUsages  CouponUsage[]
-  notifications Notification[]
-  salesReturns  SalesReturn[]
+  account        Account?               @relation(fields: [accountId], references: [id])
+  addresses      CustomerAddress[]
+  devices        Device[]               @relation("CustomerDevices")
+  refreshTokens  RefreshToken[]         @relation("CustomerTokens")
+  cart           Cart?
+  orders         Order[]
+  wishlist       WishlistItem[]
+  reviews        ProductReview[]
+  couponUsages   CouponUsage[]
+  notifications  Notification[]
+  salesReturns   SalesReturn[]
+  accountEntries CustomerAccountEntry[]
+  topUps         WalletTopUp[]
 
   @@index([name])
   @@map("customers")
@@ -450,15 +471,22 @@ model Product {
   isFeatured     Boolean       @default(false) @map("is_featured")
   ratingAvg      Decimal       @default(0) @map("rating_avg") @db.Decimal(3, 2)
   ratingCount    Int           @default(0) @map("rating_count")
+  /// Numeric base SKU (100..100000); variants are "<skuNumber>-<variantNo>".
+  skuNumber      Int?          @unique @map("sku_number")
+  /// Cost per piece in SAR, shared by all variants (opening stock and COGS fallback).
+  costPrice      Decimal       @default(0) @map("cost_price") @db.Decimal(14, 4)
+  /// Position on the cashier screen (lower first).
+  posSortOrder   Int           @default(0) @map("pos_sort_order")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
-  category Category         @relation(fields: [categoryId], references: [id])
-  taxRate  TaxRate?         @relation(fields: [taxRateId], references: [id])
-  variants ProductVariant[]
-  images   ProductImage[]
-  reviews  ProductReview[]
-  wishlist WishlistItem[]
+  category   Category           @relation(fields: [categoryId], references: [id])
+  taxRate    TaxRate?           @relation(fields: [taxRateId], references: [id])
+  variants   ProductVariant[]
+  images     ProductImage[]
+  reviews    ProductReview[]
+  wishlist   WishlistItem[]
+  promotions PromotionProduct[]
 
   @@index([categoryId])
   @@index([status])
@@ -470,6 +498,9 @@ model ProductVariant {
   id                String   @id @default(uuid()) @db.Uuid
   productId         String   @map("product_id") @db.Uuid
   sku               String   @unique
+  /// Running number inside the product (the part after the dash in the SKU).
+  variantNo         Int?     @map("variant_no")
+  /// Manufacturer's barcode printed on the item; scanning it finds the variant like the SKU.
   barcode           String?  @unique
   size              String?
   color             String?
@@ -501,6 +532,8 @@ model ProductImage {
   id        String  @id @default(uuid()) @db.Uuid
   productId String  @map("product_id") @db.Uuid
   variantId String? @map("variant_id") @db.Uuid // image specific to a color, optional
+  /// Shown when the shopper picks this color.
+  color     String?
   url       String
   altText   String? @map("alt_text")
   sortOrder Int     @default(0) @map("sort_order")
@@ -740,8 +773,11 @@ model Order {
   status          OrderStatus   @default(PENDING)
   paymentStatus   PaymentStatus @default(UNPAID) @map("payment_status")
   paymentMethod   PaymentMethod @map("payment_method")
+  channel         OrderChannel  @default(ONLINE)
+  /// Staff member who rang up a POS sale.
+  cashierId       String?       @map("cashier_id") @db.Uuid
   /// Currency the customer shops and pays in. Amounts below stay in SAR (base).
-  currency        Currency      @default(SAR)
+  currency        String        @default("SAR")
   /// Units of [currency] per 1 SAR, locked at checkout (1 for SAR).
   exchangeRate    Decimal       @default(1) @map("exchange_rate") @db.Decimal(18, 6)
   /// Snapshot of the address at order time (address rows can be edited later).
@@ -764,6 +800,8 @@ model Order {
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
   customer      Customer             @relation(fields: [customerId], references: [id])
+  cashier       User?                @relation("OrderCashier", fields: [cashierId], references: [id])
+  currencyInfo  Currency             @relation(fields: [currency], references: [code])
   address       CustomerAddress?     @relation(fields: [addressId], references: [id], onDelete: SetNull)
   warehouse     Warehouse            @relation(fields: [warehouseId], references: [id])
   coupon        Coupon?              @relation(fields: [couponId], references: [id])
@@ -778,6 +816,7 @@ model Order {
   @@index([customerId, placedAt])
   @@index([status])
   @@index([placedAt])
+  @@index([channel, placedAt])
   @@map("orders")
 }
 
@@ -836,18 +875,21 @@ model Payment {
   /// Cash box / bank / gateway clearing account the money lands in.
   accountId      String            @map("account_id") @db.Uuid
   /// Currency the money was handed over in; [amount] is always its SAR value.
-  currency       Currency          @default(SAR)
+  currency       String            @default("SAR")
   /// Amount in [currency] (equals amount for SAR).
   currencyAmount Decimal?          @map("currency_amount") @db.Decimal(16, 2)
   exchangeRate   Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  /// Change handed back at the till (negative amount that is not a refund).
+  isChange       Boolean           @default(false) @map("is_change")
   gateway        String? // "paymob", "fawry", ...
   gatewayRef     String?           @unique @map("gateway_ref")
   gatewayPayload Json?             @map("gateway_payload")
   paidAt         DateTime?         @map("paid_at")
   createdAt      DateTime          @default(now()) @map("created_at")
 
-  order   Order   @relation(fields: [orderId], references: [id])
-  account Account @relation(fields: [accountId], references: [id])
+  order        Order    @relation(fields: [orderId], references: [id])
+  account      Account  @relation(fields: [accountId], references: [id])
+  currencyInfo Currency @relation(fields: [currency], references: [code])
 
   @@index([orderId])
   @@map("payments")
@@ -1118,6 +1160,7 @@ model Account {
   expenseCategories  ExpenseCategory[]
   expensesPaid       Expense[]
   courierSettlements CourierSettlement[]
+  cashBox            CashBox?
 
   @@index([parentId])
   @@index([type])
@@ -1225,22 +1268,23 @@ model DocumentSequence {
   @@map("document_sequences")
 }
 
-/// Key/value settings editable from the admin app (store name, currency, ...).
 /// Exchange-rate history: units of [currency] per 1 SAR. The latest row is the current rate.
 model ExchangeRate {
   id          String   @id @default(uuid()) @db.Uuid
-  currency    Currency
+  currency    String
   rate        Decimal  @db.Decimal(18, 6)
   note        String?
   effectiveAt DateTime @default(now()) @map("effective_at")
   createdById String?  @map("created_by_id") @db.Uuid
 
-  createdBy User? @relation("ExchangeRatesSet", fields: [createdById], references: [id], onDelete: SetNull)
+  currencyInfo Currency @relation(fields: [currency], references: [code], onDelete: Cascade)
+  createdBy    User?    @relation("ExchangeRatesSet", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([currency, effectiveAt])
   @@map("exchange_rates")
 }
 
+/// Key/value settings editable from the admin app (store name, currency, ...).
 model Setting {
   key       String   @id
   value     Json
@@ -1284,4 +1328,229 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([userId, createdAt])
   @@map("audit_logs")
+}
+
+// =============================================================================
+// 9. CURRENCIES, TREASURY & CUSTOMER ACCOUNTS
+// =============================================================================
+
+/// Currencies the store sells and holds money in. Exactly one is the base (SAR):
+/// every price, cost and journal line is stored in it.
+model Currency {
+  code              String   @id // "SAR", "YER", "USD"
+  nameAr            String   @map("name_ar")
+  nameEn            String   @map("name_en")
+  symbol            String
+  /// Digits after the decimal point when amounts are shown or collected (YER: 0).
+  decimals          Int      @default(2)
+  isBase            Boolean  @default(false) @map("is_base")
+  isActive          Boolean  @default(true) @map("is_active")
+  /// Offered to shoppers in the customer app (the till can always use active currencies).
+  showInCustomerApp Boolean  @default(true) @map("show_in_customer_app")
+  sortOrder         Int      @default(0) @map("sort_order")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  rates          ExchangeRate[]
+  orders         Order[]
+  payments       Payment[]
+  cashBoxes      CashBox[]
+  accountEntries CustomerAccountEntry[]
+  topUps         WalletTopUp[]
+  bankAccounts   StoreBankAccount[]
+
+  @@map("currencies")
+}
+
+/// A drawer, safe or bank account holding one currency. Each has its own GL account;
+/// the money counted in the box's currency is tracked by its entries.
+model CashBox {
+  id        String      @id @default(uuid()) @db.Uuid
+  name      String
+  kind      CashBoxKind
+  currency  String
+  /// The cashier who owns the drawer (CASHIER boxes only).
+  userId    String?     @map("user_id") @db.Uuid
+  accountId String      @unique @map("account_id") @db.Uuid
+  isActive  Boolean     @default(true) @map("is_active")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  currencyInfo Currency       @relation(fields: [currency], references: [code])
+  user         User?          @relation(fields: [userId], references: [id])
+  account      Account        @relation(fields: [accountId], references: [id])
+  entries      CashBoxEntry[]
+  transfersOut CashTransfer[] @relation("TransferFrom")
+  transfersIn  CashTransfer[] @relation("TransferTo")
+  topUps       WalletTopUp[]
+
+  @@unique([userId, currency])
+  @@map("cash_boxes")
+}
+
+/// Money in (+) or out (-) of a box, in the box's currency, with its SAR book value.
+model CashBoxEntry {
+  id             String   @id @default(uuid()) @db.Uuid
+  cashBoxId      String   @map("cash_box_id") @db.Uuid
+  amount         Decimal  @db.Decimal(18, 2)
+  baseAmount     Decimal  @map("base_amount") @db.Decimal(14, 2)
+  sourceType     String   @map("source_type") // journal source: CUSTOMER_PAYMENT, CASH_TRANSFER, ...
+  sourceId       String?  @map("source_id") @db.Uuid
+  /// The journal entry that moved the money (its line on the box's account).
+  journalEntryId String?  @map("journal_entry_id") @db.Uuid
+  note           String?
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  cashBox CashBox @relation(fields: [cashBoxId], references: [id], onDelete: Cascade)
+
+  @@index([cashBoxId, createdAt])
+  @@map("cash_box_entries")
+}
+
+/// Moves money between boxes: a withdrawal from a drawer, a bank deposit, or a
+/// currency exchange when the two boxes hold different currencies.
+model CashTransfer {
+  id           String   @id @default(uuid()) @db.Uuid
+  number       String   @unique // TRF-2026-000123
+  fromBoxId    String   @map("from_box_id") @db.Uuid
+  toBoxId      String   @map("to_box_id") @db.Uuid
+  fromAmount   Decimal  @map("from_amount") @db.Decimal(18, 2)
+  toAmount     Decimal  @map("to_amount") @db.Decimal(18, 2)
+  /// SAR book value that left the source box.
+  baseAmount   Decimal  @map("base_amount") @db.Decimal(14, 2)
+  /// Exchange gain (+) or loss (-) in SAR.
+  fxDifference Decimal  @default(0) @map("fx_difference") @db.Decimal(14, 2)
+  note         String?
+  createdById  String   @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  fromBox CashBox @relation("TransferFrom", fields: [fromBoxId], references: [id])
+  toBox   CashBox @relation("TransferTo", fields: [toBoxId], references: [id])
+
+  @@index([createdAt])
+  @@map("cash_transfers")
+}
+
+/// Customer's running account per currency: + the customer owes the store (credit sale),
+/// - the store holds the customer's money (wallet balance).
+model CustomerAccountEntry {
+  id             String   @id @default(uuid()) @db.Uuid
+  customerId     String   @map("customer_id") @db.Uuid
+  currency       String
+  amount         Decimal  @db.Decimal(18, 2)
+  baseAmount     Decimal  @map("base_amount") @db.Decimal(14, 2)
+  sourceType     String   @map("source_type") // journal source: CUSTOMER_PAYMENT, WALLET_TOPUP, ...
+  sourceId       String?  @map("source_id") @db.Uuid
+  journalEntryId String?  @map("journal_entry_id") @db.Uuid
+  note           String?
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  currencyInfo Currency @relation(fields: [currency], references: [code])
+
+  @@index([customerId, currency, createdAt])
+  @@map("customer_account_entries")
+}
+
+/// Store bank / exchange-house accounts shown to customers for manual top-ups.
+model StoreBankAccount {
+  id            String   @id @default(uuid()) @db.Uuid
+  bankName      String   @map("bank_name")
+  accountName   String   @map("account_name")
+  accountNumber String   @map("account_number")
+  iban          String?
+  currency      String
+  instructions  String?
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  currencyInfo Currency      @relation(fields: [currency], references: [code])
+  topUps       WalletTopUp[]
+
+  @@map("store_bank_accounts")
+}
+
+/// A customer's request to add money to their account, backed by a deposit receipt photo.
+model WalletTopUp {
+  id            String      @id @default(uuid()) @db.Uuid
+  number        String      @unique // TOP-2026-000123
+  customerId    String      @map("customer_id") @db.Uuid
+  currency      String
+  amount        Decimal     @db.Decimal(18, 2)
+  bankAccountId String?     @map("bank_account_id") @db.Uuid
+  reference     String?
+  note          String?
+  receiptFileId String      @map("receipt_file_id") @db.Uuid
+  status        TopUpStatus @default(PENDING)
+  /// Where the money actually landed (set on approval).
+  cashBoxId     String?     @map("cash_box_id") @db.Uuid
+  baseAmount    Decimal?    @map("base_amount") @db.Decimal(14, 2)
+  exchangeRate  Decimal?    @map("exchange_rate") @db.Decimal(18, 6)
+  reviewedById  String?     @map("reviewed_by_id") @db.Uuid
+  reviewedAt    DateTime?   @map("reviewed_at")
+  rejectReason  String?     @map("reject_reason")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  customer     Customer          @relation(fields: [customerId], references: [id])
+  currencyInfo Currency          @relation(fields: [currency], references: [code])
+  bankAccount  StoreBankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  cashBox      CashBox?          @relation(fields: [cashBoxId], references: [id])
+  reviewedBy   User?             @relation(fields: [reviewedById], references: [id])
+  receipt      StoredFile        @relation(fields: [receiptFileId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+  @@map("wallet_top_ups")
+}
+
+// =============================================================================
+// 10. PROMOTIONS & FILES
+// =============================================================================
+
+/// Percentage off selected products for a period. The best running promotion wins.
+model Promotion {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  percent   Decimal   @db.Decimal(5, 2)
+  startsAt  DateTime  @map("starts_at")
+  endsAt    DateTime? @map("ends_at")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  products PromotionProduct[]
+
+  @@map("promotions")
+}
+
+model PromotionProduct {
+  promotionId String @map("promotion_id") @db.Uuid
+  productId   String @map("product_id") @db.Uuid
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, productId])
+  @@index([productId])
+  @@map("promotion_products")
+}
+
+/// Uploaded images kept in the database, so they survive redeploys on hosts without a disk.
+model StoredFile {
+  id         String   @id @default(uuid()) @db.Uuid
+  mimeType   String   @map("mime_type")
+  size       Int
+  data       Bytes
+  /// Product photos are public; deposit receipts are staff/owner only.
+  isPublic   Boolean  @default(false) @map("is_public")
+  userId     String?  @map("user_id") @db.Uuid
+  customerId String?  @map("customer_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  topUps WalletTopUp[]
+
+  @@map("stored_files")
 }

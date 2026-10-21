@@ -1,13 +1,14 @@
 import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
-import { Currency, Order, OrderStatus, Payment, PaymentMethod, Prisma, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
+import { Order, OrderStatus, Payment, PaymentMethod, Prisma, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
 import { LedgerService, SystemAccount } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
-import { CURRENCY_INFO, toBase, toCurrency } from '../common/currency.service';
+import { BASE_CURRENCY, currencyDecimals, toBase, toCurrency } from '../common/currency.service';
 import { SequenceService } from '../common/sequence.service';
 import { Decimal, dec, money } from '../common/utils/money';
 import { paymentReceivedMessage, refundMessage } from '../notifications/messages';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Tx } from '../prisma/prisma.service';
+import { TreasuryService } from '../treasury/treasury.service';
 
 /**
  * Revenue is recognised on shipping; before that, money received is a customer
@@ -27,6 +28,7 @@ const DEFAULT_ACCOUNT: Record<PaymentMethod, SystemAccount> = {
   WALLET: 'WALLET',
   BANK_TRANSFER: 'BANK',
   INSTAPAY: 'BANK',
+  CUSTOMER_ACCOUNT: 'CUSTOMER_ACCOUNTS',
 };
 
 export interface MoneyMovement {
@@ -34,7 +36,7 @@ export interface MoneyMovement {
   /** In [currency]; SAR when omitted. */
   amount: string | Decimal;
   /** SAR, or the order's own currency (converted at the rate locked into the order). */
-  currency?: Currency;
+  currency?: string;
   accountId?: string;
   reference?: string;
 }
@@ -42,7 +44,7 @@ export interface MoneyMovement {
 /** A movement's SAR value plus what was actually handed over. */
 interface Converted {
   amount: Decimal;
-  currency: Currency;
+  currency: string;
   currencyAmount: Decimal;
   exchangeRate: Prisma.Decimal | Decimal;
 }
@@ -53,13 +55,13 @@ interface Converted {
  * SAR [limit], so a full payment in YER never leaves a rounding remainder.
  */
 function convert(order: Order, input: MoneyMovement, limit: Decimal, overLimit: (shown: string) => string): Converted {
-  const currency = input.currency ?? Currency.SAR;
-  if (currency === Currency.SAR) {
+  const currency = input.currency ?? BASE_CURRENCY;
+  if (currency === BASE_CURRENCY) {
     const amount = money(input.amount);
     if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
     if (amount.greaterThan(limit)) throw new UnprocessableEntityException(overLimit(money(limit).toFixed(2) + ' SAR'));
     // Cash the courier collected on a YER order was collected in YER.
-    if (input.method === PaymentMethod.CASH_ON_DELIVERY && order.currency !== Currency.SAR) {
+    if (input.method === PaymentMethod.CASH_ON_DELIVERY && order.currency !== BASE_CURRENCY) {
       return { amount, currency: order.currency, currencyAmount: toCurrency(amount, order.currency, order.exchangeRate), exchangeRate: order.exchangeRate };
     }
     return { amount, currency, currencyAmount: amount, exchangeRate: dec(1) };
@@ -67,7 +69,7 @@ function convert(order: Order, input: MoneyMovement, limit: Decimal, overLimit: 
   if (currency !== order.currency) {
     throw new UnprocessableEntityException(`Use SAR or the order's currency (${order.currency})`);
   }
-  const decimals = CURRENCY_INFO[currency].decimals;
+  const decimals = currencyDecimals(currency);
   const given = dec(input.amount);
   if (given.decimalPlaces() > decimals) {
     throw new BadRequestException(`${currency} amounts have at most ${decimals} decimals`);
@@ -87,16 +89,24 @@ export class PaymentsService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly treasury: TreasuryService,
   ) {}
 
   /** Records money received for an order. Caller holds the order row lock. */
-  async receive(tx: Tx, order: Order, input: MoneyMovement, userId: string | null) {
+  async receive(tx: Tx, order: Order, input: MoneyMovement, userId: string | null, opts: { allowCredit?: boolean } = {}) {
     if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.RETURNED) {
       throw new UnprocessableEntityException(`Order is ${order.status.toLowerCase()}`);
     }
     const c = convert(order, input, dec(balanceDue(order)), (shown) => `Amount exceeds the balance due (${shown})`);
+    if (input.method === PaymentMethod.CUSTOMER_ACCOUNT && !opts.allowCredit) {
+      // Paying from the wallet needs that much credit in the currency; staff can sell on credit (POS).
+      const bal = await this.treasury.balanceOf(tx, { customerId: order.customerId, currency: c.currency });
+      if (bal.amount.add(c.currencyAmount).gt(0)) {
+        throw new UnprocessableEntityException(`Not enough wallet balance in ${c.currency}`);
+      }
+    }
 
-    const cashAccount = await this.resolveCashAccount(tx, input);
+    const cashAccount = await this.resolveCashAccount(tx, input, c.currency, userId);
     const number = await this.sequences.next(tx, 'RCPT');
     const payment = await tx.payment.create({
       data: {
@@ -143,7 +153,7 @@ export class PaymentsService {
         status: TransactionStatus.PENDING,
         amount: due,
         currencyAmount: due,
-        accountId: await this.resolveCashAccount(tx, { method: PaymentMethod.CARD, amount: due }),
+        accountId: await this.resolveCashAccount(tx, { method: PaymentMethod.CARD, amount: due }, BASE_CURRENCY, null),
         gateway,
       },
     });
@@ -201,7 +211,13 @@ export class PaymentsService {
       sourceId: payment.id,
       userId,
       lines: [
-        { account: { id: payment.accountId }, debit: amount },
+        ...(await this.treasury.moneyLines(tx, {
+          account: { id: payment.accountId },
+          customerId: order.customerId,
+          currency: payment.currency,
+          amount: dec(payment.currencyAmount ?? amount),
+          sar: amount,
+        })),
         { account: invoiced ? 'AR' : 'CUSTOMER_ADVANCES', credit: amount, customerId: order.customerId },
       ],
     });
@@ -243,7 +259,7 @@ export class PaymentsService {
     const c = convert(order, input, dec(order.amountPaid), (shown) => `Refund exceeds the amount paid (${shown})`);
     const amount = c.amount;
 
-    const cashAccount = await this.resolveCashAccount(tx, input);
+    const cashAccount = await this.resolveCashAccount(tx, input, c.currency, userId);
     const number = await this.sequences.next(tx, 'RFND');
     const payment = await tx.payment.create({
       data: {
@@ -269,7 +285,13 @@ export class PaymentsService {
       userId,
       lines: [
         { account: counterAccount, debit: amount, customerId: order.customerId },
-        { account: { id: cashAccount }, credit: amount },
+        ...(await this.treasury.moneyLines(tx, {
+          account: { id: cashAccount },
+          customerId: order.customerId,
+          currency: c.currency,
+          amount: c.currencyAmount.neg(),
+          sar: amount.neg(),
+        })),
       ],
     });
 
@@ -284,7 +306,7 @@ export class PaymentsService {
   }
 
   private async statusOf(tx: Tx, order: Order, paid: Decimal): Promise<PaymentStatus> {
-    const refunded = (await tx.payment.count({ where: { orderId: order.id, amount: { lt: 0 } } })) > 0;
+    const refunded = (await tx.payment.count({ where: { orderId: order.id, amount: { lt: 0 }, isChange: false } })) > 0;
     if (paid.isZero()) return refunded ? PaymentStatus.REFUNDED : PaymentStatus.UNPAID;
     if (paid.greaterThanOrEqualTo(dec(order.grandTotal).sub(order.returnedTotal))) {
       return refunded ? PaymentStatus.PARTIALLY_REFUNDED : PaymentStatus.PAID;
@@ -292,12 +314,21 @@ export class PaymentsService {
     return refunded ? PaymentStatus.PARTIALLY_REFUNDED : PaymentStatus.PARTIALLY_PAID;
   }
 
-  private async resolveCashAccount(tx: Tx, input: MoneyMovement): Promise<string> {
+  private async resolveCashAccount(tx: Tx, input: MoneyMovement, currency: string, userId: string | null): Promise<string> {
+    if (input.method === PaymentMethod.CUSTOMER_ACCOUNT) {
+      const acc = await tx.account.findUniqueOrThrow({ where: { systemKey: 'CUSTOMER_ACCOUNTS' }, select: { id: true } });
+      return acc.id;
+    }
     if (input.accountId) {
       const acc = await tx.account.findUnique({ where: { id: input.accountId } });
       const allowed = acc && acc.isActive && acc.isPostable && (acc.isCashOrBank || acc.systemKey === 'COD_RECEIVABLE');
       if (!allowed) throw new BadRequestException('Choose an active cash, bank or wallet account');
       return acc.id;
+    }
+    // Foreign cash goes to the staff member's drawer (or the safe); transfers to a bank box of that currency.
+    if (currency !== BASE_CURRENCY && (input.method === PaymentMethod.CASH || input.method === PaymentMethod.BANK_TRANSFER)) {
+      const kind = input.method === PaymentMethod.CASH ? 'VAULT' : 'BANK';
+      return (await this.treasury.defaultBox(tx, currency, { userId: kind === 'VAULT' ? (userId ?? undefined) : undefined, kind })).accountId;
     }
     const key = DEFAULT_ACCOUNT[input.method];
     const acc = await tx.account.findUnique({ where: { systemKey: key }, select: { id: true } });

@@ -20,9 +20,9 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { CouponType, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus, Currency } from '../../generated/prisma/client';
+import { CouponType, OrderChannel, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
-import { IsAmount } from '../../common/decorators/validation.decorators';
+import { IsAmount, IsCurrencyCode } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 const upper = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toUpperCase() : value);
@@ -43,7 +43,7 @@ export class AddressDto {
   recipient: string;
 
   @ApiProperty({ example: '01012345678' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
   phone: string;
 
   @ApiProperty({ example: 'القاهرة' })
@@ -158,6 +158,7 @@ export const CHECKOUT_METHODS = [
   PaymentMethod.WALLET,
   PaymentMethod.INSTAPAY,
   PaymentMethod.BANK_TRANSFER,
+  PaymentMethod.CUSTOMER_ACCOUNT,
 ] as const;
 
 export class CheckoutDto {
@@ -175,10 +176,10 @@ export class CheckoutDto {
   @MaxLength(500)
   customerNote?: string;
 
-  @ApiPropertyOptional({ enum: Currency, default: Currency.SAR, description: 'Currency to invoice in; the current rate is locked into the order' })
+  @ApiPropertyOptional({ example: 'SAR', description: 'Currency to invoice in; the current rate is locked into the order' })
   @IsOptional()
-  @IsEnum(Currency)
-  currency?: Currency;
+  @IsCurrencyCode()
+  currency?: string;
 }
 
 export class CancelOrderDto {
@@ -201,6 +202,16 @@ export class AdminOrdersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(PaymentStatus)
   paymentStatus?: PaymentStatus;
+
+  @ApiPropertyOptional({ enum: OrderChannel, description: 'ONLINE (app) or POS (till)' })
+  @IsOptional()
+  @IsEnum(OrderChannel)
+  channel?: OrderChannel;
+
+  @ApiPropertyOptional({ description: 'POS sales of one cashier' })
+  @IsOptional()
+  @IsUUID()
+  cashierId?: string;
 
   @ApiPropertyOptional({ description: 'Order number, customer name or phone' })
   @IsOptional()
@@ -263,12 +274,12 @@ export class RecordPaymentDto {
   reference?: string;
 
   @ApiPropertyOptional({
-    enum: Currency,
+    example: 'YER',
     description: "Currency of `amount`: SAR (default) or the order's own currency, converted at the order's rate",
   })
   @IsOptional()
-  @IsEnum(Currency)
-  currency?: Currency;
+  @IsCurrencyCode()
+  currency?: string;
 }
 
 export class RefundDto extends RecordPaymentDto {

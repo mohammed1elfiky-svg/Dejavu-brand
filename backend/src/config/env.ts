@@ -33,7 +33,7 @@ export function validateEnv(raw: Record<string, unknown>) {
     JWT_ACCESS_TTL: str('JWT_ACCESS_TTL', '15m'),
     JWT_REFRESH_TTL_DAYS: int('JWT_REFRESH_TTL_DAYS', 30),
     AUTH_RATE_LIMIT: int('AUTH_RATE_LIMIT', 10),
-    STORE_TIMEZONE: str('STORE_TIMEZONE', 'Africa/Cairo'),
+    STORE_TIMEZONE: str('STORE_TIMEZONE', 'Asia/Aden'),
     /** Address the outside world (browsers, Paymob) uses to reach this server, without /api/v1. */
     PUBLIC_BASE_URL: str('PUBLIC_BASE_URL', defaultPublicUrl(raw)).replace(/\/+$/, ''),
     /** test = built-in fake card page (development), paymob = real payments, none = card payments off. */

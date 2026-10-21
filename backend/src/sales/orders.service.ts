@@ -13,11 +13,10 @@ import {
   ShipmentStatus,
   StockMovementType,
   TransactionStatus,
-  Currency,
 } from '../generated/prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
-import { CurrencyService, toCurrency } from '../common/currency.service';
+import { BASE_CURRENCY, CurrencyService, toCurrency } from '../common/currency.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { parseDateOnly } from '../common/utils/dates';
@@ -141,8 +140,8 @@ export class OrdersService {
       }
 
       const p = quote.pricing;
-      const currency = dto.currency ?? Currency.SAR;
-      const exchangeRate = await this.currencies.rate(currency, tx);
+      const currency = dto.currency ?? BASE_CURRENCY;
+      const { rate: exchangeRate } = await this.currencies.requireActive(currency, tx, { customerApp: true });
       const order = await tx.order.create({
         data: {
           number: await this.sequences.next(tx, 'SO'),
@@ -187,6 +186,16 @@ export class OrdersService {
       const cart = await tx.cart.findUniqueOrThrow({ where: { customerId } });
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
+      if (dto.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT) {
+        // Paid straight from the wallet balance in the order's currency.
+        const { order: paid } = await this.payments.receive(
+          tx,
+          order,
+          { method: PaymentMethod.CUSTOMER_ACCOUNT, currency, amount: toCurrency(order.grandTotal, currency, exchangeRate) },
+          null,
+        );
+        await this.autoConfirm(tx, paid, null);
+      }
       return order;
     });
     void this.notifications.notifyStaff('orders.update_status', {
@@ -259,6 +268,8 @@ export class OrdersService {
     const where: Prisma.OrderWhereInput = {
       status: q.status,
       paymentStatus: q.paymentStatus,
+      channel: q.channel,
+      cashierId: q.cashierId,
       placedAt: {
         gte: q.from ? parseDateOnly(q.from) : undefined,
         lt: q.to ? new Date(parseDateOnly(q.to).getTime() + 86_400_000) : undefined,

@@ -6,6 +6,7 @@ export const DEMO_STAFF = [
   { role: 'accountant', name: 'محاسب تجريبي', email: 'accountant@dejavu.local', password: DEMO_PASSWORD },
   { role: 'storekeeper', name: 'أمين مخزن تجريبي', email: 'store@dejavu.local', password: DEMO_PASSWORD },
   { role: 'sales', name: 'موظف مبيعات تجريبي', email: 'sales@dejavu.local', password: DEMO_PASSWORD },
+  { role: 'cashier', name: 'كاشير تجريبي', email: 'cashier@dejavu.local', password: DEMO_PASSWORD },
 ] as const;
 
 export const DEMO_CUSTOMERS = [

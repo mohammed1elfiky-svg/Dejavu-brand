@@ -1,8 +1,10 @@
 import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsIn,
   IsInt,
@@ -11,6 +13,7 @@ import {
   IsUrl,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -68,15 +71,19 @@ export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
 // ---------------------------------------------------------------- products ---
 
 export class VariantDto {
-  @ApiProperty({ example: 'DJV-DRS-001-M-BLK' })
-  @Matches(/^[A-Z0-9][A-Z0-9-]{1,49}$/, { message: 'sku must be uppercase letters, digits and dashes' })
-  sku: string;
-
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '100-1', description: 'Leave out to number it automatically: <product SKU>-<n>' })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Matches(/^[A-Z0-9][A-Z0-9-]{1,49}$/, { message: 'sku must be uppercase letters, digits and dashes' })
+  sku?: string;
+
+  @ApiPropertyOptional({ description: "Manufacturer's barcode printed on the item (scanned with the camera)" })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || null : value))
+  @ValidateIf((_, v) => v !== null)
   @IsString()
   @MaxLength(64)
-  barcode?: string;
+  barcode?: string | null;
 
   @ApiPropertyOptional({ example: 'M' })
   @IsOptional()
@@ -121,8 +128,8 @@ export class NewVariantDto extends VariantDto {
   @Min(0)
   initialQuantity?: number;
 
-  @ApiPropertyOptional({ example: '45.00', description: 'Cost per piece in SAR; required with initialQuantity' })
-  @ValidateIf((o) => (o.initialQuantity ?? 0) > 0)
+  @ApiPropertyOptional({ example: '45.00', description: "Cost per piece in SAR; defaults to the product's cost" })
+  @IsOptional()
   @IsAmount()
   unitCost?: string;
 }
@@ -139,10 +146,16 @@ export class ProductImageDto {
   @IsUrl()
   url: string;
 
-  @ApiPropertyOptional({ description: 'Image specific to one variant (e.g. a color)' })
+  @ApiPropertyOptional({ description: 'Image specific to one variant' })
   @IsOptional()
   @IsUUID()
   variantId?: string;
+
+  @ApiPropertyOptional({ example: 'أسود', description: 'Shown when the shopper picks this color' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  color?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -157,7 +170,8 @@ export class ProductImageDto {
 }
 
 export class ReplaceImagesDto {
-  @ApiProperty({ type: [ProductImageDto] })
+  @ApiProperty({ type: [ProductImageDto], maxItems: 10 })
+  @ArrayMaxSize(10)
   @ValidateNested({ each: true })
   @Type(() => ProductImageDto)
   images: ProductImageDto[];
@@ -203,6 +217,18 @@ export class CreateProductDto {
   @IsAmount()
   basePrice: string;
 
+  @ApiPropertyOptional({ example: '450.00', description: 'Cost per piece in SAR, shared by all sizes and colors' })
+  @IsOptional()
+  @IsAmount()
+  costPrice?: string;
+
+  @ApiPropertyOptional({ example: 100, description: 'Numeric product SKU (100-100000); assigned automatically when left out' })
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  @Max(100000)
+  skuNumber?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsAmount()
@@ -228,14 +254,15 @@ export class CreateProductDto {
   @ArrayMinSize(1)
   variants: NewVariantDto[];
 
-  @ApiPropertyOptional({ type: [ProductImageDto] })
+  @ApiPropertyOptional({ type: [ProductImageDto], maxItems: 10 })
   @IsOptional()
+  @ArrayMaxSize(10)
   @ValidateNested({ each: true })
   @Type(() => ProductImageDto)
   images?: ProductImageDto[];
 }
 
-export class UpdateProductDto extends PartialType(OmitType(CreateProductDto, ['variants', 'images'] as const)) {}
+export class UpdateProductDto extends PartialType(OmitType(CreateProductDto, ['variants', 'images', 'skuNumber'] as const)) {}
 
 export class AdminProductsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional()
@@ -276,3 +303,38 @@ export class StoreProductsQueryDto extends PaginationQueryDto {
   @IsIn(['newest', 'price_asc', 'price_desc'])
   sort?: 'newest' | 'price_asc' | 'price_desc';
 }
+
+export class PromotionDto {
+  @ApiProperty({ example: 'تخفيضات نهاية الموسم' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(100)
+  name: string;
+
+  @ApiProperty({ example: '20', description: 'Percent off, e.g. 20 for 20%' })
+  @IsAmount()
+  percent: string;
+
+  @ApiPropertyOptional({ description: 'Defaults to now' })
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsDateString()
+  endsAt?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiProperty({ type: [String] })
+  @IsUUID('all', { each: true })
+  @ArrayMinSize(1)
+  productIds: string[];
+}
+
+export class UpdatePromotionDto extends PartialType(PromotionDto) {}

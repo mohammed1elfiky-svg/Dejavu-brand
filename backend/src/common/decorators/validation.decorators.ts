@@ -16,3 +16,10 @@ export const IsAmount = () =>
   );
 
 export const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** A currency code such as SAR, YER or USD (upper-cased on input). */
+export const IsCurrencyCode = () =>
+  applyDecorators(
+    Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value)),
+    Matches(/^[A-Z][A-Z0-9_]{1,9}$/, { message: '$property must be a currency code such as SAR' }),
+  );

@@ -110,6 +110,18 @@ async function main() {
   const get = <T>(cls: new (...args: never[]) => T) => app.get(cls, { strict: false });
   const prisma = get(PrismaService);
 
+  const admin = await prisma.user.findFirstOrThrow({ where: { roles: { some: { role: { name: 'admin' } } } } });
+  // Staff for each role; also tops up demo databases loaded before a role existed.
+  const users = get(UsersService);
+  const roles = await prisma.role.findMany();
+  for (const s of DEMO_STAFF.filter((x) => x.role !== 'admin')) {
+    if (await prisma.user.findUnique({ where: { email: s.email } })) continue;
+    await users.createUser(
+      { name: s.name, email: s.email, password: DEMO_PASSWORD, roleIds: [roles.find((r) => r.name === s.role)!.id] },
+      admin.id,
+    );
+  }
+
   if (await prisma.setting.findUnique({ where: { key: MARKER } })) {
     console.log('Demo data already loaded — nothing to do.');
     await app.close();
@@ -122,25 +134,13 @@ async function main() {
   const cart = get(CartService);
   const orders = get(OrdersService);
   const auth = get(AuthService);
-  const users = get(UsersService);
   const accounting = get(AccountingService);
   const purchasing = get(PurchasingService);
   const expenses = get(ExpensesService);
   const returns = get(ReturnsService);
   const settlements = get(CourierSettlementsService);
 
-  const admin = await prisma.user.findFirstOrThrow({ where: { roles: { some: { role: { name: 'admin' } } } } });
   const warehouse = await prisma.warehouse.findFirstOrThrow({ where: { isDefault: true } });
-
-  // ---- staff for each role
-  const roles = await prisma.role.findMany();
-  for (const s of DEMO_STAFF.filter((x) => x.role !== 'admin')) {
-    if (await prisma.user.findUnique({ where: { email: s.email } })) continue;
-    await users.createUser(
-      { name: s.name, email: s.email, password: DEMO_PASSWORD, roleIds: [roles.find((r) => r.name === s.role)!.id] },
-      admin.id,
-    );
-  }
 
   // ---- catalog + opening stock
   const categoryId: Record<string, string> = {};

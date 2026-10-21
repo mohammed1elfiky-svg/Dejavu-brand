@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ProductStatus } from '../generated/prisma/client';
+import { AdjustmentReason } from '../inventory/dto/inventory.dto';
 import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
-import { PrismaService } from '../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { PrismaService, Tx } from '../prisma/prisma.service';
 import {
   AdminProductsQueryDto,
   CreateCategoryDto,
@@ -12,6 +14,7 @@ import {
   UpdateCategoryDto,
   UpdateProductDto,
   UpdateVariantDto,
+  NewVariantDto,
   VariantDto,
 } from './dto/catalog.dto';
 
@@ -71,6 +74,7 @@ export class CatalogService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly inventory: InventoryService,
   ) {}
 
   // ----------------------------------------------------------- categories ---
@@ -185,6 +189,7 @@ export class CatalogService {
       if (images?.length) {
         await tx.productImage.createMany({ data: this.imageRows(created.id, images, created.variants.map((v) => v.id)) });
       }
+      await this.openingStock(tx, variants.map((v) => ({ ...v, id: created.variants.find((c) => c.sku === v.sku)!.id })), userId);
       return created;
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Product', entityId: product.id, after: dto });
@@ -202,9 +207,13 @@ export class CatalogService {
     return this.getProduct(id);
   }
 
-  async addVariant(productId: string, dto: VariantDto, userId: string) {
+  async addVariant(productId: string, dto: NewVariantDto, userId: string) {
     await this.getProduct(productId);
-    const variant = await this.prisma.productVariant.create({ data: { ...variantData(dto), productId } });
+    const variant = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.productVariant.create({ data: { ...variantData(dto), productId } });
+      await this.openingStock(tx, [{ ...dto, id: created.id }], userId);
+      return created;
+    });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'ProductVariant', entityId: variant.id, after: dto });
     return variant;
   }
@@ -225,6 +234,17 @@ export class CatalogService {
     ]);
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'ProductImages', entityId: productId, after: images });
     return this.getProduct(productId);
+  }
+
+  /** Books the initial pieces of new variants in the default warehouse, with their journal entry. */
+  private async openingStock(tx: Tx, variants: (NewVariantDto & { id: string })[], userId: string) {
+    const items = variants
+      .filter((v) => (v.initialQuantity ?? 0) > 0)
+      .map((v) => ({ variantId: v.id, quantity: v.initialQuantity!, unitCost: v.unitCost! }));
+    if (!items.length) return;
+    const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true }, select: { id: true } });
+    if (!warehouse) throw new BadRequestException('No default warehouse is configured');
+    await this.inventory.adjustIn(tx, { warehouseId: warehouse.id, reason: AdjustmentReason.OPENING, items, note: 'Initial stock' }, userId);
   }
 
   private imageRows(productId: string, images: ProductImageDto[], variantIds: string[]) {

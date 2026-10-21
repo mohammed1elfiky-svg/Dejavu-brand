@@ -113,6 +113,20 @@ export class VariantDto {
   lowStockThreshold?: number;
 }
 
+/** A new variant, optionally with its opening stock in the default warehouse. */
+export class NewVariantDto extends VariantDto {
+  @ApiPropertyOptional({ example: 10, description: 'Pieces on hand now (booked as opening stock)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  initialQuantity?: number;
+
+  @ApiPropertyOptional({ example: '45.00', description: 'Cost per piece in SAR; required with initialQuantity' })
+  @ValidateIf((o) => (o.initialQuantity ?? 0) > 0)
+  @IsAmount()
+  unitCost?: string;
+}
+
 export class UpdateVariantDto extends PartialType(VariantDto) {
   @ApiPropertyOptional()
   @IsOptional()
@@ -208,11 +222,11 @@ export class CreateProductDto {
   @IsBoolean()
   isFeatured?: boolean;
 
-  @ApiProperty({ type: [VariantDto] })
+  @ApiProperty({ type: [NewVariantDto] })
   @ValidateNested({ each: true })
-  @Type(() => VariantDto)
+  @Type(() => NewVariantDto)
   @ArrayMinSize(1)
-  variants: VariantDto[];
+  variants: NewVariantDto[];
 
   @ApiPropertyOptional({ type: [ProductImageDto] })
   @IsOptional()

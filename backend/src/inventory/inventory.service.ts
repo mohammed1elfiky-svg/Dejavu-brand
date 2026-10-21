@@ -132,8 +132,13 @@ export class InventoryService {
     }
     assertUniqueVariants(dto.items);
     await this.assertWarehouse(dto.warehouseId);
+    return this.prisma.$transaction((tx) => this.adjustIn(tx, dto, userId));
+  }
 
-    return this.prisma.$transaction(async (tx) => {
+  /** [adjust] inside a caller's transaction (e.g. opening stock of a new product). */
+  async adjustIn(tx: Tx, dto: StockAdjustmentDto, userId: string) {
+    const increase = INCREASE_REASONS.includes(dto.reason);
+    {
       const sourceId = randomUUID();
       const number = await this.sequences.next(tx, 'ADJ');
       const opening = dto.reason === AdjustmentReason.OPENING;
@@ -150,7 +155,7 @@ export class InventoryService {
       });
       await this.audit.log({ userId, action: 'CREATE', entityType: 'StockAdjustment', entityId: sourceId, after: dto }, tx);
       return { number, sourceId, totalValue: result.increaseValue.add(result.decreaseValue), journalEntryId: result.journalEntryId };
-    });
+    }
   }
 
   /**

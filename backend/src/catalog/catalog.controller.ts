@@ -10,8 +10,8 @@ import {
   StoreProductsQueryDto,
   UpdateCategoryDto,
   UpdateProductDto,
+  NewVariantDto,
   UpdateVariantDto,
-  VariantDto,
 } from './dto/catalog.dto';
 
 @ApiTags('Admin · Catalog')
@@ -76,7 +76,7 @@ export class AdminCatalogController {
 
   @RequirePermissions('products.write')
   @Post('products/:id/variants')
-  addVariant(@Param('id', ParseUUIDPipe) id: string, @Body() dto: VariantDto, @CurrentUser() u: AuthPrincipal) {
+  addVariant(@Param('id', ParseUUIDPipe) id: string, @Body() dto: NewVariantDto, @CurrentUser() u: AuthPrincipal) {
     return this.catalog.addVariant(id, dto, u.id);
   }
 

@@ -29,7 +29,9 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -73,6 +75,7 @@ import com.dejavu.core.data.Validators
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.ReturnStatus
 import com.dejavu.core.model.SalesReturn
@@ -133,6 +136,7 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Refresh, "طلبات الإرجاع", returns)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
                     HorizontalDivider()
+                    CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
                     MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.logout() } }
                 }
@@ -144,6 +148,7 @@ fun AccountScreen(
                         OutlinedButton(onClick = register, modifier = Modifier.fillMaxWidth()) { Text("إنشاء حساب جديد") }
                     }
                     HorizontalDivider()
+                    CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
                 }
             }
@@ -154,6 +159,48 @@ fun AccountScreen(
                 modifier = Modifier.padding(16.dp),
             )
         }
+    }
+}
+
+/** Prices in SAR or YER. Orders already placed keep the currency and rate they were placed with. */
+@Composable
+private fun CurrencyRow() {
+    val currencies = appContainer().currencies
+    val selected by currencies.selected.collectAsStateWithLifecycle()
+    val rates by currencies.rates.collectAsStateWithLifecycle()
+    var open by remember { mutableStateOf(false) }
+    val yer = rates?.rate(Currency.YER)
+    ListItem(
+        headlineContent = { Text("عملة العرض: ${selected.nameAr}") },
+        supportingContent = yer?.let { { Text("1 ر.س = ${Money.plain(it.rate.toBigDecimal(), Currency.YER)}") } },
+        leadingContent = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
+        modifier = Modifier.clickable { open = true },
+    )
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("عملة عرض الأسعار") },
+            text = {
+                Column {
+                    Currency.entries.forEach { c ->
+                        val available = c == Currency.SAR || rates?.rate(c) != null
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = available) { currencies.select(c); open = false }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = c == selected, onClick = null, enabled = available)
+                            Text("${c.nameAr} (${c.symbol})")
+                        }
+                    }
+                    Text(
+                        "الأسعار محفوظة بالريال السعودي وتُحوَّل بسعر الصرف الحالي. عند إتمام الطلب يُثبَّت سعر الصرف في فاتورتك.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("إغلاق") } },
+        )
     }
 }
 
@@ -457,7 +504,7 @@ fun ReturnsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
                                 }
                                 Text("الطلب ${r.order.number} · ${formatDate(r.requestedAt)}", style = MaterialTheme.typography.bodySmall)
                                 r.items.forEach { Text("• ${it.orderItem.productName} × ${it.quantity}", style = MaterialTheme.typography.bodySmall) }
-                                Text("قيمة الإرجاع: ${Money.format(r.refundAmount)}", style = MaterialTheme.typography.bodyMedium)
+                                Text("قيمة الإرجاع: ${Money.format(r.refundAmount, r.order.currency, r.order.exchangeRate)}", style = MaterialTheme.typography.bodyMedium)
                                 r.rejectReason?.let { Text("سبب الرفض: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                             }
                         }

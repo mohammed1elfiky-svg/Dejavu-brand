@@ -1,5 +1,6 @@
 package com.dejavu.core.data
 
+import com.dejavu.core.model.Money
 import com.dejavu.core.network.ApiException
 
 /**
@@ -33,7 +34,7 @@ object ServerMessages {
     private val patterns: List<Pair<Regex, (MatchResult) -> String>> = listOf(
         Regex("^Only (\\d+) left in stock$") to { m -> "متبقي ${m.groupValues[1]} فقط" },
         Regex("^Insufficient stock for (.+)$") to { m -> "الكمية المطلوبة غير متاحة (${m.groupValues[1]})" },
-        Regex("^Minimum order for this coupon is (.+)$") to { m -> "الحد الأدنى للطلب مع هذا الكود ${m.groupValues[1]} ج.م" },
+        Regex("^Minimum order for this coupon is (.+)$") to { m -> "الحد الأدنى للطلب مع هذا الكود ${Money.format(m.groupValues[1])}" },
         Regex("^Delivery to (.+) is not available yet$") to { m -> "التوصيل إلى ${m.groupValues[1]} غير متاح حالياً" },
         Regex("^At most (\\d+) pieces per item$") to { m -> "الحد الأقصى ${m.groupValues[1]} قطعة لكل منتج" },
         Regex("^Returns are accepted within (\\d+) days of delivery$") to { m -> "يمكن الإرجاع خلال ${m.groupValues[1]} يوماً من الاستلام" },

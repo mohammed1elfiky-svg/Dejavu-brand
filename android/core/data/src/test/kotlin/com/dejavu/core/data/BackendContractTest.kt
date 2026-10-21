@@ -1,11 +1,14 @@
 package com.dejavu.core.data
 
 import com.dejavu.core.model.AddressRequest
+import com.dejavu.core.model.Currency
+import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentStatus
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.network.ApiClient
 import com.dejavu.core.network.ApiException
+import com.dejavu.core.network.DejavuApi
 import com.dejavu.core.network.InMemoryTokenStore
 import kotlinx.coroutines.runBlocking
 import okhttp3.FormBody
@@ -33,12 +36,14 @@ class BackendContractTest {
     private lateinit var orders: OrderRepository
     private lateinit var notifications: NotificationRepository
     private lateinit var http: OkHttpClient
+    private lateinit var api: DejavuApi
 
     @Before fun setUp() {
         assumeTrue("Set DEJAVU_API_URL to run backend contract tests", url.isNotBlank())
         val tokens = InMemoryTokenStore()
         lateinit var s: SessionRepository
-        val (api, client) = ApiClient.create(baseUrl = { url }, tokens = tokens, onSessionExpired = { s.onSessionExpired() })
+        val (dejavuApi, client) = ApiClient.create(baseUrl = { url }, tokens = tokens, onSessionExpired = { s.onSessionExpired() })
+        api = dejavuApi
         http = client
         s = SessionRepository(api, tokens)
         session = s
@@ -166,5 +171,33 @@ class BackendContractTest {
         notifications.registerDevice(token, "test").getOrThrow()
         notifications.unregisterDevice(token).getOrThrow()
         session.logout()
+    }
+
+    @Test
+    fun `shops in YER at the published rate, and the order keeps that rate`() = runBlocking {
+        var saved = Currency.SAR
+        val currencies = CurrencyRepository(api, { saved }, { saved = it })
+        val rates = currencies.refresh().getOrThrow()
+        assertEquals(Currency.SAR, rates.base)
+        val yer = rates.rate(Currency.YER)!!.rate
+        currencies.select(Currency.YER)
+        assertEquals(Currency.YER, saved)
+        assertEquals(Currency.YER, Money.display.currency)
+        try {
+            val addressId = shopperWithCart()
+            val quote = cart.refresh(addressId).getOrThrow()
+            val order = orders.checkout(addressId, PaymentMethod.CASH_ON_DELIVERY, null, currencies.checkoutCurrency()).getOrThrow()
+            assertEquals(Currency.YER, order.currency)
+            assertEquals(yer.toBigDecimal(), order.exchangeRate.toBigDecimal())
+            // What the cart showed is what the invoice says.
+            assertEquals(Money.format(quote.totals.grandTotal), order.format(order.grandTotal))
+            val listed = orders.orders().getOrThrow().items.first { it.number == order.number }
+            assertEquals(order.format(order.grandTotal), listed.format(listed.grandTotal))
+            orders.cancel(order.number, "تجربة العملة").getOrThrow()
+        } finally {
+            currencies.select(Currency.SAR)
+            session.logout()
+        }
+        Unit
     }
 }

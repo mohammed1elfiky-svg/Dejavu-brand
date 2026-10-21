@@ -1,6 +1,9 @@
 package com.dejavu.core.admin
 
+import com.dejavu.core.model.Currency
+import com.dejavu.core.model.CurrencyRate
 import com.dejavu.core.model.ItemCount
+import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.PaymentStatus
@@ -78,7 +81,13 @@ data class AdminOrderSummary(
     val placedAt: String,
     val customer: PersonRef,
     @SerialName("_count") val count: ItemCount? = null,
-)
+    val currency: Currency = Currency.SAR,
+    val exchangeRate: String = "1",
+) {
+    /** "18,000 ر.ي" for a YER order, the SAR amount otherwise. */
+    val totalShown: String
+        get() = if (currency == Currency.SAR) Money.format(grandTotal) else Money.format(grandTotal, currency, exchangeRate)
+}
 
 @Serializable
 data class AdminOrderItem(
@@ -108,7 +117,18 @@ data class AdminPayment(
     /** PENDING / FAILED / CANCELLED are online card attempts that never reached the books. */
     val status: String = "SUCCEEDED",
     val gateway: String? = null,
+    /** Currency the money was handed over in; [amount] is its SAR value. */
+    val currency: Currency = Currency.SAR,
+    val currencyAmount: String? = null,
 ) {
+    /** "7,000 ر.ي (46.67 ر.س)" for YER, the SAR amount otherwise. */
+    val shown: String
+        get() = if (currency == Currency.SAR || currencyAmount == null) {
+            Money.formatBase(amount)
+        } else {
+            "${Money.plain(Money.parse(currencyAmount), currency)} (${Money.formatBase(amount)})"
+        }
+
     val isRefund: Boolean get() = amount.startsWith("-")
     val isSettled: Boolean get() = status == "SUCCEEDED"
 }
@@ -194,7 +214,22 @@ data class AdminOrderDetail(
     val returns: List<ReturnRef> = emptyList(),
     val profit: Profit,
     val journalEntries: List<JournalEntryView> = emptyList(),
+    val currency: Currency = Currency.SAR,
+    /** Units of [currency] per 1 SAR, locked at checkout. */
+    val exchangeRate: String = "1",
 ) {
+    val isForeign: Boolean get() = currency != Currency.SAR
+
+    /** Currencies money for this order can be entered in: its own first, then SAR. */
+    val currencies: List<Currency> get() = listOfNotNull(currency.takeIf { isForeign }, Currency.SAR)
+
+    /** A SAR amount of this order in its own currency, at its locked rate. */
+    fun inOrderCurrency(amountSar: String?): String = Money.format(amountSar, currency, exchangeRate)
+
+    /** What is still owed, in the order's currency (whole riyals for YER), as the API computes it. */
+    val balanceDueInCurrency: String
+        get() = Money.convert(Money.parse(balanceDue), currency, Money.parse(exchangeRate)).toPlainString()
+
     /** Next steps staff can take, in the order the backend allows them. */
     val nextStatuses: List<OrderStatus>
         get() = when (status) {
@@ -221,10 +256,12 @@ data class ChangeStatusRequest(val status: OrderStatus, val note: String? = null
 @Serializable
 data class PaymentRequest(
     val method: PaymentMethod,
+    /** In [currency] (SAR when null). */
     val amount: String,
     val accountId: String? = null,
     val reference: String? = null,
     val reason: String? = null,
+    val currency: Currency? = null,
 )
 
 // --------------------------------------------------------------- returns ---
@@ -711,3 +748,16 @@ data class AdminCustomerDetail(
     @Serializable data class Lifetime(val orders: Int, val spent: String)
     @Serializable data class Order(val id: String, val number: String, val status: OrderStatus, val grandTotal: String, val placedAt: String)
 }
+
+// ------------------------------------------------------------ currencies ---
+
+@Serializable
+data class ExchangeRates(val base: Currency, val currencies: List<CurrencyRate>, val history: List<Entry> = emptyList()) {
+    @Serializable data class Entry(val id: String, val rate: String, val note: String? = null, val effectiveAt: String, val createdBy: PersonName? = null)
+    @Serializable data class PersonName(val id: String, val name: String)
+
+    fun rate(code: Currency): CurrencyRate? = currencies.firstOrNull { it.code == code }
+}
+
+@Serializable
+data class SetRateRequest(val rate: String, val note: String? = null)

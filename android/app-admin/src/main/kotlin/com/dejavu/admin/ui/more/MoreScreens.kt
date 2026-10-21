@@ -70,6 +70,7 @@ private val menu = listOf(
     MenuEntry(R.SETTLEMENTS, "توريدات الشحن", "تحصيل الدفع عند الاستلام من شركات الشحن", Icons.Filled.DateRange, listOf(Perm.PAYMENTS_READ)),
     MenuEntry(R.REPORTS, "التقارير", "الأرباح والخسائر والمركز المالي والمبيعات", Icons.Filled.Info, listOf(Perm.REPORTS_FINANCIAL, Perm.REPORTS_SALES)),
     MenuEntry(R.CUSTOMERS, "العملاء", "بيانات العملاء وأرصدتهم", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ)),
+    MenuEntry(R.CURRENCY, "العملة وسعر الصرف", "الريال السعودي والريال اليمني", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE)),
 )
 
 @Composable

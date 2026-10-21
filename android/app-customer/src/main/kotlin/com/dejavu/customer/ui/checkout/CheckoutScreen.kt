@@ -44,14 +44,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.AddressRepository
 import com.dejavu.core.data.CartRepository
+import com.dejavu.core.data.CurrencyRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.ServerMessages
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Address
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.network.ApiException
 import com.dejavu.core.ui.BaseViewModel
+import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.CollectMessages
@@ -79,6 +82,7 @@ class CheckoutViewModel(
     private val addressRepo: AddressRepository,
     private val cartRepo: CartRepository,
     private val orders: OrderRepository,
+    private val currencies: CurrencyRepository,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow(CheckoutState())
     val state = _state.asStateFlow()
@@ -89,6 +93,8 @@ class CheckoutViewModel(
 
     init {
         viewModelScope.launch { _state.value = _state.value.copy(methods = orders.paymentMethods()) }
+        // Fresh rate before invoicing, so the total shown is the one the order gets.
+        viewModelScope.launch { currencies.refresh() }
     }
 
     fun loadAddresses() {
@@ -120,7 +126,7 @@ class CheckoutViewModel(
         if (s.placing) return
         _state.value = s.copy(placing = true, problems = emptyList())
         viewModelScope.launch {
-            orders.checkout(addressId, s.method, s.note)
+            orders.checkout(addressId, s.method, s.note, currencies.checkoutCurrency())
                 .onSuccess { order ->
                     // The order exists either way; if the card page fails to open, it can be retried from the order.
                     val url = if (order.canPayByCard) orders.payByCard(order.number).orSay()?.checkoutUrl else null
@@ -139,7 +145,8 @@ class CheckoutViewModel(
 
 @Composable
 fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) -> Unit) {
-    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders) }
+    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies) }
+    val rates by appContainer().currencies.rates.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val cart by vm.cart.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -165,6 +172,17 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
             Surface(shadowElevation = 8.dp) {
                 Column(Modifier.padding(16.dp)) {
                     cart?.let { SummaryRow("الإجمالي", Money.format(it.totals.grandTotal), strong = true) }
+                    // Recompose when the rate refreshes.
+                    rates?.let {
+                        val d = Money.display
+                        if (d.currency != Currency.SAR) {
+                            Text(
+                                "بالريال اليمني بسعر 1 ر.س = ${Money.plain(d.rate, d.currency)}، ويُثبَّت هذا السعر في فاتورتك",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Button(
                         onClick = vm::place,
                         enabled = !state.placing && state.addressId != null && cart?.canCheckout == true,
@@ -243,7 +261,7 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
 
 private fun methodHint(m: PaymentMethod): String? = when (m) {
     PaymentMethod.CASH_ON_DELIVERY -> null
-    PaymentMethod.CARD -> "ادفع بأمان على صفحة الدفع الإلكتروني بعد تأكيد الطلب (فيزا، ماستركارد، ميزة)"
+    PaymentMethod.CARD -> "ادفع بأمان على صفحة الدفع الإلكتروني بعد تأكيد الطلب (فيزا، ماستركارد، مدى). يُخصم المبلغ بالريال السعودي"
     else -> "سيتواصل معك فريقنا بتفاصيل الدفع لتأكيد الطلب"
 }
 

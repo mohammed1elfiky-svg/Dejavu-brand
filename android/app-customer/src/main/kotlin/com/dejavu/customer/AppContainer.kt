@@ -4,6 +4,7 @@ import android.content.Context
 import com.dejavu.core.data.AddressRepository
 import com.dejavu.core.data.CartRepository
 import com.dejavu.core.data.CatalogRepository
+import com.dejavu.core.data.CurrencyRepository
 import com.dejavu.core.data.NotificationRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
@@ -40,6 +41,7 @@ class AppContainer(private val context: Context) {
     val addresses = AddressRepository(api)
     val orders = OrderRepository(api, cart)
     val notifications = NotificationRepository(api)
+    val currencies = CurrencyRepository(api, preferred = { settings.currency }, save = { settings.currency = it })
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -66,6 +68,7 @@ class AppContainer(private val context: Context) {
     fun start() {
         if (pushEnabled) Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")
         appScope.launch { session.restore() }
+        appScope.launch { currencies.refresh() }
         // Keep the cart badge, bell badge and push registration in step with the session.
         appScope.launch {
             session.state.distinctUntilChangedBy { it is SessionState.LoggedIn }.collect { state ->

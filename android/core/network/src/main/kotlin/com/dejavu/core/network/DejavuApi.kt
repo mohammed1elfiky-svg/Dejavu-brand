@@ -7,6 +7,7 @@ import com.dejavu.core.model.AuthResponse
 import com.dejavu.core.model.CardCheckout
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
+import com.dejavu.core.model.Currencies
 import com.dejavu.core.model.CheckoutRequest
 import com.dejavu.core.model.CouponRequest
 import com.dejavu.core.model.CreateReturnRequest
@@ -124,6 +125,10 @@ interface DejavuApi {
 
     @GET("store/returns")
     suspend fun returns(): List<SalesReturn>
+
+    // currencies
+    @GET("store/currencies")
+    suspend fun currencies(): Currencies
 
     // payments
     @GET("store/payment-methods")

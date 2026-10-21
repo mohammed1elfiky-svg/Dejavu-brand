@@ -69,6 +69,7 @@ import com.dejavu.admin.ui.inventory.ProductDetailScreen
 import com.dejavu.admin.ui.inventory.ProductsScreen
 import com.dejavu.admin.ui.inventory.StockScreen
 import com.dejavu.admin.ui.products.ProductFormScreen
+import com.dejavu.admin.ui.more.CurrencyScreen
 import com.dejavu.admin.ui.more.MoreScreen
 import com.dejavu.admin.ui.more.ServerScreen
 import com.dejavu.admin.ui.orders.OrderDetailScreen
@@ -105,6 +106,7 @@ object R {
     const val CUSTOMERS = "customers"
     const val CUSTOMER = "customer/{id}"
     const val SERVER = "server"
+    const val CURRENCY = "currency"
 
     fun of(pattern: String, id: String) = pattern.replace("{id}", Uri.encode(id))
 }
@@ -208,6 +210,7 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
             composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             composable(R.SERVER) { ServerScreen(back) }
+            composable(R.CURRENCY) { CurrencyScreen(session, back) }
         }
     }
 }

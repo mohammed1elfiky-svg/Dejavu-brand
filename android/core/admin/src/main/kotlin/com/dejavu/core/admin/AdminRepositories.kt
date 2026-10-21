@@ -1,5 +1,6 @@
 package com.dejavu.core.admin
 
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.DeviceRequest
 import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.OrderStatus
@@ -38,6 +39,7 @@ object Perm {
     const val JOURNAL_READ = "journal.read"
     const val REPORTS_FINANCIAL = "reports.financial"
     const val REPORTS_SALES = "reports.sales"
+    const val SETTINGS_MANAGE = "settings.manage"
 }
 
 // ----------------------------------------------------------------- session ---
@@ -111,11 +113,24 @@ class AdminOrderRepository(private val api: AdminApi) {
     suspend fun changeStatus(id: String, status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null) =
         apiCall { api.changeStatus(id, ChangeStatusRequest(status, note?.ifBlank { null }, carrier?.ifBlank { null }, tracking?.ifBlank { null })) }
 
-    suspend fun recordPayment(id: String, method: PaymentMethod, amount: String, reference: String? = null, accountId: String? = null) =
-        apiCall { api.recordPayment(id, PaymentRequest(method, amount, accountId, reference?.ifBlank { null })) }
+    /** [amount] is in [currency]: SAR, or the order's own currency at its locked rate. */
+    suspend fun recordPayment(
+        id: String,
+        method: PaymentMethod,
+        amount: String,
+        reference: String? = null,
+        accountId: String? = null,
+        currency: Currency = Currency.SAR,
+    ) = apiCall { api.recordPayment(id, PaymentRequest(method, amount, accountId, reference?.ifBlank { null }, currency = currency.takeIf { it != Currency.SAR })) }
 
-    suspend fun refund(id: String, method: PaymentMethod, amount: String, reason: String, accountId: String? = null) =
-        apiCall { api.refund(id, PaymentRequest(method, amount, accountId, reason = reason)) }
+    suspend fun refund(
+        id: String,
+        method: PaymentMethod,
+        amount: String,
+        reason: String,
+        accountId: String? = null,
+        currency: Currency = Currency.SAR,
+    ) = apiCall { api.refund(id, PaymentRequest(method, amount, accountId, reason = reason, currency = currency.takeIf { it != Currency.SAR })) }
 }
 
 class AdminReturnRepository(private val api: AdminApi) {
@@ -211,6 +226,12 @@ class FinanceRepository(private val api: AdminApi) {
 
     suspend fun settle(carrier: String, shipmentIds: List<String>, accountId: String, fees: String?, reference: String?) =
         apiCall { api.settle(SettlementRequest(carrier, shipmentIds, accountId, fees?.ifBlank { null }, reference?.ifBlank { null })) }
+
+    suspend fun exchangeRates() = apiCall { api.exchangeRates() }
+
+    /** New rate for orders placed from now on; existing orders keep theirs. */
+    suspend fun setRate(currency: Currency, rate: String, note: String?) =
+        apiCall { api.setRate(currency, SetRateRequest(rate.trim(), note?.trim()?.ifBlank { null })) }
 
     suspend fun customers(query: String? = null, page: Int = 1) = apiCall { api.customers(query?.trim()?.ifBlank { null }, page) }
     suspend fun customer(id: String) = apiCall { api.customer(id) }

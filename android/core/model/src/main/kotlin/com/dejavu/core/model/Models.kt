@@ -210,7 +210,13 @@ enum class PaymentStatus { UNPAID, PARTIALLY_PAID, PAID, PARTIALLY_REFUNDED, REF
 enum class PaymentMethod { CASH_ON_DELIVERY, CARD, WALLET, BANK_TRANSFER, INSTAPAY, CASH }
 
 @Serializable
-data class CheckoutRequest(val addressId: String, val paymentMethod: PaymentMethod, val customerNote: String? = null)
+data class CheckoutRequest(
+    val addressId: String,
+    val paymentMethod: PaymentMethod,
+    val customerNote: String? = null,
+    /** Invoice currency; the current rate is locked into the order. */
+    val currency: Currency? = null,
+)
 
 @Serializable
 data class ReasonRequest(val reason: String)
@@ -227,7 +233,12 @@ data class OrderSummary(
     val grandTotal: String,
     val placedAt: String,
     @SerialName("_count") val count: ItemCount? = null,
-)
+    val currency: Currency = Currency.SAR,
+    val exchangeRate: String = "1",
+) {
+    /** A SAR amount of this order in its own currency, at its locked rate. */
+    fun format(amountSar: String?): String = Money.format(amountSar, currency, exchangeRate)
+}
 
 @Serializable
 data class OrderItem(
@@ -296,7 +307,12 @@ data class OrderDetail(
     val items: List<OrderItem>,
     val statusHistory: List<StatusChange> = emptyList(),
     val shipments: List<Shipment> = emptyList(),
+    val currency: Currency = Currency.SAR,
+    val exchangeRate: String = "1",
 ) {
+    /** A SAR amount of this order in its own currency, at the rate locked at checkout. */
+    fun format(amountSar: String?): String = Money.format(amountSar, currency, exchangeRate)
+
     val canCancel: Boolean get() = status == OrderStatus.PENDING || status == OrderStatus.CONFIRMED
 
     /** Card orders can be paid (or the payment retried) online until fully paid. */
@@ -326,7 +342,7 @@ data class ReturnedItemRef(val productName: String, val sku: String, val size: S
 data class ReturnLine(val quantity: Int, val refundAmount: String, val orderItem: ReturnedItemRef)
 
 @Serializable
-data class OrderNumberRef(val number: String)
+data class OrderNumberRef(val number: String, val currency: Currency = Currency.SAR, val exchangeRate: String = "1")
 
 @Serializable
 data class SalesReturn(
@@ -388,3 +404,13 @@ data class DeviceToken(val token: String)
 
 @Serializable
 data class DeviceRegistration(val registered: Boolean, val pushEnabled: Boolean)
+
+// ------------------------------------------------------------ currencies ---
+
+@Serializable
+data class CurrencyRate(val code: Currency, val rate: String, val updatedAt: String? = null)
+
+@Serializable
+data class Currencies(val base: Currency, val currencies: List<CurrencyRate>) {
+    fun rate(code: Currency): CurrencyRate? = currencies.firstOrNull { it.code == code }
+}

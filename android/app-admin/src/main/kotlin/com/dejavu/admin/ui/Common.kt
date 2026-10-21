@@ -36,6 +36,7 @@ import com.dejavu.core.admin.ExpenseStatus
 import com.dejavu.core.admin.JournalEntryView
 import com.dejavu.core.admin.LedgerAccount
 import com.dejavu.core.admin.PurchaseOrderStatus
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentMethod
@@ -187,7 +188,11 @@ fun TextDialog(
     )
 }
 
-/** Amount + method (+ optional reference/reason) for payments, refunds and supplier payments. */
+/**
+ * Amount + method (+ optional reference/reason) for payments, refunds and supplier payments.
+ * With several [currencies] (a YER order) the amount can be entered in either; [amountIn]
+ * gives the suggested amount per currency and [onConfirmIn] receives the chosen one.
+ */
 @Composable
 fun MoneyDialog(
     title: String,
@@ -196,21 +201,41 @@ fun MoneyDialog(
     confirm: String,
     onDismiss: () -> Unit,
     askReason: Boolean = false,
-    onConfirm: (amount: String, method: PaymentMethod, note: String) -> Unit,
+    currencies: List<Currency> = listOf(Currency.SAR),
+    amountIn: (Currency) -> String = { initialAmount },
+    onConfirmIn: ((amount: String, method: PaymentMethod, note: String, currency: Currency) -> Unit)? = null,
+    onConfirm: (amount: String, method: PaymentMethod, note: String) -> Unit = { _, _, _ -> },
 ) {
-    var amount by rememberSaveable { mutableStateOf(initialAmount) }
+    var currency by rememberSaveable { mutableStateOf(currencies.first()) }
+    var amount by rememberSaveable { mutableStateOf(amountIn(currencies.first())) }
     var method by rememberSaveable { mutableStateOf(methods.first()) }
     var note by rememberSaveable { mutableStateOf("") }
-    val valid = amount.toBigDecimalOrNull()?.let { it.signum() > 0 && it.scale() <= 2 } == true && (!askReason || note.trim().length >= 3)
+    val valid = amount.toBigDecimalOrNull()?.let { it.signum() > 0 && it.scale() <= currency.decimals } == true &&
+        (!askReason || note.trim().length >= 3)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (currencies.size > 1) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        currencies.forEach { c ->
+                            FilterChip(
+                                selected = c == currency,
+                                onClick = {
+                                    currency = c
+                                    amount = amountIn(c)
+                                },
+                                label = { Text(c.nameAr) },
+                            )
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("المبلغ") },
+                    label = { Text("المبلغ (${currency.symbol})") },
+                    supportingText = if (currency.decimals == 0) ({ Text("بدون كسور") }) else null,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
@@ -223,7 +248,15 @@ fun MoneyDialog(
                 OutlinedTextField(value = note, onValueChange = { note = it.take(100) }, label = { Text(if (askReason) "السبب" else "مرجع (اختياري)") }, singleLine = true)
             }
         },
-        confirmButton = { TextButton(onClick = { onDismiss(); onConfirm(amount, method, note.trim()) }, enabled = valid) { Text(confirm) } },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    if (onConfirmIn != null) onConfirmIn(amount, method, note.trim(), currency) else onConfirm(amount, method, note.trim())
+                },
+                enabled = valid,
+            ) { Text(confirm) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
 }

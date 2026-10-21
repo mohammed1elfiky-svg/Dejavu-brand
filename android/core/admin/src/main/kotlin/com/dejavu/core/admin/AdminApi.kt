@@ -1,5 +1,6 @@
 package com.dejavu.core.admin
 
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.DeviceRegistration
 import com.dejavu.core.model.DeviceRequest
 import com.dejavu.core.model.DeviceToken
@@ -100,6 +101,10 @@ interface AdminApi {
     // courier settlements
     @GET("admin/courier-settlements/pending") suspend fun pendingCod(@Query("carrier") carrier: String? = null): PendingCod
     @POST("admin/courier-settlements") suspend fun settle(@Body body: SettlementRequest): Settlement
+
+    // currencies
+    @GET("admin/exchange-rates") suspend fun exchangeRates(): ExchangeRates
+    @PUT("admin/exchange-rates/{currency}") suspend fun setRate(@Path("currency") currency: Currency, @Body body: SetRateRequest): ExchangeRates
 
     // customers
     @GET("admin/customers") suspend fun customers(@Query("q") query: String? = null, @Query("page") page: Int = 1): Page<AdminCustomerSummary>

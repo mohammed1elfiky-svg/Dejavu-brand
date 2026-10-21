@@ -2,6 +2,7 @@ package com.dejavu.core.ui.storage
 
 import android.content.Context
 import androidx.core.content.edit
+import com.dejavu.core.model.Currency
 import com.dejavu.core.network.normalizeBaseUrl
 
 /** Which server the app talks to. Changeable at runtime (e.g. to a Codespaces URL) from Account → Server. */
@@ -17,7 +18,13 @@ class SettingsStore(context: Context, val defaultBaseUrl: String) {
         prefs.edit { putString(KEY, baseUrl) }
     }
 
+    /** Currency the shopper sees prices in. */
+    var currency: Currency
+        get() = prefs.getString(CURRENCY, null)?.let { runCatching { Currency.valueOf(it) }.getOrNull() } ?: Currency.SAR
+        set(value) = prefs.edit { putString(CURRENCY, value.name) }
+
     private companion object {
         const val KEY = "api_base_url"
+        const val CURRENCY = "display_currency"
     }
 }

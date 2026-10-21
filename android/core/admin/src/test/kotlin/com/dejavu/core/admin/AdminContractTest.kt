@@ -11,6 +11,7 @@ import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.PaymentStatus
 import com.dejavu.core.model.ReturnStatus
 import com.dejavu.core.network.ApiClient
+import com.dejavu.core.model.Currency
 import com.dejavu.core.network.ApiException
 import com.dejavu.core.network.InMemoryTokenStore
 import kotlinx.coroutines.runBlocking
@@ -207,5 +208,27 @@ class AdminContractTest {
         val redNow = reloaded.variants.first { it.id == red.id }
         assertEquals(2, redNow.onHand)
         assertTrue(!redNow.isActive)
+    }
+
+    @Test
+    fun `admin reads and sets the YER rate`() = runBlocking {
+        assumeTrue("Set DEJAVU_API_URL to run contract tests", url.isNotBlank())
+        val (session, api) = staff()
+        session.login("admin@dejavu.local", "ChangeMe!2026").getOrThrow()
+        val finance = FinanceRepository(api)
+        val before = finance.exchangeRates().getOrThrow()
+        assertEquals(Currency.SAR, before.base)
+        val old = before.rate(Currency.YER)!!.rate
+        val updated = finance.setRate(Currency.YER, "151.25", "contract test").getOrThrow()
+        assertEquals("151.25", updated.rate(Currency.YER)!!.rate)
+        assertEquals("contract test", updated.history.first().note)
+        assertEquals("System Admin", updated.history.first().createdBy?.name)
+        finance.setRate(Currency.YER, old, "restore").getOrThrow()
+
+        // A storekeeper may not change it.
+        val (store, storeApi) = staff()
+        store.login("store@dejavu.local", "Demo!2026").getOrThrow()
+        val denied = FinanceRepository(storeApi).setRate(Currency.YER, "1", null).exceptionOrNull() as ApiException
+        assertEquals(403, denied.status)
     }
 }

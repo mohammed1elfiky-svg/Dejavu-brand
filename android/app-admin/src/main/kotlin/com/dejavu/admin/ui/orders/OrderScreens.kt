@@ -27,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,7 @@ import com.dejavu.core.admin.AdminReturnRepository
 import com.dejavu.core.admin.AdminReturnSummary
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.Page
@@ -167,7 +169,7 @@ private fun OrderRow(o: AdminOrderSummary, onClick: () -> Unit) {
             Text("${o.customer.name} · ${o.customer.phone.orEmpty()}", style = MaterialTheme.typography.bodyMedium)
             Row {
                 Text("${formatDateTime(o.placedAt)} · ${o.paymentMethod.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(Money.format(o.grandTotal), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Text(o.totalShown, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -189,8 +191,11 @@ class OrderDetailViewModel(private val id: String, private val repo: AdminOrderR
     fun changeStatus(status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null) =
         act("تم: ${status.label}") { repo.changeStatus(id, status, note, carrier, tracking) }
 
-    fun pay(amount: String, method: PaymentMethod, reference: String) = act("تم تسجيل الدفعة") { repo.recordPayment(id, method, amount, reference) }
-    fun refund(amount: String, method: PaymentMethod, reason: String) = act("تم رد المبلغ") { repo.refund(id, method, amount, reason) }
+    fun pay(amount: String, method: PaymentMethod, reference: String, currency: Currency) =
+        act("تم تسجيل الدفعة") { repo.recordPayment(id, method, amount, reference, currency = currency) }
+
+    fun refund(amount: String, method: PaymentMethod, reason: String, currency: Currency) =
+        act("تم رد المبلغ") { repo.refund(id, method, amount, reason, currency = currency) }
 
     private fun act(done: String, block: suspend () -> Result<AdminOrderDetail>) {
         if (_busy.value) return
@@ -307,6 +312,18 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                         SummaryRow("المدفوع", Money.format(o.amountPaid), valueColor = Success)
                         if (!Money.isZero(o.returnedTotal)) SummaryRow("قيمة المرتجعات", Money.format(o.returnedTotal))
                         SummaryRow("المتبقي", Money.format(o.balanceDue), strong = true)
+                        if (o.isForeign) {
+                            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                            Text("فاتورة العميل بـ${o.currency.nameAr}", style = MaterialTheme.typography.titleSmall)
+                            SummaryRow("الإجمالي", o.inOrderCurrency(o.grandTotal))
+                            SummaryRow("المدفوع", o.inOrderCurrency(o.amountPaid), valueColor = Success)
+                            SummaryRow("المتبقي", o.inOrderCurrency(o.balanceDue), strong = true)
+                            Text(
+                                "سعر الصرف المثبّت عند الطلب: 1 ر.س = ${Money.plain(Money.parse(o.exchangeRate), o.currency)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 item {
@@ -341,7 +358,7 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                                 }
                                 SummaryRow(
                                     "${p.number} · ${p.method.label}$attempt",
-                                    Money.format(p.amount),
+                                    p.shown,
                                     valueColor = when {
                                         !p.isSettled -> MaterialTheme.colorScheme.onSurfaceVariant
                                         p.isRefund -> MaterialTheme.colorScheme.error
@@ -384,8 +401,18 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                     "تأكيد",
                     { dialog = null },
                 ) { vm.changeStatus(OrderStatus.RETURNED, note = it) }
-                OrderDialog.Pay -> MoneyDialog("تسجيل دفعة", PAY_METHODS, o.balanceDue, "تسجيل", { dialog = null }) { amount, method, ref -> vm.pay(amount, method, ref) }
-                OrderDialog.Refund -> MoneyDialog("رد مبلغ للعميل", REFUND_METHODS, o.amountPaid, "رد المبلغ", { dialog = null }, askReason = true) { amount, method, reason -> vm.refund(amount, method, reason) }
+                OrderDialog.Pay -> MoneyDialog(
+                    "تسجيل دفعة", PAY_METHODS, o.balanceDue, "تسجيل", { dialog = null },
+                    currencies = o.currencies,
+                    amountIn = { c -> if (c == Currency.SAR) o.balanceDue else o.balanceDueInCurrency },
+                    onConfirmIn = { amount, method, ref, currency -> vm.pay(amount, method, ref, currency) },
+                )
+                OrderDialog.Refund -> MoneyDialog(
+                    "رد مبلغ للعميل", REFUND_METHODS, o.amountPaid, "رد المبلغ", { dialog = null }, askReason = true,
+                    currencies = o.currencies,
+                    amountIn = { c -> if (c == Currency.SAR) o.amountPaid else Money.convert(Money.parse(o.amountPaid), c, Money.parse(o.exchangeRate)).toPlainString() },
+                    onConfirmIn = { amount, method, reason, currency -> vm.refund(amount, method, reason, currency) },
+                )
                 null -> {}
             }
         }
@@ -402,7 +429,9 @@ private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("سيتم خصم المخزون وتسجيل قيد المبيعات والتكلفة.", style = MaterialTheme.typography.bodySmall)
-                if (order.paymentMethod == PaymentMethod.CASH_ON_DELIVERY) Text("المطلوب تحصيله: ${Money.format(order.balanceDue)}", color = MaterialTheme.colorScheme.secondary)
+                if (order.paymentMethod == PaymentMethod.CASH_ON_DELIVERY) {
+                    Text("المطلوب تحصيله: ${if (order.isForeign) order.inOrderCurrency(order.balanceDue) else Money.format(order.balanceDue)}", color = MaterialTheme.colorScheme.secondary)
+                }
                 OutlinedTextField(value = carrier, onValueChange = { carrier = it }, label = { Text("شركة الشحن") }, singleLine = true)
                 OutlinedTextField(value = tracking, onValueChange = { tracking = it }, label = { Text("رقم التتبع (اختياري)") }, singleLine = true)
             }

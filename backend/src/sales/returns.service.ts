@@ -182,7 +182,7 @@ export class ReturnsService {
     refundAmount: true,
     requestedAt: true,
     resolvedAt: true,
-    order: { select: { number: true } },
+    order: { select: { number: true, currency: true, exchangeRate: true } },
     items: { select: { quantity: true, refundAmount: true, orderItem: { select: { productName: true, sku: true, size: true, color: true } } } },
   } satisfies Prisma.SalesReturnSelect;
 

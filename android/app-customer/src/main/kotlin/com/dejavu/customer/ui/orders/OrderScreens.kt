@@ -56,6 +56,7 @@ import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderDetail
 import com.dejavu.core.model.OrderStatus
@@ -132,7 +133,7 @@ fun OrdersScreen(openOrder: (String) -> Unit, login: () -> Unit, shop: () -> Uni
                                     StatusChip(o.status.label, o.status.color())
                                 }
                                 Text("${formatDate(o.placedAt)} · ${o.count?.items ?: 0} منتج", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(Money.format(o.grandTotal), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                Text(o.format(o.grandTotal), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -238,7 +239,7 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                 item { SectionTitle("المنتجات") }
                 items(order.items, key = { it.id }) { item ->
                     Column(Modifier.fillMaxWidth()) {
-                        SummaryRow("${item.productName} × ${item.quantity}", Money.format(item.lineTotal))
+                        SummaryRow("${item.productName} × ${item.quantity}", order.format(item.lineTotal))
                         Text(
                             listOfNotNull(item.color, item.size?.let { "مقاس $it" }, if (item.returnedQty > 0) "مرتجع: ${item.returnedQty}" else null).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
@@ -248,10 +249,17 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                 }
                 item {
                     HorizontalDivider()
-                    SummaryRow("المجموع", Money.format(order.subtotal))
-                    if (!Money.isZero(order.discountTotal)) SummaryRow("الخصم" + (order.coupon?.let { " (${it.code})" } ?: ""), "- ${Money.format(order.discountTotal)}", valueColor = Success)
-                    SummaryRow("الشحن", Money.format(order.shippingFee))
-                    SummaryRow("الإجمالي", Money.format(order.grandTotal), strong = true)
+                    SummaryRow("المجموع", order.format(order.subtotal))
+                    if (!Money.isZero(order.discountTotal)) SummaryRow("الخصم" + (order.coupon?.let { " (${it.code})" } ?: ""), "- ${order.format(order.discountTotal)}", valueColor = Success)
+                    SummaryRow("الشحن", order.format(order.shippingFee))
+                    SummaryRow("الإجمالي", order.format(order.grandTotal), strong = true)
+                    if (order.currency != Currency.SAR) {
+                        Text(
+                            "سعر الصرف المثبّت في الفاتورة: 1 ر.س = ${Money.plain(Money.parse(order.exchangeRate), order.currency)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 item {
                     Column(Modifier.padding(top = 4.dp)) {
@@ -272,7 +280,8 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Button(onClick = vm::payByCard, enabled = !paying, modifier = Modifier.fillMaxWidth()) {
-                                    Text("ادفع الآن ${Money.format(Money.parse(order.grandTotal) - Money.parse(order.amountPaid))}")
+                                    // Cards are charged in SAR, the base currency.
+                                    Text("ادفع الآن ${Money.formatBase((Money.parse(order.grandTotal) - Money.parse(order.amountPaid)).toPlainString())}")
                                 }
                             }
                         }

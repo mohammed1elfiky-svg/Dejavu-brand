@@ -7,6 +7,8 @@ import com.dejavu.core.model.AuthResponse
 import com.dejavu.core.model.CardCheckout
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
+import com.dejavu.core.model.Currencies
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.CheckoutRequest
 import com.dejavu.core.model.CouponRequest
 import com.dejavu.core.model.CreateReturnRequest
@@ -15,6 +17,7 @@ import com.dejavu.core.model.DeviceRegistration
 import com.dejavu.core.model.DeviceRequest
 import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.LoginRequest
+import com.dejavu.core.model.Money
 import com.dejavu.core.model.NotificationPage
 import com.dejavu.core.model.OrderDetail
 import com.dejavu.core.model.OrderSummary
@@ -155,8 +158,8 @@ class AddressRepository(private val api: DejavuApi) {
 // ------------------------------------------------------------------ orders ---
 
 class OrderRepository(private val api: DejavuApi, private val cart: CartRepository) {
-    suspend fun checkout(addressId: String, method: PaymentMethod, note: String?): Result<OrderDetail> =
-        apiCall { api.checkout(CheckoutRequest(addressId, method, note?.trim()?.ifBlank { null })) }
+    suspend fun checkout(addressId: String, method: PaymentMethod, note: String?, currency: Currency? = null): Result<OrderDetail> =
+        apiCall { api.checkout(CheckoutRequest(addressId, method, note?.trim()?.ifBlank { null }, currency)) }
             .onSuccess { cart.refresh() }
 
     suspend fun orders(page: Int = 1): Result<Page<OrderSummary>> = apiCall { api.orders(page) }
@@ -194,6 +197,40 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
             PaymentMethod.WALLET,
             PaymentMethod.BANK_TRANSFER,
         )
+    }
+}
+
+// -------------------------------------------------------------- currencies ---
+
+/**
+ * The currency the shopper sees prices in. Prices stay in SAR in the API; they
+ * are converted for display with the current rate. Orders keep their own rate.
+ */
+class CurrencyRepository(private val api: DejavuApi, private val preferred: () -> Currency, private val save: (Currency) -> Unit) {
+    private val _rates = MutableStateFlow<Currencies?>(null)
+    val rates: StateFlow<Currencies?> = _rates.asStateFlow()
+    private val _selected = MutableStateFlow(preferred())
+    val selected: StateFlow<Currency> = _selected.asStateFlow()
+
+    /** Loads the current rates and applies the preferred currency. */
+    suspend fun refresh(): Result<Currencies> = apiCall { api.currencies() }.onSuccess {
+        _rates.value = it
+        apply(_selected.value)
+    }
+
+    /** Shows prices in [currency] from now on (falls back to SAR until a rate is known). */
+    fun select(currency: Currency) {
+        _selected.value = currency
+        save(currency)
+        apply(currency)
+    }
+
+    /** The currency checkout should invoice in, or null for the SAR default. */
+    fun checkoutCurrency(): Currency? = Money.display.currency.takeIf { it != Currency.SAR }
+
+    private fun apply(currency: Currency) {
+        val rate = _rates.value?.rate(currency)?.rate?.toBigDecimalOrNull()
+        Money.display = if (currency != Currency.SAR && rate != null) Money.Display(currency, rate) else Money.Display.BASE
     }
 }
 

@@ -189,7 +189,7 @@ export class OrdersService {
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
       return order;
     });
-    void this.notifications.notifyStaff('orders.update', {
+    void this.notifications.notifyStaff('orders.update_status', {
       type: 'ORDER_STATUS',
       title: 'طلب جديد 🛍️',
       body: `${placed.number} · ${orderAmount(placed, placed.grandTotal)}`,

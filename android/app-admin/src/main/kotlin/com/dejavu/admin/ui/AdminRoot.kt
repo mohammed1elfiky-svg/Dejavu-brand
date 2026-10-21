@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
@@ -43,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -127,7 +129,7 @@ fun AdminRoot() {
         StaffSession.LoggedOut -> LoginScreen()
         is StaffSession.LoggedIn ->
             if (s.profile == null) {
-                Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center) { CircularProgressIndicator() }
+                RestoringScreen()
             } else {
                 AdminNavHost(s)
             }
@@ -235,6 +237,41 @@ private fun NavController.switchTab(route: String) = navigate(route) {
     popUpTo(graph.findStartDestination().id) { saveState = true }
     launchSingleTop = true
     restoreState = true
+}
+
+/**
+ * Loading the saved session at launch. If the server cannot be reached (e.g. a
+ * stopped Codespace), say so and offer retry, server settings or sign-out
+ * instead of spinning forever.
+ */
+@Composable
+private fun RestoringScreen() {
+    val container = adminContainer()
+    val error by container.session.restoreError.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var showServer by rememberSaveable { mutableStateOf(false) }
+    if (showServer) {
+        ServerScreen(onBack = { showServer = false })
+        return
+    }
+    Column(
+        Modifier.fillMaxSize().systemBarsPadding().padding(32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val message = error
+        if (message == null) {
+            CircularProgressIndicator()
+            Text("جارٍ الاتصال بالخادم…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text("تعذّر الاتصال بالخادم", style = MaterialTheme.typography.titleLarge)
+            Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(container.settings.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { scope.launch { container.session.restore() } }, modifier = Modifier.fillMaxWidth()) { Text("إعادة المحاولة") }
+            OutlinedButton(onClick = { showServer = true }, modifier = Modifier.fillMaxWidth()) { Text("إعدادات الخادم") }
+            TextButton(onClick = { container.session.onSessionExpired() }) { Text("تسجيل الخروج") }
+        }
+    }
 }
 
 // ----------------------------------------------------------------- login ---

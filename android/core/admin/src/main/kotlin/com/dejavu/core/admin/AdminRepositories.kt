@@ -69,11 +69,20 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
     /** Checks that the configured server is reachable and its database is up. */
     suspend fun ping(): Result<Health> = apiCall { api.health() }
 
+    private val _restoreError = MutableStateFlow<String?>(null)
+
+    /** Why the saved session could not be loaded (server unreachable…); null while loading or fine. */
+    val restoreError: StateFlow<String?> = _restoreError.asStateFlow()
+
     suspend fun restore() {
         if (tokens.current() == null) return
+        _restoreError.value = null
         apiCall { api.me() }
             .onSuccess { _state.value = StaffSession.LoggedIn(it) }
-            .onFailure { if ((it as ApiException).isUnauthorized) onSessionExpired() }
+            .onFailure {
+                val e = it as ApiException
+                if (e.isUnauthorized) onSessionExpired() else _restoreError.value = e.message
+            }
     }
 
     suspend fun login(email: String, password: String): Result<StaffProfile> =
@@ -90,6 +99,7 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
     }
 
     fun onSessionExpired() {
+        _restoreError.value = null
         tokens.save(null)
         _state.value = StaffSession.LoggedOut
     }

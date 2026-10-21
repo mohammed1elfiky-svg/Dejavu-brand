@@ -6,13 +6,16 @@ import { SequenceService } from '../common/sequence.service';
 import { Decimal, dec, money } from '../common/utils/money';
 import { Tx } from '../prisma/prisma.service';
 
-/** Revenue is recognised on shipping; before that, money received is a customer advance. */
-export const INVOICED_STATUSES: OrderStatus[] = [
-  OrderStatus.SHIPPED,
-  OrderStatus.DELIVERED,
-  OrderStatus.COMPLETED,
-  OrderStatus.RETURNED,
-];
+/**
+ * Revenue is recognised on shipping; before that, money received is a customer
+ * advance. A refused delivery (RETURNED) reverses the invoice, so money held for
+ * it is an advance again.
+ */
+export const INVOICED_STATUSES: OrderStatus[] = [OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.COMPLETED];
+
+/** What the customer still owes after payments and received returns. */
+export const balanceDue = (o: Pick<Order, 'grandTotal' | 'returnedTotal' | 'amountPaid'>) =>
+  money(dec(o.grandTotal).sub(o.returnedTotal).sub(o.amountPaid));
 
 const DEFAULT_ACCOUNT: Record<PaymentMethod, SystemAccount> = {
   CASH: 'CASH',
@@ -40,10 +43,12 @@ export class PaymentsService {
 
   /** Records money received for an order. Caller holds the order row lock. */
   async receive(tx: Tx, order: Order, input: MoneyMovement, userId: string | null) {
-    if (order.status === OrderStatus.CANCELLED) throw new UnprocessableEntityException('Order is cancelled');
+    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.RETURNED) {
+      throw new UnprocessableEntityException(`Order is ${order.status.toLowerCase()}`);
+    }
     const amount = money(input.amount);
-    if (!amount.isPositive()) throw new BadRequestException('Amount must be greater than zero');
-    const due = dec(order.grandTotal).sub(order.amountPaid);
+    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
+    const due = balanceDue(order);
     if (amount.greaterThan(due)) {
       throw new UnprocessableEntityException(`Amount exceeds the balance due (${money(due)})`);
     }
@@ -84,13 +89,31 @@ export class PaymentsService {
     return { payment, order: updated };
   }
 
-  /** Returns money for an order that has not been invoiced (shipped) yet. */
+  /** Returns money held as an advance: unshipped, cancelled or refused-delivery orders. */
   async refund(tx: Tx, order: Order, input: MoneyMovement & { reason: string }, userId: string) {
     if (INVOICED_STATUSES.includes(order.status)) {
       throw new UnprocessableEntityException('Order was already shipped; refunds go through a sales return');
     }
+    return this.payOut(tx, order, input, userId, 'CUSTOMER_ADVANCES');
+  }
+
+  /** Pays a customer back for a received sales return (credited to AR at receipt). */
+  async refundReturn(tx: Tx, order: Order, input: MoneyMovement & { reason: string }, userId: string) {
+    return this.payOut(tx, order, input, userId, 'AR');
+  }
+
+  private async payOut(
+    tx: Tx,
+    order: Order,
+    input: MoneyMovement & { reason: string },
+    userId: string,
+    counterAccount: 'CUSTOMER_ADVANCES' | 'AR',
+  ) {
+    if (input.method === PaymentMethod.CASH_ON_DELIVERY) {
+      throw new BadRequestException('Refunds are paid in cash, by card reversal, wallet or bank transfer');
+    }
     const amount = money(input.amount);
-    if (!amount.isPositive()) throw new BadRequestException('Amount must be greater than zero');
+    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
     if (amount.greaterThan(order.amountPaid)) {
       throw new UnprocessableEntityException(`Refund exceeds the amount paid (${order.amountPaid})`);
     }
@@ -117,7 +140,7 @@ export class PaymentsService {
       sourceId: payment.id,
       userId,
       lines: [
-        { account: 'CUSTOMER_ADVANCES', debit: amount, customerId: order.customerId },
+        { account: counterAccount, debit: amount, customerId: order.customerId },
         { account: { id: cashAccount }, credit: amount },
       ],
     });
@@ -134,7 +157,9 @@ export class PaymentsService {
   private async statusOf(tx: Tx, order: Order, paid: Decimal): Promise<PaymentStatus> {
     const refunded = (await tx.payment.count({ where: { orderId: order.id, amount: { lt: 0 } } })) > 0;
     if (paid.isZero()) return refunded ? PaymentStatus.REFUNDED : PaymentStatus.UNPAID;
-    if (paid.greaterThanOrEqualTo(order.grandTotal)) return PaymentStatus.PAID;
+    if (paid.greaterThanOrEqualTo(dec(order.grandTotal).sub(order.returnedTotal))) {
+      return refunded ? PaymentStatus.PARTIALLY_REFUNDED : PaymentStatus.PAID;
+    }
     return refunded ? PaymentStatus.PARTIALLY_REFUNDED : PaymentStatus.PARTIALLY_PAID;
   }
 

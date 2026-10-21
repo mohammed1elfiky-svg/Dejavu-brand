@@ -164,3 +164,45 @@ export class LowStockQueryDto {
   @IsBoolean()
   includeOutOfStock = true;
 }
+
+export class StockCountItemDto {
+  @ApiProperty()
+  @IsUUID()
+  variantId: string;
+
+  @ApiProperty({ minimum: 0, description: 'Physically counted pieces, including those reserved for orders' })
+  @IsInt()
+  @Min(0)
+  countedQty: number;
+}
+
+export class CreateStockCountDto {
+  @ApiProperty()
+  @IsUUID()
+  warehouseId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @ApiProperty({ type: [StockCountItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => StockCountItemDto)
+  @ArrayMinSize(1)
+  items: StockCountItemDto[];
+}
+
+export class StockCountsQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  posted?: boolean;
+}

@@ -404,12 +404,16 @@ describe('Catalog, inventory, sales & automatic journal entries (e2e)', () => {
     const tb = await http.get('/admin/reports/trial-balance', admin).expect(200);
     expect(tb.body.totals.balanced).toBe(true);
 
-    const inventory = tb.body.accounts.find((a: { code: string }) => a.code === '1120');
-    // On hand: A 18 × 600 + B 5 × 600 = 13,800
-    expect(inventory.debitBalance).toBe('13800');
+    // This suite's stock: A 18 × 600 + B 5 × 600 = 13,800
     const lvl = await http.get(`/admin/inventory/levels?q=${run}`, admin).expect(200);
     const value = lvl.body.items.reduce((s: number, r: { stockValue: string }) => s + Number(r.stockValue), 0);
     expect(value).toBe(13800);
+
+    // And across all suites, the inventory account matches the value of everything on hand.
+    const inventory = tb.body.accounts.find((a: { code: string }) => a.code === '1120');
+    const valuation = await http.get('/admin/reports/inventory-valuation', admin).expect(200);
+    expect(inventory.debitBalance).toBe(valuation.body.ledgerValue);
+    expect(Math.abs(Number(valuation.body.difference))).toBeLessThan(1);
   });
 
   it('lists stock movements for an order', async () => {

@@ -34,8 +34,13 @@ src/
   users/        إدارة الموظفين والأدوار والصلاحيات
   catalog/      التصنيفات والمنتجات والمقاسات/الألوان + كتالوج المتجر العام
   inventory/    StockService (حجز/صرف/إضافة بمتوسط التكلفة) + التسويات والتحويلات
-  sales/        السلة، التسعير، الطلبات ودورة حالاتها، المدفوعات والاسترداد، الكوبونات، الشحن
+  sales/        السلة، التسعير، الطلبات ودورة حالاتها، المدفوعات والاسترداد، المرتجعات، رفض الاستلام،
+                تسويات شركات الشحن، الكوبونات، مناطق الشحن
+  purchasing/   الموردون، أوامر الشراء والاستلام الجزئي بتكلفة الوصول، سداد الموردين، كشف حساب المورد
+  expenses/     تصنيفات المصروفات، دورة المصروف (مسودة ← اعتماد ← سداد / إلغاء)
+  inventory/    + الجرد الفعلي (Stock Counts)
   accounting/   LedgerService (المدخل الوحيد لدفتر الأستاذ)، القيود اليدوية، ميزان المراجعة، كشف الحساب
+  reports/      قائمة الدخل، الميزانية، تقرير المبيعات، تقييم المخزون، لوحة المؤشرات، الفترات المالية
   common/       الحراس (Guards)، المرشحات، الترقيم التسلسلي، سجل التدقيق
 ```
 
@@ -55,23 +60,11 @@ src/
 
 ## القيود المحاسبية التلقائية
 
-| الحدث | القيد |
-|---|---|
-| **إتمام الطلب** (Checkout) | لا قيد — حجز المخزون فقط (`reserved`) |
-| **دفع قبل الشحن** (بطاقة/محفظة) | من ح/ الخزينة أو البنك أو بوابة الدفع ← إلى ح/ دفعات مقدمة من العملاء |
-| **الشحن** (الاعتراف بالإيراد) | من ح/ العملاء (الإجمالي) + من ح/ خصومات المبيعات ← إلى ح/ المبيعات + ضريبة المخرجات + إيراد الشحن |
-| | من ح/ تكلفة البضاعة المباعة ← إلى ح/ المخزون (بمتوسط التكلفة الفعلي لحظة الصرف) |
-| | من ح/ دفعات مقدمة ← إلى ح/ العملاء (تسوية أي مبلغ مدفوع مسبقاً) |
-| **التسليم (COD)** | من ح/ مستحقات شركات الشحن ← إلى ح/ العملاء |
-| **دفعة بعد الشحن** | من ح/ الخزينة/البنك ← إلى ح/ العملاء |
-| **إلغاء** | فك الحجز وإرجاع استخدام الكوبون؛ أي مبلغ مدفوع يبقى دفعة مقدمة حتى الاسترداد |
-| **استرداد** (قبل الشحن) | من ح/ دفعات مقدمة ← إلى ح/ الخزينة/البنك/بوابة الدفع |
-| **رصيد افتتاحي للمخزون** | من ح/ المخزون ← إلى ح/ أرصدة افتتاحية |
-| **زيادة/عجز جرد، تالف** | المخزون ↔ تسويات المخزون |
-| **تحويل بين المخازن** | لا قيد (القيمة لم تتغير) |
+كل عملية (شحن، تحصيل، استرداد، مرتجع، رفض استلام، استلام من مورد، سداد مورد، مصروف، جرد، تسوية شركة شحن)
+تولّد قيدها تلقائياً. الجدول الكامل في [docs/DATABASE_SCHEMA.md](../docs/DATABASE_SCHEMA.md#قواعد-الترحيل-التلقائي-posting-rules).
 
 كل قيد يمر عبر `LedgerService.post()` داخل نفس الـ Transaction الخاص بالعملية، ثم تتحقق Triggers قاعدة البيانات
-من التوازن والفترة المفتوحة والحساب القابل للترحيل. إذا فشل أي جزء، تُلغى العملية بالكامل (الطلب + المخزون + القيد).
+من التوازن والفترة المفتوحة والحساب القابل للترحيل. إذا فشل أي جزء، تُلغى العملية بالكامل (المستند + المخزون + القيد).
 
 ## منع البيع الزائد (Overselling)
 
@@ -81,10 +74,18 @@ src/
 
 ## أهم الـ Endpoints
 
-| التطبيق | المسار |
+| المجال | المسار |
 |---|---|
 | مشترك | `POST /auth/staff/login`، `POST /auth/customer/register`، `POST /auth/customer/login`، `POST /auth/refresh`، `POST /auth/logout`، `GET /auth/me` |
-| العملاء | `GET /store/categories`، `GET /store/products`، `GET /store/products/:slug`، `GET/POST /store/me/addresses`، `GET /store/cart`، `POST /store/cart/items`، `PUT /store/cart/coupon`، `POST /store/orders`، `GET /store/orders/:number`، `POST /store/orders/:number/cancel` |
-| الإدارة | `/admin/users`، `/admin/roles`، `/admin/products`، `/admin/inventory/{levels,movements,adjustments,transfers,low-stock}`، `/admin/orders` + `/:id/status` + `/:id/payments` + `/:id/refunds`، `/admin/customers`، `/admin/coupons`، `/admin/shipping-zones`، `/admin/accounts`، `/admin/journal-entries`، `/admin/reports/trial-balance` |
+| المتجر (العملاء) | `GET /store/categories`، `GET /store/products[/:slug]`، `/store/me/addresses`، `/store/cart` (+ `/items`، `/coupon`)، `POST /store/orders`، `GET /store/orders[/:number]`، `POST /store/orders/:number/cancel`، `POST /store/orders/:number/returns`، `GET /store/returns` |
+| الطلبات | `/admin/orders` + `/:id/status` (تأكيد/شحن/تسليم/رفض استلام/إلغاء) + `/:id/payments` + `/:id/refunds` + `/:id/returns` |
+| المرتجعات | `/admin/returns` + `/:id/approve` · `/reject` · `/receive` · `/refund` |
+| شركات الشحن | `GET /admin/courier-settlements/pending`، `POST /admin/courier-settlements` |
+| المشتريات | `/admin/suppliers` (+ `/:id/statement`)، `/admin/purchase-orders` + `/:id/place` · `/receive` · `/close` · `/cancel`، `POST /admin/supplier-payments` |
+| المصروفات | `/admin/expense-categories`، `/admin/expenses` + `/:id/approve` · `/pay` · `/cancel` |
+| المخزون | `/admin/inventory/{levels,movements,adjustments,transfers,low-stock}`، `/admin/stock-counts` + `/:id/post` |
+| المحاسبة | `/admin/accounts` (+ `/:id/ledger`)، `/admin/journal-entries` + `/post` · `/reverse`، `/admin/customers/:id/statement`، `/admin/fiscal-years`، `/admin/fiscal-periods/:id/{close,reopen,lock}` |
+| التقارير | `/admin/reports/dashboard`، `/income-statement`، `/balance-sheet`، `/trial-balance`، `/sales?groupBy=day\|product\|category`، `/inventory-valuation` |
+| الإدارة | `/admin/users`، `/admin/roles`، `/admin/products`، `/admin/customers`، `/admin/coupons`، `/admin/shipping-zones`، `/admin/warehouses` |
 
 القائمة الكاملة مع الأمثلة في Swagger على `/docs`.

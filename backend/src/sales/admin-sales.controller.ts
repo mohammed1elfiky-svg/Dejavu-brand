@@ -1,23 +1,38 @@
 import { Body, Controller, ForbiddenException, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { AccountingService } from '../accounting/accounting.service';
+import { DateRangeQueryDto } from '../accounting/dto/accounting.dto';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
+import { CourierSettlementsService } from './courier-settlements.service';
 import { CustomersService } from './customers.service';
 import {
   AdminOrdersQueryDto,
   ChangeOrderStatusDto,
   CreateCouponDto,
+  CourierSettlementDto,
+  CreateReturnDto,
   CustomersQueryDto,
+  PendingCodQueryDto,
+  ReceiveReturnDto,
   RecordPaymentDto,
   RefundDto,
+  RefundReturnDto,
+  RejectReturnDto,
+  ReturnsQueryDto,
   ShippingZoneDto,
   UpdateCouponDto,
 } from './dto/sales.dto';
 import { OrdersService } from './orders.service';
+import { ReturnsService } from './returns.service';
 
 @ApiTags('Admin · Orders')
 @Controller('admin/orders')
 export class AdminOrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly returns: ReturnsService,
+  ) {}
 
   @RequirePermissions('orders.read')
   @Get()
@@ -52,12 +67,67 @@ export class AdminOrdersController {
   refund(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RefundDto, @CurrentUser() u: AuthPrincipal) {
     return this.orders.refund(id, dto, u.id);
   }
+
+  @RequirePermissions('returns.manage')
+  @Post(':id/returns')
+  createReturn(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.returns.staffCreate(id, dto, u.id);
+  }
+}
+
+@ApiTags('Admin · Returns')
+@Controller('admin/returns')
+export class AdminReturnsController {
+  constructor(private readonly returns: ReturnsService) {}
+
+  @RequirePermissions('returns.manage')
+  @Get()
+  list(@Query() q: ReturnsQueryDto) {
+    return this.returns.list(q);
+  }
+
+  @RequirePermissions('returns.manage')
+  @Get(':id')
+  get(@Param('id', ParseUUIDPipe) id: string) {
+    return this.returns.get(id);
+  }
+
+  @RequirePermissions('returns.manage')
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  approve(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.returns.approve(id, u.id);
+  }
+
+  @RequirePermissions('returns.manage')
+  @Post(':id/reject')
+  @HttpCode(HttpStatus.OK)
+  reject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.returns.reject(id, dto.reason, u.id);
+  }
+
+  @RequirePermissions('returns.manage', 'stock.adjust')
+  @Post(':id/receive')
+  @HttpCode(HttpStatus.OK)
+  receive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ReceiveReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.returns.receive(id, dto, u.id);
+  }
+
+  @RequirePermissions('returns.manage', 'payments.record')
+  @Post(':id/refund')
+  @HttpCode(HttpStatus.OK)
+  refund(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RefundReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.returns.refund(id, dto, u.id);
+  }
 }
 
 @ApiTags('Admin · Customers')
 @Controller('admin/customers')
 export class AdminCustomersController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(
+    private readonly customers: CustomersService,
+    private readonly accounting: AccountingService,
+  ) {}
 
   @RequirePermissions('customers.read')
   @Get()
@@ -69,6 +139,12 @@ export class AdminCustomersController {
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.customers.getCustomer(id);
+  }
+
+  @RequirePermissions('customers.read', 'journal.read')
+  @Get(':id/statement')
+  statement(@Param('id', ParseUUIDPipe) id: string, @Query() q: DateRangeQueryDto) {
+    return this.accounting.partyStatement({ customerId: id }, q);
   }
 }
 
@@ -105,5 +181,35 @@ export class AdminSalesSettingsController {
   @Put('shipping-zones')
   upsertZone(@Body() dto: ShippingZoneDto, @CurrentUser() u: AuthPrincipal) {
     return this.customers.upsertZone(dto, u.id);
+  }
+}
+
+@ApiTags('Admin · Courier settlements')
+@Controller('admin/courier-settlements')
+export class AdminCourierSettlementsController {
+  constructor(private readonly settlements: CourierSettlementsService) {}
+
+  @RequirePermissions('payments.read')
+  @Get('pending')
+  pending(@Query() q: PendingCodQueryDto) {
+    return this.settlements.pending(q);
+  }
+
+  @RequirePermissions('payments.read')
+  @Get()
+  list(@Query() q: PaginationQueryDto) {
+    return this.settlements.list(q);
+  }
+
+  @RequirePermissions('payments.read')
+  @Get(':id')
+  get(@Param('id', ParseUUIDPipe) id: string) {
+    return this.settlements.get(id);
+  }
+
+  @RequirePermissions('payments.record')
+  @Post()
+  settle(@Body() dto: CourierSettlementDto, @CurrentUser() u: AuthPrincipal) {
+    return this.settlements.settle(dto, u.id);
   }
 }

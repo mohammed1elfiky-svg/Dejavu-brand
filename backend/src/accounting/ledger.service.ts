@@ -76,7 +76,7 @@ export class LedgerService {
       .filter((l) => !l.debit.isZero() || !l.credit.isZero());
 
     for (const l of lines) {
-      if (l.debit.isNegative() || l.credit.isNegative() || (!l.debit.isZero() && !l.credit.isZero())) {
+      if (l.debit.lt(0) || l.credit.lt(0) || (!l.debit.isZero() && !l.credit.isZero())) {
         throw new BadRequestException('Each journal line must have either a positive debit or a positive credit');
       }
     }

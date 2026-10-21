@@ -11,10 +11,12 @@ import {
   CancelOrderDto,
   CartQueryDto,
   CheckoutDto,
+  CreateReturnDto,
   UpdateAddressDto,
   UpdateCartItemDto,
 } from './dto/sales.dto';
 import { OrdersService } from './orders.service';
+import { ReturnsService } from './returns.service';
 
 @ApiTags('Store · Shipping')
 @Public()
@@ -106,7 +108,10 @@ export class StoreCartController {
 @CustomerOnly()
 @Controller('store/orders')
 export class StoreOrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly returns: ReturnsService,
+  ) {}
 
   @Post()
   checkout(@CurrentUser() u: AuthPrincipal, @Body() dto: CheckoutDto) {
@@ -127,5 +132,22 @@ export class StoreOrdersController {
   @HttpCode(HttpStatus.OK)
   cancel(@CurrentUser() u: AuthPrincipal, @Param('number') number: string, @Body() dto: CancelOrderDto) {
     return this.orders.customerCancel(u.id, number, dto.reason);
+  }
+
+  @Post(':number/returns')
+  requestReturn(@CurrentUser() u: AuthPrincipal, @Param('number') number: string, @Body() dto: CreateReturnDto) {
+    return this.returns.customerRequest(u.id, number, dto);
+  }
+}
+
+@ApiTags('Store · Orders')
+@CustomerOnly()
+@Controller('store/returns')
+export class StoreReturnsController {
+  constructor(private readonly returns: ReturnsService) {}
+
+  @Get()
+  list(@CurrentUser() u: AuthPrincipal) {
+    return this.returns.customerReturns(u.id);
   }
 }

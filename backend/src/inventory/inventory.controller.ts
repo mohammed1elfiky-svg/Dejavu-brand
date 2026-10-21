@@ -1,11 +1,13 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import {
+  CreateStockCountDto,
   CreateWarehouseDto,
   LowStockQueryDto,
   MovementsQueryDto,
   StockAdjustmentDto,
+  StockCountsQueryDto,
   StockLevelsQueryDto,
   StockTransferDto,
 } from './dto/inventory.dto';
@@ -56,5 +58,37 @@ export class InventoryController {
   @Post('inventory/transfers')
   transfer(@Body() dto: StockTransferDto, @CurrentUser() u: AuthPrincipal) {
     return this.inventory.transfer(dto, u.id);
+  }
+
+  @RequirePermissions('stock.read')
+  @Get('stock-counts')
+  listCounts(@Query() q: StockCountsQueryDto) {
+    return this.inventory.listCounts(q);
+  }
+
+  @RequirePermissions('stock.read')
+  @Get('stock-counts/:id')
+  getCount(@Param('id', ParseUUIDPipe) id: string) {
+    return this.inventory.getCount(id);
+  }
+
+  @RequirePermissions('stock.count')
+  @Post('stock-counts')
+  createCount(@Body() dto: CreateStockCountDto, @CurrentUser() u: AuthPrincipal) {
+    return this.inventory.createCount(dto, u.id);
+  }
+
+  @RequirePermissions('stock.count', 'stock.adjust')
+  @Post('stock-counts/:id/post')
+  @HttpCode(HttpStatus.OK)
+  postCount(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.inventory.postCount(id, u.id);
+  }
+
+  @RequirePermissions('stock.count')
+  @Delete('stock-counts/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteCount(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.inventory.deleteCount(id, u.id);
   }
 }

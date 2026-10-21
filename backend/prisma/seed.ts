@@ -111,7 +111,7 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
       "payments.read", "payments.record", "supplier_payments.record",
       "expenses.read", "expenses.write", "expenses.approve",
       "accounts.manage", "journal.read", "journal.write", "journal.post", "journal.reverse", "periods.close",
-      "reports.sales", "reports.financial",
+      "reports.sales", "reports.financial", "reports.inventory", "stock.read",
     ],
   },
   storekeeper: {

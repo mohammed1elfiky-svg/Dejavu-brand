@@ -1,11 +1,25 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
-import { AdminCustomersController, AdminOrdersController, AdminSalesSettingsController } from './admin-sales.controller';
+import {
+  AdminCourierSettlementsController,
+  AdminCustomersController,
+  AdminOrdersController,
+  AdminReturnsController,
+  AdminSalesSettingsController,
+} from './admin-sales.controller';
 import { CartService } from './cart.service';
+import { CourierSettlementsService } from './courier-settlements.service';
 import { CustomersService } from './customers.service';
 import { OrdersService } from './orders.service';
 import { PaymentsService } from './payments.service';
-import { StoreAddressesController, StoreCartController, StoreOrdersController, StoreShippingController } from './store.controller';
+import { ReturnsService } from './returns.service';
+import {
+  StoreAddressesController,
+  StoreCartController,
+  StoreOrdersController,
+  StoreReturnsController,
+  StoreShippingController,
+} from './store.controller';
 
 @Module({
   imports: [InventoryModule],
@@ -14,10 +28,13 @@ import { StoreAddressesController, StoreCartController, StoreOrdersController, S
     StoreAddressesController,
     StoreCartController,
     StoreOrdersController,
+    StoreReturnsController,
     AdminOrdersController,
+    AdminReturnsController,
     AdminCustomersController,
     AdminSalesSettingsController,
+    AdminCourierSettlementsController,
   ],
-  providers: [CartService, CustomersService, OrdersService, PaymentsService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OrdersService, PaymentsService, ReturnsService],
 })
 export class SalesModule {}

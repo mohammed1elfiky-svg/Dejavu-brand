@@ -15,7 +15,7 @@ import { StockService } from '../inventory/stock.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
-import { PaymentsService } from './payments.service';
+import { balanceDue, PaymentsService } from './payments.service';
 import { revenueSplit } from './pricing';
 import { getSetting } from './settings';
 
@@ -23,11 +23,12 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   PENDING: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
   CONFIRMED: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
   PROCESSING: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-  SHIPPED: [OrderStatus.DELIVERED],
+  // RETURNED here means the customer refused the delivery.
+  SHIPPED: [OrderStatus.DELIVERED, OrderStatus.RETURNED],
   DELIVERED: [OrderStatus.COMPLETED],
   COMPLETED: [],
   CANCELLED: [],
-  // Returns are handled by the sales-returns flow.
+  // Returns after delivery go through sales returns; the order itself stays DELIVERED.
   RETURNED: [],
 };
 
@@ -247,8 +248,13 @@ export class OrdersService {
   async adminGet(id: string) {
     const order = await this.prisma.order.findUnique({ where: { id }, include: adminOrderInclude });
     if (!order) throw new NotFoundException('Order not found');
+    const returns = await this.prisma.salesReturn.findMany({
+      where: { orderId: id },
+      select: { id: true, number: true, status: true, refundAmount: true, requestedAt: true },
+      orderBy: { requestedAt: 'asc' },
+    });
     const journalEntries = await this.prisma.journalEntry.findMany({
-      where: { sourceId: { in: [order.id, ...order.payments.map((p) => p.id)] } },
+      where: { sourceId: { in: [order.id, ...order.payments.map((p) => p.id), ...returns.map((r) => r.id)] } },
       include: { lines: { orderBy: { lineNo: 'asc' }, include: { account: { select: { code: true, nameAr: true, nameEn: true } } } } },
       orderBy: { createdAt: 'asc' },
     });
@@ -256,7 +262,8 @@ export class OrdersService {
     const netRevenue = dec(order.grandTotal).sub(order.taxTotal);
     return {
       ...order,
-      balanceDue: money(dec(order.grandTotal).sub(order.amountPaid)),
+      balanceDue: balanceDue(order),
+      returns,
       profit: { netRevenue, costOfGoods, grossProfit: netRevenue.sub(costOfGoods) },
       journalEntries,
     };
@@ -275,6 +282,8 @@ export class OrdersService {
           return this.ship(tx, order, dto, userId);
         case OrderStatus.DELIVERED:
           return this.deliver(tx, order, dto.note, userId);
+        case OrderStatus.RETURNED:
+          return this.refuseDelivery(tx, order, dto.note ?? 'Delivery refused', userId);
         default:
           return this.transition(tx, order, dto.status, dto.note, userId, {
             confirmedAt: dto.status === OrderStatus.CONFIRMED ? new Date() : undefined,
@@ -411,10 +420,43 @@ export class OrdersService {
     });
     const due = dec(order.grandTotal).sub(order.amountPaid);
     let current = order;
-    if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY && due.isPositive()) {
+    if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY && due.gt(0)) {
       current = (await this.payments.receive(tx, order, { method: PaymentMethod.CASH_ON_DELIVERY, amount: due }, userId)).order;
     }
     await this.transition(tx, current, OrderStatus.DELIVERED, note, userId, { deliveredAt: new Date() });
+  }
+
+  /**
+   * The courier brings the parcel back undelivered: the sales invoice is reversed
+   * (revenue, VAT, AR and COGS) and the goods go back on the shelf at their issue
+   * cost. Anything prepaid becomes a customer advance again and can be refunded.
+   */
+  private async refuseDelivery(tx: Tx, order: Order, reason: string, userId: string) {
+    const invoice = await tx.journalEntry.findFirst({
+      where: { sourceType: 'SALES_ORDER', sourceId: order.id, status: 'POSTED' },
+    });
+    if (!invoice) throw new UnprocessableEntityException(`No posted sales invoice found for ${order.number}`);
+    await this.ledger.reverse(tx, invoice.id, userId, `Delivery refused: ${reason}`);
+
+    const items = await tx.orderItem.findMany({ where: { orderId: order.id }, orderBy: { variantId: 'asc' } });
+    for (const item of items) {
+      await this.stock.stockIn(tx, {
+        type: StockMovementType.SALES_RETURN,
+        variantId: item.variantId,
+        warehouseId: order.warehouseId,
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        sourceType: 'ORDER',
+        sourceId: order.id,
+        note: `${order.number} refused`,
+        userId,
+      });
+    }
+    await tx.shipment.updateMany({
+      where: { orderId: order.id },
+      data: { status: ShipmentStatus.RETURNED_TO_SENDER, codAmount: 0 },
+    });
+    await this.transition(tx, order, OrderStatus.RETURNED, reason, userId);
   }
 
   private async autoConfirm(tx: Tx, order: Order, userId: string) {

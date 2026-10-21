@@ -45,3 +45,40 @@ export async function customerToken(app: INestApplication, name = 'Test Customer
   const res = await api(app).post('/auth/customer/register', { name, phone, password: 'secret123' }).expect(201);
   return { token: res.body.accessToken as string, customerId: res.body.customer.id as string, phone };
 }
+
+/** Balance per system account (debit-positive) for posted entries, optionally limited to some sources. */
+export async function ledgerBalances(prisma: PrismaService, sourceIds?: string[]) {
+  const lines = await prisma.journalLine.findMany({
+    where: { journalEntry: { status: { in: ['POSTED', 'REVERSED'] }, ...(sourceIds && { sourceId: { in: sourceIds } }) } },
+    include: { account: { select: { systemKey: true, code: true } } },
+  });
+  const out: Record<string, number> = {};
+  for (const l of lines) {
+    const key = l.account.systemKey ?? l.account.code;
+    out[key] = Math.round(((out[key] ?? 0) + Number(l.debit) - Number(l.credit)) * 100) / 100;
+  }
+  for (const k of Object.keys(out)) if (out[k] === 0) delete out[k];
+  return out;
+}
+
+/** Creates an active product with the given sizes and returns its variant ids. */
+export async function createProduct(app: INestApplication, token: string, slug: string, price: number, sizes: string[]) {
+  const http = api(app);
+  const cat = await http.post('/admin/categories', { nameAr: `تصنيف ${slug}`, nameEn: `Cat ${slug}`, slug: `cat-${slug}` }, token).expect(201);
+  const product = await http
+    .post(
+      '/admin/products',
+      {
+        categoryId: cat.body.id,
+        nameAr: `منتج ${slug}`,
+        nameEn: `Product ${slug}`,
+        slug,
+        status: 'ACTIVE',
+        basePrice: price,
+        variants: sizes.map((s) => ({ sku: `${slug}-${s}`.toUpperCase(), size: s })),
+      },
+      token,
+    )
+    .expect(201);
+  return product.body.variants.map((v: { id: string }) => v.id) as string[];
+}

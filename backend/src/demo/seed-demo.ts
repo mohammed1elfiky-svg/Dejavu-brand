@@ -14,12 +14,16 @@ import { AccountingService } from '../accounting/accounting.service';
 import { AppModule } from '../app.module';
 import { AuthService } from '../auth/auth.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { ExpensesService } from '../expenses/expenses.service';
 import { AdjustmentReason } from '../inventory/dto/inventory.dto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PurchasingService } from '../purchasing/purchasing.service';
 import { CartService } from '../sales/cart.service';
+import { CourierSettlementsService } from '../sales/courier-settlements.service';
 import { CustomersService } from '../sales/customers.service';
 import { OrdersService } from '../sales/orders.service';
+import { ReturnsService } from '../sales/returns.service';
 import { UsersService } from '../users/users.service';
 import { DEMO_CUSTOMERS, DEMO_PASSWORD, DEMO_STAFF } from './demo-accounts';
 
@@ -120,6 +124,10 @@ async function main() {
   const auth = get(AuthService);
   const users = get(UsersService);
   const accounting = get(AccountingService);
+  const purchasing = get(PurchasingService);
+  const expenses = get(ExpensesService);
+  const returns = get(ReturnsService);
+  const settlements = get(CourierSettlementsService);
 
   const admin = await prisma.user.findFirstOrThrow({ where: { roles: { some: { role: { name: 'admin' } } } } });
   const warehouse = await prisma.warehouse.findFirstOrThrow({ where: { isDefault: true } });
@@ -239,8 +247,89 @@ async function main() {
   await status(o5.id, 'CANCELLED', { note: 'العميلة غيرت رأيها' });
   await orders.refund(o5.id, { method: 'CARD', amount: o5.grandTotal.toString(), reason: 'إلغاء الطلب' }, admin.id);
 
+  // ---- purchasing: a fully received order (partly paid) and one still arriving
+  const supplier = await purchasing.createSupplier(
+    { name: 'مصنع النيل للملابس', contactName: 'أ. حسن', phone: '0225550101', taxNumber: '512-334-901' },
+    admin.id,
+  );
+  const po1 = await purchasing.createOrder(
+    {
+      supplierId: supplier.id,
+      supplierInvoiceNo: 'NIL-2026-118',
+      shippingCost: '250',
+      items: [
+        { variantId: v('basic-cotton-tee'), quantity: 20, unitCost: '110' },
+        { variantId: v('basic-cotton-tee', 1), quantity: 20, unitCost: '110' },
+        { variantId: v('silk-scarf'), quantity: 10, unitCost: '150' },
+      ],
+    },
+    admin.id,
+  );
+  await purchasing.placeOrder(po1.id, admin.id);
+  await purchasing.receive(po1.id, { items: po1.items.map((i) => ({ itemId: i.id, quantity: i.quantity })) }, admin.id);
+  await purchasing.paySupplier(
+    { supplierId: supplier.id, purchaseOrderId: po1.id, method: 'BANK_TRANSFER', amount: '3000', reference: 'TRX-55120' },
+    admin.id,
+  );
+
+  const po2 = await purchasing.createOrder(
+    { supplierId: supplier.id, items: [{ variantId: v('wide-leg-trousers'), quantity: 12, unitCost: '300' }] },
+    admin.id,
+  );
+  await purchasing.placeOrder(po2.id, admin.id);
+  await purchasing.receive(po2.id, { items: [{ itemId: po2.items[0].id, quantity: 5 }] }, admin.id);
+
+  // ---- expenses: paid on the spot, and a bill still to pay
+  const cats = await prisma.expenseCategory.findMany();
+  const cat = (name: string) => cats.find((c) => c.name === name)!.id;
+  const internet = await expenses.create(
+    { categoryId: cat('المرافق'), amount: '450', taxAmount: '63', expenseDate: today, description: 'اشتراك الإنترنت', payee: 'WE' },
+    admin.id,
+  );
+  await expenses.approve(internet.id, { paidFromAccountId: acc['1101'] }, admin.id);
+  const ads = await expenses.create(
+    { categoryId: cat('التسويق'), amount: '3500', expenseDate: today, description: 'إعلانات انستجرام', payee: 'Meta' },
+    admin.id,
+  );
+  await expenses.approve(ads.id, { paidFromAccountId: acc['1102'] }, admin.id);
+  const power = await expenses.create(
+    { categoryId: cat('المرافق'), amount: '1200', taxAmount: '168', expenseDate: today, description: 'فاتورة الكهرباء', payee: 'شركة الكهرباء' },
+    admin.id,
+  );
+  await expenses.approve(power.id, {}, admin.id); // accrued, waiting to be paid
+  await expenses.create(
+    { categoryId: cat('التغليف'), amount: '800', expenseDate: today, description: 'أكياس وعلب تغليف', payee: 'مطبعة الأمل' },
+    admin.id,
+  ); // draft, waiting for approval
+
+  // ---- returns: one received and refunded, one waiting for review
+  const o1Items = await prisma.orderItem.findMany({ where: { orderId: o1.id } });
+  const scarf = o1Items.find((i) => i.sku.startsWith('DJV-SS'))!;
+  const dress = o1Items.find((i) => i.sku.startsWith('DJV-ESD'))!;
+  const r1 = await returns.staffCreate(o1.id, { reason: 'لون مختلف عن الصورة', items: [{ orderItemId: scarf.id, quantity: 1 }] }, admin.id);
+  await returns.receive(r1.id, {}, admin.id);
+  await returns.refund(r1.id, { method: 'CASH' }, admin.id);
+  await returns.customerRequest(shoppers[0].id, o1.number, {
+    reason: 'المقاس صغير',
+    items: [{ orderItemId: dress.id, quantity: 1 }],
+  });
+
+  // ---- the courier pays over the COD cash of order 1, minus its fee
+  const pending = await settlements.pending({ carrier: 'Bosta' });
+  await settlements.settle(
+    { carrier: 'Bosta', shipmentIds: pending.shipments.map((sh) => sh.id), feesAmount: '35', accountId: acc['1102'], reference: 'BOSTA-PAYOUT-0042' },
+    admin.id,
+  );
+
+  // ---- a stock count that found one tee missing
+  const count = await inventory.createCount(
+    { warehouseId: warehouse.id, note: 'جرد رف التيشيرتات', items: [{ variantId: v('basic-cotton-tee'), countedQty: 34 }] },
+    admin.id,
+  );
+  await inventory.postCount(count.id, admin.id);
+
   await prisma.setting.create({ data: { key: MARKER, value: new Date().toISOString() } });
-  console.log('Demo data loaded: 8 products, 3 customers, 5 orders, staff for every role.');
+  console.log('Demo data loaded: 8 products, 3 customers, 5 orders, purchases, expenses, returns, staff for every role.');
   await app.close();
 }
 

@@ -233,8 +233,8 @@ export class AccountingService {
         totalDebit: money(r.debit),
         totalCredit: money(r.credit),
         // Closing balance shown on its natural side.
-        debitBalance: net.isPositive() ? money(net) : money(0),
-        creditBalance: net.isNegative() ? money(net.neg()) : money(0),
+        debitBalance: net.gt(0) ? money(net) : money(0),
+        creditBalance: net.lt(0) ? money(net.neg()) : money(0),
       };
     });
     const totals = accounts.reduce(
@@ -246,6 +246,60 @@ export class AccountingService {
       to: q.to ?? null,
       accounts,
       totals: { debit: money(totals.debit), credit: money(totals.credit), balanced: totals.debit.equals(totals.credit) },
+    };
+  }
+
+  /**
+   * Statement for one customer (AR + advances, positive = they owe us) or one
+   * supplier (AP, positive = we owe them), built from tagged journal lines.
+   */
+  async partyStatement(party: { customerId: string } | { supplierId: string }, q: DateRangeQueryDto) {
+    const isCustomer = 'customerId' in party;
+    const keys = isCustomer ? ['AR', 'CUSTOMER_ADVANCES'] : ['AP'];
+    const sign = isCustomer ? 1 : -1;
+    const from = q.from ? parseDateOnly(q.from) : undefined;
+    const to = q.to ? parseDateOnly(q.to) : undefined;
+    const base: Prisma.JournalLineWhereInput = {
+      ...party,
+      account: { systemKey: { in: keys } },
+      journalEntry: { status: { in: [JournalEntryStatus.POSTED, JournalEntryStatus.REVERSED] } },
+    };
+
+    const opening = from
+      ? await this.prisma.journalLine.aggregate({
+          where: { ...base, journalEntry: { ...(base.journalEntry as object), entryDate: { lt: from } } },
+          _sum: { debit: true, credit: true },
+        })
+      : null;
+    let balance = opening ? dec(opening._sum.debit).sub(dec(opening._sum.credit)).mul(sign) : dec(0);
+    const openingBalance = money(balance);
+
+    const lines = await this.prisma.journalLine.findMany({
+      where: { ...base, journalEntry: { ...(base.journalEntry as object), entryDate: { gte: from, lte: to } } },
+      include: {
+        account: { select: { code: true, systemKey: true } },
+        journalEntry: { select: { id: true, number: true, entryDate: true, description: true, sourceType: true, sourceId: true } },
+      },
+      orderBy: [{ journalEntry: { entryDate: 'asc' } }, { journalEntry: { number: 'asc' } }, { lineNo: 'asc' }],
+    });
+    return {
+      openingBalance,
+      lines: lines.map((l) => {
+        balance = balance.add(dec(l.debit).sub(dec(l.credit)).mul(sign));
+        return {
+          entryId: l.journalEntry.id,
+          number: l.journalEntry.number,
+          date: l.journalEntry.entryDate,
+          description: l.description ?? l.journalEntry.description,
+          account: l.account.systemKey,
+          sourceType: l.journalEntry.sourceType,
+          sourceId: l.journalEntry.sourceId,
+          debit: l.debit,
+          credit: l.credit,
+          balance: money(balance),
+        };
+      }),
+      closingBalance: money(balance),
     };
   }
 

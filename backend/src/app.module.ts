@@ -10,9 +10,12 @@ import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter'
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { validateEnv } from './config/env';
+import { ExpensesModule } from './expenses/expenses.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PurchasingModule } from './purchasing/purchasing.module';
+import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { UsersModule } from './users/users.module';
 
@@ -28,6 +31,9 @@ import { UsersModule } from './users/users.module';
     CatalogModule,
     InventoryModule,
     SalesModule,
+    PurchasingModule,
+    ExpensesModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [

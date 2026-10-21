@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -17,8 +18,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { CouponType, OrderStatus, PaymentMethod, PaymentStatus } from '../../generated/prisma/client';
+import { CouponType, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
 import { IsAmount } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
@@ -355,3 +357,117 @@ export class CustomersQueryDto extends PaginationQueryDto {
   q?: string;
 }
 
+
+// ---------------------------------------------------------------- returns ---
+
+export class ReturnItemDto {
+  @ApiProperty({ description: 'Order item id' })
+  @IsUUID()
+  orderItemId: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  quantity: number;
+}
+
+export class CreateReturnDto {
+  @ApiProperty({ example: 'المقاس غير مناسب' })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason: string;
+
+  @ApiProperty({ type: [ReturnItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ReturnItemDto)
+  @ArrayMinSize(1)
+  items: ReturnItemDto[];
+}
+
+export class ReceiveReturnItemDto {
+  @ApiProperty({ description: 'Return item id' })
+  @IsUUID()
+  itemId: string;
+
+  @ApiProperty({ description: 'false when the piece came back damaged and cannot be sold again' })
+  @IsBoolean()
+  restock: boolean;
+}
+
+export class ReceiveReturnDto {
+  @ApiPropertyOptional({ type: [ReceiveReturnItemDto], description: 'Defaults to restocking everything' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ReceiveReturnItemDto)
+  items?: ReceiveReturnItemDto[];
+}
+
+export class RejectReturnDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(255)
+  reason: string;
+}
+
+export class RefundReturnDto {
+  @ApiProperty({ enum: PaymentMethod })
+  @IsEnum(PaymentMethod)
+  method: PaymentMethod;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  accountId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
+}
+
+export class ReturnsQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: ReturnStatus })
+  @IsOptional()
+  @IsEnum(ReturnStatus)
+  status?: ReturnStatus;
+}
+
+// ---------------------------------------------------- courier settlements ---
+
+export class PendingCodQueryDto {
+  @ApiPropertyOptional({ example: 'Bosta' })
+  @IsOptional()
+  @IsString()
+  carrier?: string;
+}
+
+export class CourierSettlementDto {
+  @ApiProperty({ example: 'Bosta' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  carrier: string;
+
+  @ApiProperty({ type: [String], description: 'Delivered COD shipments covered by this payout' })
+  @IsUUID('all', { each: true })
+  @ArrayMinSize(1)
+  shipmentIds: string[];
+
+  @ApiPropertyOptional({ example: '150.00', description: 'Courier fees deducted from the payout' })
+  @IsOptional()
+  @IsAmount()
+  feesAmount?: string;
+
+  @ApiProperty({ description: 'Bank/cash account that received the money' })
+  @IsUUID()
+  accountId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
+}

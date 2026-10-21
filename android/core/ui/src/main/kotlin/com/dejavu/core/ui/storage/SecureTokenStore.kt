@@ -1,4 +1,4 @@
-package com.dejavu.customer.data
+package com.dejavu.core.ui.storage
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
@@ -18,9 +18,9 @@ import javax.crypto.spec.GCMParameterSpec
  * Keeps the session tokens encrypted with an AES-GCM key that never leaves the
  * Android Keystore. Reads are served from memory; writes go to disk.
  */
-class SecureTokenStore(context: Context) : TokenStore {
-    private val prefs = context.getSharedPreferences("session", Context.MODE_PRIVATE)
-    private val cipher = TokenCipher()
+class SecureTokenStore(context: Context, name: String = "session") : TokenStore {
+    private val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+    private val cipher = TokenCipher("dejavu_$name")
     private val cache = AtomicReference(load())
 
     override fun current(): Tokens? = cache.get()
@@ -44,7 +44,7 @@ class SecureTokenStore(context: Context) : TokenStore {
     }
 }
 
-private class TokenCipher {
+private class TokenCipher(private val alias: String) {
     private val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
     fun encrypt(plain: String): String {
@@ -61,10 +61,10 @@ private class TokenCipher {
     }.getOrNull()
 
     private fun key(): SecretKey =
-        (keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+        (keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.secretKey
             ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
                 init(
-                    KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                    KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                         .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                         .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                         .build(),
@@ -74,7 +74,6 @@ private class TokenCipher {
 
     private companion object {
         const val PROVIDER = "AndroidKeyStore"
-        const val ALIAS = "dejavu_session"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_SIZE = 12
     }

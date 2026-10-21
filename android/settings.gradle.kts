@@ -19,5 +19,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "dejavu-android"
 
-include(":core:model", ":core:network", ":core:data")
-if (!jvmOnly) include(":app-customer")
+include(":core:model", ":core:network", ":core:data", ":core:admin")
+if (!jvmOnly) include(":core:ui", ":app-customer")

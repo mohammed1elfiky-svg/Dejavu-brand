@@ -1,4 +1,4 @@
-package com.dejavu.customer.ui
+package com.dejavu.core.ui
 
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentMethod

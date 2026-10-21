@@ -1,7 +1,7 @@
 package com.dejavu.core.network
 
-import com.dejavu.core.model.AuthResponse
 import com.dejavu.core.model.RefreshRequest
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import okhttp3.Authenticator
 import okhttp3.Interceptor
@@ -31,7 +31,11 @@ class InMemoryTokenStore(initial: Tokens? = null) : TokenStore {
 }
 
 /** Endpoints that authenticate by their body, never by a bearer token. */
-private val TOKEN_FREE = listOf("/auth/customer/login", "/auth/customer/register", "/auth/refresh", "/auth/logout")
+private val TOKEN_FREE = listOf("/auth/customer/login", "/auth/customer/register", "/auth/staff/login", "/auth/refresh", "/auth/logout")
+
+/** Only the tokens of a refresh response: staff and customer sessions return different profiles. */
+@Serializable
+private data class RefreshedTokens(val accessToken: String, val refreshToken: String)
 
 /** Adds `Authorization: Bearer …` to every API call except the auth endpoints themselves. */
 class AuthInterceptor(private val tokens: TokenStore) : Interceptor {
@@ -87,7 +91,7 @@ class TokenAuthenticator(
         return runCatching {
             refreshClient.newCall(request).execute().use { res ->
                 if (!res.isSuccessful) return null
-                val auth = ApiJson.decodeFromString<AuthResponse>(res.body!!.string())
+                val auth = ApiJson.decodeFromString<RefreshedTokens>(res.body!!.string())
                 Tokens(auth.accessToken, auth.refreshToken)
             }
         }.getOrNull()

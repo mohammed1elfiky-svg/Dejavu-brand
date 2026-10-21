@@ -8,8 +8,8 @@ import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
 import com.dejavu.core.network.ApiClient
-import com.dejavu.customer.data.SecureTokenStore
-import com.dejavu.customer.data.SettingsStore
+import com.dejavu.core.ui.storage.SecureTokenStore
+import com.dejavu.core.ui.storage.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 
 /** Hand-wired dependencies for the whole app (small enough not to need a DI framework). */
 class AppContainer(context: Context) {
-    val settings = SettingsStore(context)
+    val settings = SettingsStore(context, BuildConfig.API_BASE_URL)
     private val tokens = SecureTokenStore(context)
     private lateinit var sessionRef: SessionRepository
 

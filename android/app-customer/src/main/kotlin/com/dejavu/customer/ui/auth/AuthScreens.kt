@@ -31,9 +31,9 @@ import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.Validators
 import com.dejavu.core.data.userMessage
-import com.dejavu.customer.ui.BaseViewModel
+import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.customer.ui.appViewModel
-import com.dejavu.customer.ui.components.BackTopBar
+import com.dejavu.core.ui.BackTopBar
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow

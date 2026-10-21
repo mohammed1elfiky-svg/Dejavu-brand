@@ -55,6 +55,7 @@ fun normalizeBaseUrl(raw: String): String {
 }
 
 object ApiClient {
+    /** Customer-app client. */
     fun create(
         baseUrl: () -> String,
         tokens: TokenStore,
@@ -62,6 +63,18 @@ object ApiClient {
         debugLogging: Boolean = false,
         configure: OkHttpClient.Builder.() -> Unit = {},
     ): Pair<DejavuApi, OkHttpClient> {
+        val (retrofit, client) = retrofit(baseUrl, tokens, onSessionExpired, debugLogging, configure)
+        return retrofit.create(DejavuApi::class.java) to client
+    }
+
+    /** Shared Retrofit setup for any Dejavu API interface (customer or staff). */
+    fun retrofit(
+        baseUrl: () -> String,
+        tokens: TokenStore,
+        onSessionExpired: () -> Unit,
+        debugLogging: Boolean = false,
+        configure: OkHttpClient.Builder.() -> Unit = {},
+    ): Pair<Retrofit, OkHttpClient> {
         val base = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -84,12 +97,11 @@ object ApiClient {
             }
             .build()
 
-        val api = Retrofit.Builder()
+        val retrofit = Retrofit.Builder()
             .baseUrl(PLACEHOLDER_BASE)
             .client(client)
             .addConverterFactory(ApiJson.asConverterFactory("application/json".toMediaType()))
             .build()
-            .create(DejavuApi::class.java)
-        return api to client
+        return retrofit to client
     }
 }

@@ -8,7 +8,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import com.dejavu.customer.ui.navigation.DejavuNavHost
-import com.dejavu.customer.ui.theme.DejavuTheme
+import com.dejavu.core.ui.theme.DejavuTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

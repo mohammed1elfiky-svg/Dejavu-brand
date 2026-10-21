@@ -1,22 +1,19 @@
-package com.dejavu.customer.data
+package com.dejavu.core.ui.storage
 
 import android.content.Context
 import androidx.core.content.edit
 import com.dejavu.core.network.normalizeBaseUrl
-import com.dejavu.customer.BuildConfig
 
 /** Which server the app talks to. Changeable at runtime (e.g. to a Codespaces URL) from Account → Server. */
-class SettingsStore(context: Context) {
+class SettingsStore(context: Context, val defaultBaseUrl: String) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     @Volatile
-    var baseUrl: String = prefs.getString(KEY, null) ?: BuildConfig.API_BASE_URL
+    var baseUrl: String = prefs.getString(KEY, null) ?: defaultBaseUrl
         private set
 
-    val defaultBaseUrl: String get() = BuildConfig.API_BASE_URL
-
     fun setBaseUrl(raw: String) {
-        baseUrl = if (raw.isBlank()) BuildConfig.API_BASE_URL else normalizeBaseUrl(raw)
+        baseUrl = if (raw.isBlank()) defaultBaseUrl else normalizeBaseUrl(raw)
         prefs.edit { putString(KEY, baseUrl) }
     }
 

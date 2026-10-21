@@ -1,4 +1,4 @@
-package com.dejavu.customer.ui.theme
+package com.dejavu.core.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape

@@ -111,4 +111,18 @@ class ApiClientTest {
         )
         assertEquals("http://10.0.2.2:3000/api/v1/", normalizeBaseUrl("http://10.0.2.2:3000/api/v1"))
     }
+
+    @Test
+    fun `refreshes staff sessions too (response carries a user, not a customer)`() = runBlocking {
+        val staffAuth = """{"accessToken":"new-access","refreshToken":"new-refresh","user":{"id":"u1","permissions":["orders.read"]}}"""
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/v1/auth/refresh" -> MockResponse().setBody(staffAuth)
+                else -> if (request.getHeader("Authorization") == "Bearer new-access") MockResponse().setBody(me) else MockResponse().setResponseCode(401)
+            }
+        }
+        api().me()
+        assertEquals(Tokens("new-access", "new-refresh"), tokens.current())
+        assertEquals(0, expired)
+    }
 }

@@ -21,6 +21,8 @@ import { SequenceService } from '../common/sequence.service';
 import { parseDateOnly } from '../common/utils/dates';
 import { dec, money, sum } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
+import { egp, orderStatusMessage } from '../notifications/messages';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
@@ -104,12 +106,13 @@ export class OrdersService {
     private readonly payments: PaymentsService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
 
   async checkout(customerId: string, dto: CheckoutDto) {
-    const orderId = await this.prisma.$transaction(async (tx) => {
+    const placed = await this.prisma.$transaction(async (tx) => {
       // Serialise checkouts of the same cart (e.g. a double-tapped "Place order").
       await tx.$queryRaw`SELECT id FROM carts WHERE customer_id = ${customerId}::uuid FOR UPDATE`;
       const quote = await this.cart.quote(tx, customerId, dto.addressId);
@@ -174,9 +177,15 @@ export class OrdersService {
       const cart = await tx.cart.findUniqueOrThrow({ where: { customerId } });
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
-      return order.id;
+      return order;
     });
-    return this.customerOrderById(customerId, orderId);
+    void this.notifications.notifyStaff('orders.update', {
+      type: 'ORDER_STATUS',
+      title: 'طلب جديد 🛍️',
+      body: `${placed.number} · ${egp(placed.grandTotal)}`,
+      data: { orderId: placed.id, order: placed.number },
+    });
+    return this.customerOrderById(customerId, placed.id);
   }
 
   // -------------------------------------------------------- customer side ---
@@ -222,7 +231,7 @@ export class OrdersService {
       if (!CUSTOMER_CANCELLABLE.includes(order.status)) {
         throw new ForbiddenException('This order can no longer be cancelled; please contact support');
       }
-      await this.cancel(tx, order, reason, null);
+      await this.cancel(tx, order, reason, null, { notify: false });
     });
     return this.customerOrder(customerId, number);
   }
@@ -386,8 +395,11 @@ export class OrdersService {
     note: string | undefined,
     userId: string | null,
     extra: Prisma.OrderUpdateInput = {},
+    message: { notify?: boolean; carrier?: string | null; trackingNumber?: string | null; reason?: string | null } = {},
   ) {
     await tx.order.update({ where: { id: order.id }, data: { status: to, ...extra } });
+    const update = message.notify === false ? null : orderStatusMessage(order, to, message);
+    if (update) await this.notifications.notifyCustomer(tx, order.customerId, update);
     await tx.orderStatusHistory.create({
       data: { orderId: order.id, fromStatus: order.status, toStatus: to, note, changedById: userId },
     });
@@ -398,7 +410,7 @@ export class OrdersService {
   }
 
   /** Releases reserved stock and gives the coupon use back. Money stays as a customer advance until refunded. */
-  private async cancel(tx: Tx, order: Order, reason: string, userId: string | null) {
+  private async cancel(tx: Tx, order: Order, reason: string, userId: string | null, opts: { notify?: boolean } = {}) {
     const items = await tx.orderItem.findMany({ where: { orderId: order.id }, orderBy: { variantId: 'asc' } });
     for (const item of items) {
       await this.stock.release(tx, item.variantId, order.warehouseId, item.quantity);
@@ -407,10 +419,15 @@ export class OrdersService {
       await tx.couponUsage.deleteMany({ where: { orderId: order.id } });
       await tx.coupon.update({ where: { id: order.couponId }, data: { usedCount: { decrement: 1 } } });
     }
-    await this.transition(tx, order, OrderStatus.CANCELLED, reason, userId, {
-      cancelledAt: new Date(),
-      cancelReason: reason,
-    });
+    await this.transition(
+      tx,
+      order,
+      OrderStatus.CANCELLED,
+      reason,
+      userId,
+      { cancelledAt: new Date(), cancelReason: reason },
+      { notify: opts.notify, reason },
+    );
   }
 
   /**
@@ -476,7 +493,10 @@ export class OrdersService {
         shippedAt: new Date(),
       },
     });
-    await this.transition(tx, order, OrderStatus.SHIPPED, dto.note, userId);
+    await this.transition(tx, order, OrderStatus.SHIPPED, dto.note, userId, {}, {
+      carrier: dto.carrier,
+      trackingNumber: dto.trackingNumber,
+    });
   }
 
   /** On delivery, cash collected by the courier becomes a receivable from the courier. */

@@ -13,6 +13,7 @@ import { validateEnv } from './config/env';
 import { ExpensesModule } from './expenses/expenses.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReportsModule } from './reports/reports.module';
@@ -25,6 +26,7 @@ import { UsersModule } from './users/users.module';
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
     PrismaModule,
     CommonModule,
+    NotificationsModule,
     AuthModule,
     UsersModule,
     AccountingModule,

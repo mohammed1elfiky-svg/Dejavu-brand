@@ -12,6 +12,8 @@ import { paginated } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { Decimal, DecimalLike, dec, money, sum, ZERO } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
+import { returnMessage } from '../notifications/messages';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CreateReturnDto, ReceiveReturnDto, RefundReturnDto, ReturnsQueryDto } from './dto/sales.dto';
 import { PaymentsService } from './payments.service';
@@ -62,6 +64,7 @@ export class ReturnsService {
     private readonly payments: PaymentsService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ------------------------------------------------------------- creating ---
@@ -190,6 +193,7 @@ export class ReturnsService {
       const ret = await this.lock(tx, id);
       if (ret.status !== ReturnStatus.REQUESTED) throw new BadRequestException('Only requested returns can be approved');
       await tx.salesReturn.update({ where: { id }, data: { status: ReturnStatus.APPROVED, handledById: userId } });
+      await this.notifyCustomer(tx, ret, 'approved');
       await this.audit.log({ userId, action: 'APPROVE', entityType: 'SalesReturn', entityId: id }, tx);
     });
     return this.get(id);
@@ -203,6 +207,7 @@ export class ReturnsService {
         where: { id },
         data: { status: ReturnStatus.REJECTED, rejectReason: reason, handledById: userId, resolvedAt: new Date() },
       });
+      await this.notifyCustomer(tx, ret, 'rejected', reason);
       await this.audit.log({ userId, action: 'CANCEL', entityType: 'SalesReturn', entityId: id, after: { reason } }, tx);
     });
     return this.get(id);
@@ -270,6 +275,7 @@ export class ReturnsService {
         where: { id },
         data: { status: ReturnStatus.RECEIVED, refundAmount: refund, receivedAt: new Date(), handledById: userId },
       });
+      await this.notifyCustomer(tx, ret, 'received');
       await this.audit.log({ userId, action: 'UPDATE', entityType: 'SalesReturn', entityId: id, after: { received: true, refund } }, tx);
     });
     return this.get(id);
@@ -294,6 +300,11 @@ export class ReturnsService {
   private refundDue(order: Order, ret: SalesReturn) {
     const overpaid = dec(order.amountPaid).sub(dec(order.grandTotal).sub(order.returnedTotal));
     return money(Decimal.max(ZERO, Decimal.min(overpaid, ret.refundAmount)));
+  }
+
+  private async notifyCustomer(tx: Tx, ret: SalesReturn, event: 'approved' | 'rejected' | 'received', reason?: string) {
+    const order = await tx.order.findUniqueOrThrow({ where: { id: ret.orderId }, select: { number: true, customerId: true } });
+    await this.notifications.notifyCustomer(tx, order.customerId, returnMessage({ number: ret.number, order }, event, reason));
   }
 
   private async lock(tx: Tx, id: string): Promise<SalesReturn> {

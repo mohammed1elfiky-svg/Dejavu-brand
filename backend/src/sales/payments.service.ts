@@ -4,6 +4,8 @@ import { LedgerService, SystemAccount } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
 import { Decimal, dec, money } from '../common/utils/money';
+import { paymentReceivedMessage, refundMessage } from '../notifications/messages';
+import { NotificationsService } from '../notifications/notifications.service';
 import { Tx } from '../prisma/prisma.service';
 
 /**
@@ -39,6 +41,7 @@ export class PaymentsService {
     private readonly ledger: LedgerService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Records money received for an order. Caller holds the order row lock. */
@@ -164,6 +167,8 @@ export class PaymentsService {
       data: { amountPaid, paymentStatus: await this.statusOf(tx, order, amountPaid) },
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Payment', entityId: payment.id, after: payment }, tx);
+    const note = paymentReceivedMessage(order, amount, payment.method);
+    if (note) await this.notifications.notifyCustomer(tx, order.customerId, note);
     return updated;
   }
 
@@ -229,6 +234,7 @@ export class PaymentsService {
       data: { amountPaid, paymentStatus: await this.statusOf(tx, order, amountPaid) },
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Refund', entityId: payment.id, after: payment }, tx);
+    await this.notifications.notifyCustomer(tx, order.customerId, refundMessage(order, amount));
     return { payment, order: updated };
   }
 

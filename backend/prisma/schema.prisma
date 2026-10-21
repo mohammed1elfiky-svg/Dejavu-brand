@@ -1227,6 +1227,8 @@ model Notification {
   data       Json?
   readAt     DateTime?        @map("read_at")
   sentAt     DateTime         @default(now()) @map("sent_at")
+  /// Set once the push was handed to FCM (or skipped: no devices / push disabled).
+  pushedAt   DateTime?        @map("pushed_at")
 
   customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
 

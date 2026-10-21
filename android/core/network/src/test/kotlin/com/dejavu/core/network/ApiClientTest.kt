@@ -125,4 +125,12 @@ class ApiClientTest {
         assertEquals(Tokens("new-access", "new-refresh"), tokens.current())
         assertEquals(0, expired)
     }
+
+    @Test
+    fun `explains a web page served instead of the API`() = runBlocking {
+        server.enqueue(MockResponse().setBody("<!doctype html><html lang=\"en\"><body>Sign in</body></html>"))
+        server.start()
+        val error = apiCall { api().me() }.exceptionOrNull() as ApiException
+        assertEquals(ApiException.NOT_AN_API, error.message)
+    }
 }

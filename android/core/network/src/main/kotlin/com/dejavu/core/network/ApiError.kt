@@ -1,5 +1,6 @@
 package com.dejavu.core.network
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -21,10 +22,20 @@ class ApiException(
     companion object {
         const val NETWORK = -1
 
+        const val NOT_AN_API =
+            "الرابط يعرض صفحة ويب وليس خادم Dejavu. إن كان من GitHub Codespaces فاجعل المنفذ 3000 عاماً (Public) وتأكد أن الخادم يعمل."
+
         fun from(t: Throwable): ApiException = when (t) {
             is ApiException -> t
             is HttpException -> parse(t.code(), t.response()?.errorBody()?.string(), t)
             is IOException -> ApiException(NETWORK, "تعذّر الاتصال بالخادم. تحقق من الإنترنت ثم حاول مرة أخرى.", cause = t)
+            // A web page instead of JSON: usually a login/sign-in page in front of the server,
+            // e.g. a private GitHub Codespaces port.
+            is SerializationException -> if (t.message.orEmpty().contains("<")) {
+                ApiException(0, NOT_AN_API, cause = t)
+            } else {
+                ApiException(0, "استجابة غير متوقعة من الخادم", cause = t)
+            }
             else -> ApiException(0, t.message ?: "حدث خطأ غير متوقع", cause = t)
         }
 

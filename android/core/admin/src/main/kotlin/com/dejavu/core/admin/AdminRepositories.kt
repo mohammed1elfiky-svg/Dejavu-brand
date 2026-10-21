@@ -1,5 +1,7 @@
 package com.dejavu.core.admin
 
+import com.dejavu.core.model.DeviceRequest
+import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.Page
 import com.dejavu.core.model.PaymentMethod
@@ -56,6 +58,11 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
     val state: StateFlow<StaffSession> = _state.asStateFlow()
 
     fun can(permission: String) = (state.value as? StaffSession.LoggedIn)?.can(permission) == true
+
+    /** Sends new-order pushes for this staff member to this phone. */
+    suspend fun registerDevice(token: String, appVersion: String?) = apiCall { api.registerDevice(DeviceRequest(token, appVersion)) }
+
+    suspend fun unregisterDevice(token: String) = apiCall { api.unregisterDevice(DeviceToken(token)) }.map { }
 
     /** Checks that the configured server is reachable and its database is up. */
     suspend fun ping(): Result<Health> = apiCall { api.health() }

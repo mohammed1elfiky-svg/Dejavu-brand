@@ -298,6 +298,12 @@ data class OrderDetail(
     val shipments: List<Shipment> = emptyList(),
 ) {
     val canCancel: Boolean get() = status == OrderStatus.PENDING || status == OrderStatus.CONFIRMED
+
+    /** Card orders can be paid (or the payment retried) online until fully paid. */
+    val canPayByCard: Boolean
+        get() = paymentMethod == PaymentMethod.CARD &&
+            (paymentStatus == PaymentStatus.UNPAID || paymentStatus == PaymentStatus.PARTIALLY_PAID) &&
+            status != OrderStatus.CANCELLED && status != OrderStatus.RETURNED
     val canReturn: Boolean
         get() = (status == OrderStatus.DELIVERED || status == OrderStatus.COMPLETED) && items.any { it.returnableQty > 0 }
 }
@@ -335,3 +341,50 @@ data class SalesReturn(
     val order: OrderNumberRef,
     val items: List<ReturnLine>,
 )
+
+// --------------------------------------------------------- card payments ---
+
+/** A hosted card-payment page opened for an order. */
+@Serializable
+data class CardCheckout(val paymentId: String, val orderNumber: String, val amount: String, val checkoutUrl: String)
+
+// --------------------------------------------------------- notifications ---
+
+@Serializable
+data class AppNotification(
+    val id: String,
+    val type: String,
+    val title: String,
+    val body: String,
+    val data: Map<String, String> = emptyMap(),
+    val readAt: String? = null,
+    val sentAt: String,
+) {
+    val isRead: Boolean get() = readAt != null
+
+    /** Order the notification is about, if any. */
+    val orderNumber: String? get() = data["order"]
+}
+
+@Serializable
+data class NotificationPage(
+    val items: List<AppNotification>,
+    val total: Int,
+    val page: Int,
+    val pageSize: Int,
+    val unread: Int,
+) {
+    val hasMore: Boolean get() = page * pageSize < total
+}
+
+@Serializable
+data class UnreadCount(val unread: Int)
+
+@Serializable
+data class DeviceRequest(val token: String, val appVersion: String? = null)
+
+@Serializable
+data class DeviceToken(val token: String)
+
+@Serializable
+data class DeviceRegistration(val registered: Boolean, val pushEnabled: Boolean)

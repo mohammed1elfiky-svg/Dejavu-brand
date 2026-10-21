@@ -1,10 +1,14 @@
 package com.dejavu.core.admin
 
+import com.dejavu.core.model.DeviceRegistration
+import com.dejavu.core.model.DeviceRequest
+import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.Page
 import com.dejavu.core.model.RefreshRequest
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -18,6 +22,8 @@ interface AdminApi {
     @POST("auth/staff/login") suspend fun login(@Body body: StaffLoginRequest): StaffAuthResponse
     @GET("auth/me") suspend fun me(): StaffProfile
     @POST("auth/logout") suspend fun logout(@Body body: RefreshRequest): Response<Unit>
+    @POST("admin/devices") suspend fun registerDevice(@Body body: DeviceRequest): DeviceRegistration
+    @HTTP(method = "DELETE", path = "admin/devices", hasBody = true) suspend fun unregisterDevice(@Body body: DeviceToken): Response<Unit>
 
     // dashboard & reports
     @GET("admin/reports/dashboard") suspend fun dashboard(): Dashboard

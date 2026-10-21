@@ -332,7 +332,23 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                     item {
                         InfoCard {
                             Text("المدفوعات", style = MaterialTheme.typography.titleSmall)
-                            o.payments.forEach { p -> SummaryRow("${p.number} · ${p.method.label}", Money.format(p.amount), valueColor = if (p.isRefund) MaterialTheme.colorScheme.error else Success) }
+                            o.payments.forEach { p ->
+                                val attempt = when (p.status) {
+                                    "PENDING" -> " · بانتظار البوابة"
+                                    "FAILED" -> " · مرفوض"
+                                    "CANCELLED" -> " · محاولة ملغاة"
+                                    else -> ""
+                                }
+                                SummaryRow(
+                                    "${p.number} · ${p.method.label}$attempt",
+                                    Money.format(p.amount),
+                                    valueColor = when {
+                                        !p.isSettled -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        p.isRefund -> MaterialTheme.colorScheme.error
+                                        else -> Success
+                                    },
+                                )
+                            }
                         }
                     }
                 }

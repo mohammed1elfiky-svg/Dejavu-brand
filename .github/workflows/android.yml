@@ -65,7 +65,7 @@ jobs:
       - name: Newest available versions (informational)
         continue-on-error: true
         run: |
-          for a in com/android/tools/build/gradle androidx/compose/compose-bom; do
+          for a in com/android/tools/build/gradle androidx/compose/compose-bom com/google/firebase/firebase-bom; do
             echo "$a: $(curl -sL https://dl.google.com/dl/android/maven2/$a/maven-metadata.xml | grep -oE '<release>[^<]+' | sed 's/<release>//')"
           done
       - name: Build and unit-test both apps

@@ -15,10 +15,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -34,10 +38,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.CatalogRepository
+import com.dejavu.core.data.SessionState
 import com.dejavu.core.model.Category
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
+import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
 import com.dejavu.customer.ui.components.CategoryAvatar
 import com.dejavu.core.ui.LoadContent
@@ -74,14 +80,31 @@ class HomeViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
 fun HomeScreen(
     openProduct: (String) -> Unit,
     openProducts: (title: String, category: String?, query: String?, featured: Boolean) -> Unit,
+    openNotifications: () -> Unit,
 ) {
     val vm = appViewModel { HomeViewModel(it.catalog) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val container = appContainer()
+    val loggedIn by container.session.state.collectAsStateWithLifecycle()
+    val unread by container.notifications.unread.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { CenterAlignedTopAppBar(title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall) }) },
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall) },
+                actions = {
+                    if (loggedIn is SessionState.LoggedIn) {
+                        IconButton(onClick = openNotifications) {
+                            BadgedBox(badge = { if (unread > 0) Badge { Text(if (unread > 99) "99+" else "$unread") } }) {
+                                Icon(Icons.Filled.Notifications, contentDescription = "الإشعارات")
+                            }
+                        }
+                    }
+                },
+            )
+        },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { data ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 24.dp)) {

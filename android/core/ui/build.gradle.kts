@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Theme, shared Compose components, screen state and Arabic labels for both apps.
+// Theme, shared Compose components, screen state, Arabic labels and push helpers for both apps.
 android {
     namespace = "com.dejavu.core.ui"
     compileSdk = 36
@@ -30,4 +30,10 @@ dependencies {
     api(libs.androidx.lifecycle.runtime.compose)
     api(libs.coil.compose)
     api(libs.coil.network.okhttp)
+
+    // Push notifications (optional at run time: only active when Firebase is configured).
+    api(platform(libs.firebase.bom))
+    api(libs.firebase.messaging)
+    implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.androidx.core.ktx)
 }

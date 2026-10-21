@@ -16,6 +16,12 @@ android {
         versionName = "0.1.0"
         val apiBaseUrl = providers.gradleProperty("dejavu.apiBaseUrl").get()
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        // Push notifications: values of this app in the Firebase console (empty = push off).
+        fun prop(name: String) = providers.gradleProperty(name).getOrElse("")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"${prop("dejavu.firebase.customerAppId")}\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${prop("dejavu.firebase.apiKey")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${prop("dejavu.firebase.projectId")}\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("dejavu.firebase.senderId")}\"")
     }
 
     buildTypes {

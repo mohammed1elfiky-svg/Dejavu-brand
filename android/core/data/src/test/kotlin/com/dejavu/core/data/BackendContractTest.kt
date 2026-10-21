@@ -2,11 +2,16 @@ package com.dejavu.core.data
 
 import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.OrderStatus
+import com.dejavu.core.model.PaymentStatus
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.network.ApiClient
 import com.dejavu.core.network.ApiException
 import com.dejavu.core.network.InMemoryTokenStore
 import kotlinx.coroutines.runBlocking
+import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -26,18 +31,35 @@ class BackendContractTest {
     private lateinit var cart: CartRepository
     private lateinit var addresses: AddressRepository
     private lateinit var orders: OrderRepository
+    private lateinit var notifications: NotificationRepository
+    private lateinit var http: OkHttpClient
 
     @Before fun setUp() {
         assumeTrue("Set DEJAVU_API_URL to run backend contract tests", url.isNotBlank())
         val tokens = InMemoryTokenStore()
         lateinit var s: SessionRepository
-        val (api, _) = ApiClient.create(baseUrl = { url }, tokens = tokens, onSessionExpired = { s.onSessionExpired() })
+        val (api, client) = ApiClient.create(baseUrl = { url }, tokens = tokens, onSessionExpired = { s.onSessionExpired() })
+        http = client
         s = SessionRepository(api, tokens)
         session = s
         catalog = CatalogRepository(api)
         cart = CartRepository(api)
         addresses = AddressRepository(api)
         orders = OrderRepository(api, cart)
+        notifications = NotificationRepository(api)
+    }
+
+    /** Signs up a fresh customer with a deliverable address and one piece in the cart. */
+    private suspend fun shopperWithCart(): String {
+        val product = catalog.product(catalog.products(featured = true).getOrThrow().items.first { it.inStock }.slug).getOrThrow()
+        val zone = catalog.shippingZones().getOrThrow().first()
+        val phone = "015" + ((System.nanoTime() / 1000) % 100_000_000).toString().padStart(8, '0')
+        session.register("عميل البطاقة", phone, "secret123", null).getOrThrow()
+        val address = addresses.create(
+            AddressRequest(recipient = "عميل البطاقة", phone = phone, governorate = zone.governorate, city = "المدينة", street = "شارع 2"),
+        ).getOrThrow()
+        cart.add(product.variants.first { it.availableQty >= 1 }.id, 1).getOrThrow()
+        return address.id
     }
 
     @Test
@@ -106,5 +128,43 @@ class BackendContractTest {
         if (delivered != null) assertTrue(orders.order(delivered.number).getOrThrow().statusHistory.size >= 3)
         orders.returns().getOrThrow() // decodes the demo returns
         Unit
+    }
+
+    @Test
+    fun `card order paid on the test gateway, with notifications`() = runBlocking {
+        assertTrue(PaymentMethod.CARD in orders.paymentMethods())
+        val addressId = shopperWithCart()
+        val order = orders.checkout(addressId, PaymentMethod.CARD, null).getOrThrow()
+        assertTrue(order.canPayByCard)
+
+        val checkout = orders.payByCard(order.number).getOrThrow()
+        assertEquals(order.number, checkout.orderNumber)
+        assertEquals(order.grandTotal.toBigDecimal(), checkout.amount.toBigDecimal())
+
+        // What the customer does in the browser: press "pay" on the test card page.
+        val page = checkout.checkoutUrl.toHttpUrl()
+        val form = FormBody.Builder().add("sig", page.queryParameter("sig")!!).add("outcome", "success").build()
+        http.newCall(Request.Builder().url(page.newBuilder().query(null).build()).post(form).build()).execute().use {
+            assertEquals(200, it.code)
+        }
+
+        val paid = orders.order(order.number).getOrThrow()
+        assertEquals(PaymentStatus.PAID, paid.paymentStatus)
+        assertEquals(OrderStatus.CONFIRMED, paid.status)
+        assertTrue(!paid.canPayByCard)
+
+        val inbox = notifications.page().getOrThrow()
+        assertTrue(inbox.items.any { it.orderNumber == order.number && it.title.contains("الدفع") })
+        assertEquals(inbox.unread, notifications.unread.value)
+        assertTrue(inbox.unread >= 2)
+        notifications.markRead(inbox.items.first().id).getOrThrow()
+        assertEquals(inbox.unread - 1, notifications.unread.value)
+        notifications.markAllRead().getOrThrow()
+        assertEquals(0, notifications.unread.value)
+
+        val token = "contract-test-token-${System.nanoTime()}-abcdefghij"
+        notifications.registerDevice(token, "test").getOrThrow()
+        notifications.unregisterDevice(token).getOrThrow()
+        session.logout()
     }
 }

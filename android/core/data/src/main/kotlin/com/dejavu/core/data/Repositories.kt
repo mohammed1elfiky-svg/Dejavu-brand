@@ -4,13 +4,18 @@ import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.AuthResponse
+import com.dejavu.core.model.CardCheckout
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
 import com.dejavu.core.model.CheckoutRequest
 import com.dejavu.core.model.CouponRequest
 import com.dejavu.core.model.CreateReturnRequest
 import com.dejavu.core.model.Customer
+import com.dejavu.core.model.DeviceRegistration
+import com.dejavu.core.model.DeviceRequest
+import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.LoginRequest
+import com.dejavu.core.model.NotificationPage
 import com.dejavu.core.model.OrderDetail
 import com.dejavu.core.model.OrderSummary
 import com.dejavu.core.model.Page
@@ -23,6 +28,7 @@ import com.dejavu.core.model.ReturnItemRequest
 import com.dejavu.core.model.SalesReturn
 import com.dejavu.core.model.ShippingZone
 import com.dejavu.core.model.StoreProduct
+import com.dejavu.core.model.UnreadCount
 import com.dejavu.core.network.ApiException
 import com.dejavu.core.network.DejavuApi
 import com.dejavu.core.network.TokenStore
@@ -164,4 +170,59 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
         }
 
     suspend fun returns(): Result<List<SalesReturn>> = apiCall { api.returns() }
+
+    /** Opens the card-payment page for a card order; open [CardCheckout.checkoutUrl] in a browser. */
+    suspend fun payByCard(number: String): Result<CardCheckout> = apiCall { api.payByCard(number) }
+
+    private var methodsCache: List<PaymentMethod>? = null
+
+    /** Methods the checkout accepts right now (card only while a payment gateway is configured). */
+    suspend fun paymentMethods(): List<PaymentMethod> {
+        methodsCache?.let { return it }
+        return apiCall { api.paymentMethods() }.getOrNull()
+            ?.filter { it in CHECKOUT_METHODS }
+            ?.also { methodsCache = it }
+            ?: CHECKOUT_METHODS.filter { it != PaymentMethod.CARD }
+    }
+
+    companion object {
+        /** Checkout methods in the order the app shows them. */
+        val CHECKOUT_METHODS = listOf(
+            PaymentMethod.CASH_ON_DELIVERY,
+            PaymentMethod.CARD,
+            PaymentMethod.INSTAPAY,
+            PaymentMethod.WALLET,
+            PaymentMethod.BANK_TRANSFER,
+        )
+    }
+}
+
+// ----------------------------------------------------------- notifications ---
+
+class NotificationRepository(private val api: DejavuApi) {
+    private val _unread = MutableStateFlow(0)
+
+    /** Unread count for the bell badge. */
+    val unread: StateFlow<Int> = _unread.asStateFlow()
+
+    suspend fun refreshUnread() {
+        apiCall { api.unreadCount() }.onSuccess { _unread.value = it.unread }
+    }
+
+    suspend fun page(page: Int = 1): Result<NotificationPage> =
+        apiCall { api.notifications(page) }.onSuccess { _unread.value = it.unread }
+
+    suspend fun markRead(id: String): Result<UnreadCount> = apiCall { api.markRead(id) }.onSuccess { _unread.value = it.unread }
+
+    suspend fun markAllRead(): Result<UnreadCount> = apiCall { api.markAllRead() }.onSuccess { _unread.value = it.unread }
+
+    /** Links this phone's push token to the signed-in customer. */
+    suspend fun registerDevice(token: String, appVersion: String?): Result<DeviceRegistration> =
+        apiCall { api.registerDevice(DeviceRequest(token, appVersion)) }
+
+    suspend fun unregisterDevice(token: String): Result<Unit> = apiCall { api.unregisterDevice(DeviceToken(token)) }.map { }
+
+    fun clear() {
+        _unread.value = 0
+    }
 }

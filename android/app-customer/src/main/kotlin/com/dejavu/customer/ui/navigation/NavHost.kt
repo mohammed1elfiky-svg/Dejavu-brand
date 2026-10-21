@@ -1,6 +1,11 @@
 package com.dejavu.customer.ui.navigation
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -18,9 +23,15 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -42,7 +53,9 @@ import com.dejavu.customer.ui.cart.CartScreen
 import com.dejavu.customer.ui.catalog.CategoriesScreen
 import com.dejavu.customer.ui.catalog.ProductListScreen
 import com.dejavu.customer.ui.checkout.CheckoutScreen
+import com.dejavu.core.data.SessionState
 import com.dejavu.customer.ui.home.HomeScreen
+import com.dejavu.customer.ui.notifications.NotificationsScreen
 import com.dejavu.customer.ui.orders.OrderDetailScreen
 import com.dejavu.customer.ui.orders.OrdersScreen
 import com.dejavu.customer.ui.orders.ReturnRequestScreen
@@ -61,6 +74,7 @@ object Routes {
     const val ADDRESSES = "addresses"
     const val RETURNS = "returns"
     const val SERVER = "server"
+    const val NOTIFICATIONS = "notifications"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}"
     const val PRODUCT = "product/{slug}"
@@ -93,7 +107,19 @@ fun DejavuNavHost() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val cart by appContainer().cart.cart.collectAsStateWithLifecycle()
+    val container = appContainer()
+    val cart by container.cart.cart.collectAsStateWithLifecycle()
+    val session by container.session.state.collectAsStateWithLifecycle()
+    val openOrder by container.openOrder.collectAsStateWithLifecycle()
+
+    // A notification tap or the payment page's "back to the app" link.
+    LaunchedEffect(openOrder, session is SessionState.LoggedIn) {
+        val number = openOrder ?: return@LaunchedEffect
+        if (session !is SessionState.LoggedIn) return@LaunchedEffect
+        nav.navigate(Routes.order(number)) { launchSingleTop = true }
+        container.orderOpened()
+    }
+    if (session is SessionState.LoggedIn && container.pushEnabled) AskNotificationPermission()
 
     Scaffold(
         // Screens draw their own top bars; here only the bottom inset is handled.
@@ -121,6 +147,7 @@ fun DejavuNavHost() {
                 HomeScreen(
                     openProduct = { nav.navigate(Routes.product(it)) },
                     openProducts = { title, category, query, featured -> nav.navigate(Routes.products(title, category, query, featured)) },
+                    openNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                 )
             }
             composable(Routes.CATEGORIES) {
@@ -197,6 +224,7 @@ fun DejavuNavHost() {
                     addresses = { nav.navigate(Routes.ADDRESSES) },
                     returns = { nav.navigate(Routes.RETURNS) },
                     orders = { nav.switchTab(Routes.ORDERS) },
+                    notifications = { nav.navigate(Routes.NOTIFICATIONS) },
                     server = { nav.navigate(Routes.SERVER) },
                 )
             }
@@ -224,6 +252,25 @@ fun DejavuNavHost() {
                 )
             }
             composable(Routes.SERVER) { ServerSettingsScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.NOTIFICATIONS) {
+                NotificationsScreen(onBack = { nav.popBackStack() }, openOrder = { nav.navigate(Routes.order(it)) })
+            }
+        }
+    }
+}
+
+/** Android 13+ asks before an app may show notifications; ask once after sign-in. */
+@Composable
+private fun AskNotificationPermission() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val context = LocalContext.current
+    var asked by rememberSaveable { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (!granted && !asked) {
+            asked = true
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

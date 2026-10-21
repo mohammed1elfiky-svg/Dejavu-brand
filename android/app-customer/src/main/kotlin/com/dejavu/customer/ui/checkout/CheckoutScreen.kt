@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -64,11 +65,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Payment methods offered at checkout. Card payments wait for the payment-gateway integration. */
-val CHECKOUT_METHODS = listOf(PaymentMethod.CASH_ON_DELIVERY, PaymentMethod.INSTAPAY, PaymentMethod.WALLET, PaymentMethod.BANK_TRANSFER)
-
 data class CheckoutState(
     val addresses: List<Address>? = null,
+    val methods: List<PaymentMethod> = listOf(PaymentMethod.CASH_ON_DELIVERY),
     val addressId: String? = null,
     val method: PaymentMethod = PaymentMethod.CASH_ON_DELIVERY,
     val note: String = "",
@@ -84,8 +83,13 @@ class CheckoutViewModel(
     private val _state = MutableStateFlow(CheckoutState())
     val state = _state.asStateFlow()
     val cart = cartRepo.cart
-    private val _placed = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    /** Placed order number, plus the card page to open when paying by card. */
+    private val _placed = MutableSharedFlow<Pair<String, String?>>(extraBufferCapacity = 1)
     val placed = _placed.asSharedFlow()
+
+    init {
+        viewModelScope.launch { _state.value = _state.value.copy(methods = orders.paymentMethods()) }
+    }
 
     fun loadAddresses() {
         viewModelScope.launch {
@@ -117,7 +121,11 @@ class CheckoutViewModel(
         _state.value = s.copy(placing = true, problems = emptyList())
         viewModelScope.launch {
             orders.checkout(addressId, s.method, s.note)
-                .onSuccess { _placed.tryEmit(it.number) }
+                .onSuccess { order ->
+                    // The order exists either way; if the card page fails to open, it can be retried from the order.
+                    val url = if (order.canPayByCard) orders.payByCard(order.number).orSay()?.checkoutUrl else null
+                    _placed.tryEmit(order.number to url)
+                }
                 .onFailure { e ->
                     val problems = (e as? ApiException)?.problems.orEmpty().map(ServerMessages::translate)
                     _state.value = _state.value.copy(problems = problems)
@@ -136,7 +144,13 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
     val cart by vm.cart.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
-    LaunchedEffect(vm) { vm.placed.collect { placed(it) } }
+    val uriHandler = LocalUriHandler.current
+    LaunchedEffect(vm) {
+        vm.placed.collect { (number, cardUrl) ->
+            cardUrl?.let { runCatching { uriHandler.openUri(it) } }
+            placed(number)
+        }
+    }
     // Reload when coming back from "add address".
     LifecycleResumeEffect(vm) {
         vm.loadAddresses()
@@ -191,11 +205,11 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
             }
 
             item { SectionTitle("طريقة الدفع") }
-            items(CHECKOUT_METHODS) { m ->
+            items(state.methods) { m ->
                 Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
                     Text(m.label, style = MaterialTheme.typography.titleSmall)
-                    if (m != PaymentMethod.CASH_ON_DELIVERY) {
-                        Text("سيتواصل معك فريقنا بتفاصيل الدفع لتأكيد الطلب", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    methodHint(m)?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -225,6 +239,12 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
             }
         }
     }
+}
+
+private fun methodHint(m: PaymentMethod): String? = when (m) {
+    PaymentMethod.CASH_ON_DELIVERY -> null
+    PaymentMethod.CARD -> "ادفع بأمان على صفحة الدفع الإلكتروني بعد تأكيد الطلب (فيزا، ماستركارد، ميزة)"
+    else -> "سيتواصل معك فريقنا بتفاصيل الدفع لتأكيد الطلب"
 }
 
 @Composable

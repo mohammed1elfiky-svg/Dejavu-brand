@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -154,6 +155,22 @@ class OrderDetailViewModel(private val number: String, private val orders: Order
         viewModelScope.launch { _state.value = orders.order(number).toLoad() }
     }
 
+    private val _cardPage = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /** Card payment page to open in the browser. */
+    val cardPage = _cardPage.asSharedFlow()
+    private val _paying = MutableStateFlow(false)
+    val paying = _paying.asStateFlow()
+
+    fun payByCard() {
+        if (_paying.value) return
+        _paying.value = true
+        viewModelScope.launch {
+            orders.payByCard(number).orSay()?.let { _cardPage.tryEmit(it.checkoutUrl) }
+            _paying.value = false
+        }
+    }
+
     fun cancel(reason: String) {
         _cancelling.value = true
         viewModelScope.launch {
@@ -171,9 +188,12 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
     val vm = appViewModel(key = "order:$number") { OrderDetailViewModel(number, it.orders) }
     val state by vm.state.collectAsStateWithLifecycle()
     val cancelling by vm.cancelling.collectAsStateWithLifecycle()
+    val paying by vm.paying.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var askCancel by rememberSaveable { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
+    val uriHandler = LocalUriHandler.current
+    LaunchedEffect(vm) { vm.cardPage.collect { runCatching { uriHandler.openUri(it) } } }
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -242,6 +262,22 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                     }
                 }
                 order.cancelReason?.let { item { Text("سبب الإلغاء: $it", color = MaterialTheme.colorScheme.error) } }
+                if (order.canPayByCard) {
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = Warning.copy(alpha = 0.12f))) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("بانتظار الدفع بالبطاقة", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "أكمل الدفع لنبدأ تجهيز طلبك. بعد الدفع ارجع إلى التطبيق وسيتم تحديث الطلب تلقائياً.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Button(onClick = vm::payByCard, enabled = !paying, modifier = Modifier.fillMaxWidth()) {
+                                    Text("ادفع الآن ${Money.format(Money.parse(order.grandTotal) - Money.parse(order.amountPaid))}")
+                                }
+                            }
+                        }
+                    }
+                }
                 if (order.canCancel || order.canReturn) {
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

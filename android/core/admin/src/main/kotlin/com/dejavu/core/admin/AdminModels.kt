@@ -105,8 +105,12 @@ data class AdminPayment(
     val amount: String,
     val paidAt: String? = null,
     val gatewayRef: String? = null,
+    /** PENDING / FAILED / CANCELLED are online card attempts that never reached the books. */
+    val status: String = "SUCCEEDED",
+    val gateway: String? = null,
 ) {
     val isRefund: Boolean get() = amount.startsWith("-")
+    val isSettled: Boolean get() = status == "SUCCEEDED"
 }
 
 @Serializable

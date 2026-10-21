@@ -4,16 +4,22 @@ import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.AuthResponse
+import com.dejavu.core.model.CardCheckout
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
 import com.dejavu.core.model.CheckoutRequest
 import com.dejavu.core.model.CouponRequest
 import com.dejavu.core.model.CreateReturnRequest
 import com.dejavu.core.model.Customer
+import com.dejavu.core.model.DeviceRegistration
+import com.dejavu.core.model.DeviceRequest
+import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.LoginRequest
+import com.dejavu.core.model.NotificationPage
 import com.dejavu.core.model.OrderDetail
 import com.dejavu.core.model.OrderSummary
 import com.dejavu.core.model.Page
+import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.QuantityRequest
 import com.dejavu.core.model.ReasonRequest
 import com.dejavu.core.model.RefreshRequest
@@ -21,10 +27,12 @@ import com.dejavu.core.model.RegisterRequest
 import com.dejavu.core.model.SalesReturn
 import com.dejavu.core.model.ShippingZone
 import com.dejavu.core.model.StoreProduct
+import com.dejavu.core.model.UnreadCount
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -116,4 +124,30 @@ interface DejavuApi {
 
     @GET("store/returns")
     suspend fun returns(): List<SalesReturn>
+
+    // payments
+    @GET("store/payment-methods")
+    suspend fun paymentMethods(): List<PaymentMethod>
+
+    @POST("store/orders/{number}/pay")
+    suspend fun payByCard(@Path("number") number: String): CardCheckout
+
+    // notifications
+    @GET("store/notifications")
+    suspend fun notifications(@Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 20): NotificationPage
+
+    @GET("store/notifications/unread-count")
+    suspend fun unreadCount(): UnreadCount
+
+    @POST("store/notifications/{id}/read")
+    suspend fun markRead(@Path("id") id: String): UnreadCount
+
+    @POST("store/notifications/read-all")
+    suspend fun markAllRead(): UnreadCount
+
+    @POST("store/devices")
+    suspend fun registerDevice(@Body body: DeviceRequest): DeviceRegistration
+
+    @HTTP(method = "DELETE", path = "store/devices", hasBody = true)
+    suspend fun unregisterDevice(@Body body: DeviceToken): Response<Unit>
 }

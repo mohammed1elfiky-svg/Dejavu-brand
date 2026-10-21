@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -101,7 +102,15 @@ import kotlinx.coroutines.launch
 // ---------------------------------------------------------------- account ---
 
 @Composable
-fun AccountScreen(login: () -> Unit, register: () -> Unit, addresses: () -> Unit, returns: () -> Unit, orders: () -> Unit, server: () -> Unit) {
+fun AccountScreen(
+    login: () -> Unit,
+    register: () -> Unit,
+    addresses: () -> Unit,
+    returns: () -> Unit,
+    orders: () -> Unit,
+    notifications: () -> Unit,
+    server: () -> Unit,
+) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -122,9 +131,10 @@ fun AccountScreen(login: () -> Unit, register: () -> Unit, addresses: () -> Unit
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
                     MenuRow(Icons.Filled.Refresh, "طلبات الإرجاع", returns)
+                    MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
                     HorizontalDivider()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
-                    MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.session.logout() } }
+                    MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.logout() } }
                 }
                 SessionState.LoggedOut -> {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

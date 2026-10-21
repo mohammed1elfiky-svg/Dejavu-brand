@@ -114,7 +114,7 @@ fun MoreScreen(session: StaffSession.LoggedIn, navigate: (String) -> Unit) {
 
     if (confirmLogout) {
         ConfirmDialog("تسجيل الخروج", "هل تريد الخروج من حسابك على هذا الجهاز؟", "خروج", onDismiss = { confirmLogout = false }) {
-            container.appScope.launch { container.session.logout() }
+            container.appScope.launch { container.logout() }
         }
     }
 }

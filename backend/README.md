@@ -79,6 +79,23 @@ src/
 
 التفعيل الحقيقي لـ Paymob و Firebase في [docs/DEPLOY.md](../docs/DEPLOY.md).
 
+## العملات (ريال سعودي + ريال يمني)
+
+- **الريال السعودي هو العملة الأساسية**: كل الأسعار والتكاليف والمدفوعات والقيود والتقارير محفوظة به.
+- **الريال اليمني عملة بيع**: سعر الصرف (كم ريال يمني = 1 ريال سعودي) يُحفظ مع تاريخه في `exchange_rates`
+  ويُعدَّل من تطبيق الإدارة (صلاحية `settings.manage`).
+- الطلب بالريال اليمني **يُثبَّت فيه سعر الصرف لحظة إنشائه**، والرد يحتوي `inCurrency` (الفاتورة بعملة الطلب).
+  تغيير السعر لاحقاً لا يغيّر أي طلب سابق.
+- التحويل: المبلغ × السعر مقرّباً لأقرب ريال يمني، وكل رقم يُحوَّل وحده (نفس القاعدة في التطبيقين).
+- الدفعات والاستردادات تُسجَّل بالريال السعودي أو بعملة الطلب؛ دفع كامل المتبقي بالريال اليمني يُغلق الرصيد
+  بالريال السعودي تماماً بدون فروق تقريب. كل دفعة تحفظ المبلغ بعملتها وقيمته بالريال السعودي.
+- الدفع بالبطاقة يُخصم بالريال السعودي (`PAYMOB_CURRENCY`).
+
+## المنتجات والمتغيرات
+
+كل متغير (مقاس × لون) له SKU ومخزون وتكلفة خاصة به. عند إنشاء منتج أو إضافة متغير يمكن إرسال
+`initialQuantity` و`unitCost` لتسجيل الكمية الموجودة كرصيد افتتاحي (مع قيدها) في نفس العملية.
+
 ## منع البيع الزائد (Overselling)
 
 الحجز يتم بأمر `UPDATE ... WHERE on_hand - reserved >= qty` واحد (ذرّي)، وقيد `CHECK` في قاعدة البيانات يمنع
@@ -101,6 +118,7 @@ src/
 | المخزون | `/admin/inventory/{levels,movements,adjustments,transfers,low-stock}`، `/admin/stock-counts` + `/:id/post` |
 | المحاسبة | `/admin/accounts` (+ `/:id/ledger`)، `/admin/journal-entries` + `/post` · `/reverse`، `/admin/customers/:id/statement`، `/admin/fiscal-years`، `/admin/fiscal-periods/:id/{close,reopen,lock}` |
 | التقارير | `/admin/reports/dashboard`، `/income-statement`، `/balance-sheet`، `/trial-balance`، `/sales?groupBy=day\|product\|category`، `/inventory-valuation` |
-| الإدارة | `/admin/users`، `/admin/roles`، `/admin/products`، `/admin/customers`، `/admin/coupons`، `/admin/shipping-zones`، `/admin/warehouses` |
+| الإدارة | `/admin/users`، `/admin/roles`، `/admin/products` (+ `/:id/variants`، `/:id/images`)، `/admin/variants/:id`، `/admin/categories`، `/admin/customers`، `/admin/coupons`، `/admin/shipping-zones`، `/admin/warehouses` |
+| العملات | `GET /store/currencies`، `GET /admin/exchange-rates`، `PUT /admin/exchange-rates/YER` |
 
 القائمة الكاملة مع الأمثلة في Swagger على `/docs`.

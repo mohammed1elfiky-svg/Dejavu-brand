@@ -305,7 +305,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CategoryPicker(cats, form.categoryId, onAdd = vm::addCategory) { id -> vm.edit { it.copy(categoryId = id) } }
                         Field("اسم المنتج (عربي)", form.nameAr) { v -> vm.edit { it.copy(nameAr = v) } }
-                        Field("اسم المنتج (إنجليزي)", form.nameEn, vm::setNameEn)
+                        Field("اسم المنتج (إنجليزي)", form.nameEn, onChange = vm::setNameEn)
                         Field("الرابط في المتجر (slug)", form.slug, hint = "يُكتب تلقائياً من الاسم الإنجليزي") { v ->
                             vm.edit { it.copy(slug = v.lowercase().replace(' ', '-'), slugEdited = true) }
                         }

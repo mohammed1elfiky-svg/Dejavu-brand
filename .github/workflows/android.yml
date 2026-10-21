@@ -70,7 +70,18 @@ jobs:
           done
       - name: Build and unit-test both apps
         working-directory: android
-        run: ./gradlew :app-customer:assembleDebug :app-customer:testDebugUnitTest :app-admin:assembleDebug :app-admin:testDebugUnitTest --console=plain
+        # With the repository variable DEJAVU_API_URL set (Settings → Secrets and variables → Actions → Variables),
+        # the APKs connect to that server out of the box.
+        env:
+          API_URL: ${{ vars.DEJAVU_API_URL }}
+        run: |
+          args=""
+          if [ -n "$API_URL" ]; then
+            url="${API_URL%/}"
+            case "$url" in */api/v1) ;; *) url="$url/api/v1" ;; esac
+            args="-Pdejavu.apiBaseUrl=$url/"
+          fi
+          ./gradlew :app-customer:assembleDebug :app-customer:testDebugUnitTest :app-admin:assembleDebug :app-admin:testDebugUnitTest $args --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: dejavu-customer-debug-apk

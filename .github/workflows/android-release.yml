@@ -51,7 +51,9 @@ jobs:
       - name: Build signed APKs
         working-directory: android
         run: |
-          case "$API_URL" in */) url="$API_URL" ;; *) url="$API_URL/" ;; esac
+          url="${API_URL%/}"
+          case "$url" in */api/v1) ;; *) url="$url/api/v1" ;; esac
+          url="$url/"
           case "$GITHUB_REF" in refs/tags/v*) version="${GITHUB_REF_NAME#v}" ;; *) version="0.0.${GITHUB_RUN_NUMBER}" ;; esac
           ./gradlew :app-customer:assembleRelease :app-admin:assembleRelease --console=plain \
             "-Pdejavu.apiBaseUrl=$url" \

@@ -77,7 +77,8 @@ object ApiClient {
     ): Pair<Retrofit, OkHttpClient> {
         val base = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            // Free hosting (e.g. Render) sleeps when idle and needs up to a minute to wake up.
+            .readTimeout(75, TimeUnit.SECONDS)
             .addInterceptor(BaseUrlInterceptor(baseUrl))
             .apply(configure)
             .build()

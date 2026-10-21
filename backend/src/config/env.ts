@@ -1,3 +1,13 @@
+/** Hosts that announce their public URL (Render, Codespaces); elsewhere assume localhost. */
+function defaultPublicUrl(raw: Record<string, unknown>) {
+  if (typeof raw.RENDER_EXTERNAL_URL === 'string' && raw.RENDER_EXTERNAL_URL) return raw.RENDER_EXTERNAL_URL;
+  const port = raw.PORT ?? 3000;
+  if (raw.CODESPACE_NAME && raw.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN) {
+    return `https://${raw.CODESPACE_NAME}-${port}.${raw.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}`;
+  }
+  return `http://localhost:${port}`;
+}
+
 /** Validates environment variables at startup so misconfiguration fails fast. */
 export function validateEnv(raw: Record<string, unknown>) {
   const errors: string[] = [];
@@ -25,7 +35,7 @@ export function validateEnv(raw: Record<string, unknown>) {
     AUTH_RATE_LIMIT: int('AUTH_RATE_LIMIT', 10),
     STORE_TIMEZONE: str('STORE_TIMEZONE', 'Africa/Cairo'),
     /** Address the outside world (browsers, Paymob) uses to reach this server, without /api/v1. */
-    PUBLIC_BASE_URL: str('PUBLIC_BASE_URL', `http://localhost:${raw.PORT ?? 3000}`).replace(/\/+$/, ''),
+    PUBLIC_BASE_URL: str('PUBLIC_BASE_URL', defaultPublicUrl(raw)).replace(/\/+$/, ''),
     /** test = built-in fake card page (development), paymob = real payments, none = card payments off. */
     PAYMENT_GATEWAY: str('PAYMENT_GATEWAY', raw.NODE_ENV === 'production' ? 'none' : 'test'),
     PAYMOB_API_URL: str('PAYMOB_API_URL', 'https://accept.paymob.com').replace(/\/+$/, ''),

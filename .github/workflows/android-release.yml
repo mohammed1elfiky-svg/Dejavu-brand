@@ -1,0 +1,75 @@
+name: Android release
+
+# Signed release APKs of both apps. Runs on a version tag (git tag v1.0.0 && git push --tags)
+# or by hand from the Actions tab. Setup (secrets & variables) is described in docs/DEPLOY.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      API_URL: ${{ vars.DEJAVU_API_URL }}
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      DEJAVU_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      DEJAVU_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      DEJAVU_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # Optional push notifications (Firebase console → Project settings → Your apps).
+      FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      FIREBASE_SENDER_ID: ${{ vars.FIREBASE_SENDER_ID }}
+      FIREBASE_CUSTOMER_APP_ID: ${{ vars.FIREBASE_CUSTOMER_APP_ID }}
+      FIREBASE_ADMIN_APP_ID: ${{ vars.FIREBASE_ADMIN_APP_ID }}
+    steps:
+      - name: Check configuration
+        run: |
+          missing=""
+          case "$API_URL" in https://*) ;; *) missing="$missing DEJAVU_API_URL (variable, https://.../api/v1/)";; esac
+          [ -n "$KEYSTORE_BASE64" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "$DEJAVU_KEYSTORE_PASSWORD" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "$DEJAVU_KEY_ALIAS" ] || missing="$missing ANDROID_KEY_ALIAS"
+          [ -n "$DEJAVU_KEY_PASSWORD" ] || missing="$missing ANDROID_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository settings:$missing. See docs/DEPLOY.md"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "DEJAVU_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Build signed APKs
+        working-directory: android
+        run: |
+          case "$API_URL" in */) url="$API_URL" ;; *) url="$API_URL/" ;; esac
+          case "$GITHUB_REF" in refs/tags/v*) version="${GITHUB_REF_NAME#v}" ;; *) version="0.0.${GITHUB_RUN_NUMBER}" ;; esac
+          ./gradlew :app-customer:assembleRelease :app-admin:assembleRelease --console=plain \
+            "-Pdejavu.apiBaseUrl=$url" \
+            "-Pdejavu.versionName=$version" "-Pdejavu.versionCode=$GITHUB_RUN_NUMBER" \
+            "-Pdejavu.firebase.apiKey=$FIREBASE_API_KEY" "-Pdejavu.firebase.projectId=$FIREBASE_PROJECT_ID" \
+            "-Pdejavu.firebase.senderId=$FIREBASE_SENDER_ID" \
+            "-Pdejavu.firebase.customerAppId=$FIREBASE_CUSTOMER_APP_ID" "-Pdejavu.firebase.adminAppId=$FIREBASE_ADMIN_APP_ID"
+          mkdir -p ../dist
+          cp app-customer/build/outputs/apk/release/*.apk "../dist/dejavu-customer-$version.apk"
+          cp app-admin/build/outputs/apk/release/*.apk "../dist/dejavu-admin-$version.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejavu-release-apks
+          path: dist/*.apk
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true

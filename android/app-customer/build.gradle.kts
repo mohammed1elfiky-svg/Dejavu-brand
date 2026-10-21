@@ -12,8 +12,8 @@ android {
         applicationId = "com.dejavu.customer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = providers.gradleProperty("dejavu.versionCode").getOrElse("1").toInt()
+        versionName = providers.gradleProperty("dejavu.versionName").getOrElse("0.1.0")
         val apiBaseUrl = providers.gradleProperty("dejavu.apiBaseUrl").get()
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         // Push notifications: values of this app in the Firebase console (empty = push off).
@@ -24,6 +24,19 @@ android {
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("dejavu.firebase.senderId")}\"")
     }
 
+    // Release signing from environment variables (set by the release workflow); unsigned otherwise.
+    signingConfigs {
+        val keystore = System.getenv("DEJAVU_KEYSTORE_FILE")
+        if (!keystore.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("DEJAVU_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("DEJAVU_KEY_ALIAS")
+                keyPassword = System.getenv("DEJAVU_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -32,6 +45,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             manifestPlaceholders["cleartext"] = "false"
         }
     }

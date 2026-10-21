@@ -24,7 +24,9 @@ npm run test:e2e     # اختبارات شاملة على قاعدة بيانا�
 اختبارات e2e تغطي الدورة كاملة وتتحقق من كل قيد محاسبي: الدخول وتدوير التوكن، الصلاحيات،
 المنتجات، المخزون الافتتاحي ومتوسط التكلفة، السلة والكوبونات، الطلب والحجز، الشحن (قيد المبيعات والتكلفة)،
 التسليم والتحصيل، الدفع المسبق والاسترداد، الإلغاء، منع البيع الزائد عند الطلبات المتزامنة،
-القيود اليدوية والعكس، الفترات المقفلة، وتوازن ميزان المراجعة مع قيمة المخزون الفعلية.
+القيود اليدوية والعكس، الفترات المقفلة، وتوازن ميزان المراجعة مع قيمة المخزون الفعلية،
+الدفع بالبطاقة (رفض ثم نجاح، عدم التكرار، الإلغاء التلقائي لغير المدفوع)، والإشعارات وتسجيل الأجهزة.
+اختبار وحدة يتحقق من توقيع Paymob (HMAC-SHA512) ورفض أي تلاعب.
 
 ## هيكل الكود
 
@@ -66,6 +68,17 @@ src/
 كل قيد يمر عبر `LedgerService.post()` داخل نفس الـ Transaction الخاص بالعملية، ثم تتحقق Triggers قاعدة البيانات
 من التوازن والفترة المفتوحة والحساب القابل للترحيل. إذا فشل أي جزء، تُلغى العملية بالكامل (المستند + المخزون + القيد).
 
+## الدفع بالبطاقة والإشعارات
+
+- **الدفع:** `POST /store/orders/:number/pay` يفتح محاولة دفع (`PENDING`، بلا أي قيد) ويعيد رابط صفحة الدفع.
+  القيد يُنشأ فقط عند تأكيد البوابة: من ح/ مستحقات بوابات الدفع، إلى ح/ دفعات مقدمة من العملاء
+  (أو العملاء إن كان الطلب شُحن). النتيجة نفسها إذا وصلت مرتين لا تُسجَّل مرتين. الطلبات غير المدفوعة تُلغى بعد
+  `CARD_PAYMENT_TIMEOUT_MINUTES`. البوابة تُختار بـ `PAYMENT_GATEWAY`: `test` (صفحة تجريبية) أو `paymob` أو `none`.
+- **الإشعارات:** تُكتب داخل نفس Transaction العملية (لا إشعار لعملية فشلت)، ثم يرسلها موزّع إلى FCM ويعلّمها بـ
+  `pushed_at` (Outbox). بدون `FCM_SERVICE_ACCOUNT` تبقى داخل التطبيق فقط.
+
+التفعيل الحقيقي لـ Paymob و Firebase في [docs/DEPLOY.md](../docs/DEPLOY.md).
+
 ## منع البيع الزائد (Overselling)
 
 الحجز يتم بأمر `UPDATE ... WHERE on_hand - reserved >= qty` واحد (ذرّي)، وقيد `CHECK` في قاعدة البيانات يمنع
@@ -80,6 +93,8 @@ src/
 | المتجر (العملاء) | `GET /store/categories`، `GET /store/products[/:slug]`، `/store/me/addresses`، `/store/cart` (+ `/items`، `/coupon`)، `POST /store/orders`، `GET /store/orders[/:number]`، `POST /store/orders/:number/cancel`، `POST /store/orders/:number/returns`، `GET /store/returns` |
 | الطلبات | `/admin/orders` + `/:id/status` (تأكيد/شحن/تسليم/رفض استلام/إلغاء) + `/:id/payments` + `/:id/refunds` + `/:id/returns` |
 | المرتجعات | `/admin/returns` + `/:id/approve` · `/reject` · `/receive` · `/refund` |
+| الدفع بالبطاقة | `GET /store/payment-methods`، `POST /store/orders/:number/pay` (يعيد `checkoutUrl`)، `POST /payments/paymob/callback` (موقّع HMAC)، `GET /payments/return` |
+| الإشعارات | `GET /store/notifications` (+ `/unread-count`)، `POST /store/notifications/:id/read` · `/read-all`، `POST·DELETE /store/devices`، `POST·DELETE /admin/devices` |
 | شركات الشحن | `GET /admin/courier-settlements/pending`، `POST /admin/courier-settlements` |
 | المشتريات | `/admin/suppliers` (+ `/:id/statement`)، `/admin/purchase-orders` + `/:id/place` · `/receive` · `/close` · `/cancel`، `POST /admin/supplier-payments` |
 | المصروفات | `/admin/expense-categories`، `/admin/expenses` + `/:id/approve` · `/pay` · `/cancel` |

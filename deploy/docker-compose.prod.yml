@@ -1,0 +1,55 @@
+# Production on your own server (any VPS with Docker): PostgreSQL + API + Caddy
+# (automatic HTTPS from Let's Encrypt). See docs/DEPLOY.md.
+#
+#   cp .env.prod.example .env.prod   # then fill it in
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dejavu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: dejavu
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dejavu"]
+      interval: 5s
+      retries: 10
+
+  api:
+    # Published by GitHub Actions on every push; pin a sha-xxxxxxx tag for repeatable deploys.
+    image: ${API_IMAGE:-ghcr.io/mohammed1elfiky-svg/dejavu-api:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env.prod
+    environment:
+      DATABASE_URL: postgresql://dejavu:${POSTGRES_PASSWORD}@postgres:5432/dejavu
+      PUBLIC_BASE_URL: https://${DOMAIN:?set DOMAIN in .env.prod}
+      TRUST_PROXY: "1"
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

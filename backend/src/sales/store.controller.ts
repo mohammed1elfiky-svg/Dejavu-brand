@@ -11,8 +11,10 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -142,8 +144,10 @@ export class StoreOrdersController {
   /** Opens the card payment page for an unpaid card order. Open `checkoutUrl` in a browser. */
   @Post(':number/pay')
   @HttpCode(HttpStatus.OK)
-  pay(@CurrentUser() u: AuthPrincipal, @Param('number') number: string) {
-    return this.online.start(u.id, number);
+  pay(@CurrentUser() u: AuthPrincipal, @Param('number') number: string, @Req() req: Request) {
+    const host = (req.headers['x-forwarded-host'] as string | undefined)?.split(',')[0] ?? req.headers.host;
+    const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] ?? req.protocol;
+    return this.online.start(u.id, number, host ? `${proto}://${host}` : undefined);
   }
 
   @Get()

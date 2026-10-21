@@ -34,7 +34,9 @@ class TestGateway extends CardGateway {
   }
 
   async createCheckout(req: CheckoutRequest): Promise<CheckoutSession> {
-    return { checkoutUrl: `${this.baseUrl}/api/v1/payments/test/${req.paymentId}?sig=${this.sign(req.paymentId)}` };
+    // The phone must be able to open the link, so use the address it reached us on.
+    const base = req.requestBaseUrl ?? this.baseUrl;
+    return { checkoutUrl: `${base}/api/v1/payments/test/${req.paymentId}?sig=${this.sign(req.paymentId)}` };
   }
 }
 
@@ -88,7 +90,7 @@ export class OnlinePaymentsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Starts (or restarts) card payment for the customer's order and returns the hosted page to open. */
-  async start(customerId: string, orderNumber: string) {
+  async start(customerId: string, orderNumber: string, requestBaseUrl?: string) {
     if (!this.gateway) throw new ServiceUnavailableException('Card payments are not available at the moment');
     const { payment, order, customer } = await this.orders.openCardPayment(customerId, orderNumber, this.gateway.name);
     const address = (order.shippingAddress ?? {}) as Record<string, string | undefined>;
@@ -100,6 +102,7 @@ export class OnlinePaymentsService implements OnModuleInit, OnModuleDestroy {
         amount: dec(payment.amount),
         customer,
         address,
+        requestBaseUrl,
       });
     } catch (e) {
       this.log.error(`Checkout for ${order.number} failed: ${(e as Error).message}`);

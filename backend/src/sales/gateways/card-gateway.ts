@@ -7,6 +7,8 @@ export interface CheckoutRequest {
   amount: Decimal;
   customer: { name: string; phone: string; email?: string | null };
   address: { city?: string; street?: string; building?: string; floor?: string; apartment?: string };
+  /** Scheme + host the app used to reach us (e.g. http://10.0.2.2:3000 from the emulator). */
+  requestBaseUrl?: string;
 }
 
 export interface CheckoutSession {

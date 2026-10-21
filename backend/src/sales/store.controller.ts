@@ -1,4 +1,18 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -10,11 +24,14 @@ import {
   ApplyCouponDto,
   CancelOrderDto,
   CartQueryDto,
+  CHECKOUT_METHODS,
   CheckoutDto,
   CreateReturnDto,
   UpdateAddressDto,
   UpdateCartItemDto,
 } from './dto/sales.dto';
+import { PaymentMethod } from '../generated/prisma/client';
+import { OnlinePaymentsService } from './online-payments.service';
 import { OrdersService } from './orders.service';
 import { ReturnsService } from './returns.service';
 
@@ -111,11 +128,22 @@ export class StoreOrdersController {
   constructor(
     private readonly orders: OrdersService,
     private readonly returns: ReturnsService,
+    private readonly online: OnlinePaymentsService,
   ) {}
 
   @Post()
   checkout(@CurrentUser() u: AuthPrincipal, @Body() dto: CheckoutDto) {
+    if (dto.paymentMethod === PaymentMethod.CARD && !this.online.enabled) {
+      throw new UnprocessableEntityException('Card payments are not available at the moment');
+    }
     return this.orders.checkout(u.id, dto);
+  }
+
+  /** Opens the card payment page for an unpaid card order. Open `checkoutUrl` in a browser. */
+  @Post(':number/pay')
+  @HttpCode(HttpStatus.OK)
+  pay(@CurrentUser() u: AuthPrincipal, @Param('number') number: string) {
+    return this.online.start(u.id, number);
   }
 
   @Get()
@@ -149,5 +177,18 @@ export class StoreReturnsController {
   @Get()
   list(@CurrentUser() u: AuthPrincipal) {
     return this.returns.customerReturns(u.id);
+  }
+}
+
+@ApiTags('Store · Orders')
+@Public()
+@Controller('store/payment-methods')
+export class StorePaymentMethodsController {
+  constructor(private readonly online: OnlinePaymentsService) {}
+
+  /** Payment methods the checkout currently accepts. */
+  @Get()
+  list() {
+    return CHECKOUT_METHODS.filter((m) => m !== PaymentMethod.CARD || this.online.enabled);
   }
 }

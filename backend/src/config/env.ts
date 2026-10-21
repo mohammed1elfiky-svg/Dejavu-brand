@@ -24,7 +24,31 @@ export function validateEnv(raw: Record<string, unknown>) {
     JWT_REFRESH_TTL_DAYS: int('JWT_REFRESH_TTL_DAYS', 30),
     AUTH_RATE_LIMIT: int('AUTH_RATE_LIMIT', 10),
     STORE_TIMEZONE: str('STORE_TIMEZONE', 'Africa/Cairo'),
+    /** Address the outside world (browsers, Paymob) uses to reach this server, without /api/v1. */
+    PUBLIC_BASE_URL: str('PUBLIC_BASE_URL', `http://localhost:${raw.PORT ?? 3000}`).replace(/\/+$/, ''),
+    /** test = built-in fake card page (development), paymob = real payments, none = card payments off. */
+    PAYMENT_GATEWAY: str('PAYMENT_GATEWAY', raw.NODE_ENV === 'production' ? 'none' : 'test'),
+    PAYMOB_API_URL: str('PAYMOB_API_URL', 'https://accept.paymob.com').replace(/\/+$/, ''),
+    PAYMOB_SECRET_KEY: str('PAYMOB_SECRET_KEY', ''),
+    PAYMOB_PUBLIC_KEY: str('PAYMOB_PUBLIC_KEY', ''),
+    PAYMOB_INTEGRATION_ID: str('PAYMOB_INTEGRATION_ID', ''),
+    PAYMOB_HMAC_SECRET: str('PAYMOB_HMAC_SECRET', ''),
+    /** Unpaid card orders are cancelled (and their stock released) after this many minutes. 0 = never. */
+    CARD_PAYMENT_TIMEOUT_MINUTES: raw.CARD_PAYMENT_TIMEOUT_MINUTES === '0' ? 0 : int('CARD_PAYMENT_TIMEOUT_MINUTES', 60),
   };
+
+  if (!['test', 'paymob', 'none'].includes(env.PAYMENT_GATEWAY)) {
+    errors.push('PAYMENT_GATEWAY must be one of: test, paymob, none');
+  }
+  if (env.PAYMENT_GATEWAY === 'paymob') {
+    for (const key of ['PAYMOB_SECRET_KEY', 'PAYMOB_PUBLIC_KEY', 'PAYMOB_INTEGRATION_ID', 'PAYMOB_HMAC_SECRET'] as const) {
+      if (!env[key]) errors.push(`${key} is required when PAYMENT_GATEWAY=paymob`);
+    }
+    if (!env.PUBLIC_BASE_URL.startsWith('https://')) errors.push('PUBLIC_BASE_URL must be https:// for Paymob callbacks');
+  }
+  if (raw.NODE_ENV === 'production' && env.PAYMENT_GATEWAY === 'test') {
+    errors.push('PAYMENT_GATEWAY=test is not allowed in production');
+  }
 
   if (env.JWT_ACCESS_SECRET && env.JWT_ACCESS_SECRET.length < 32) {
     errors.push('JWT_ACCESS_SECRET must be at least 32 characters');

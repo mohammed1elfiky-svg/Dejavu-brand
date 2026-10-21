@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
-import { Order, OrderStatus, PaymentMethod, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
+import { Order, OrderStatus, Payment, PaymentMethod, Prisma, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
 import { LedgerService, SystemAccount } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
@@ -54,7 +54,6 @@ export class PaymentsService {
     }
 
     const cashAccount = await this.resolveCashAccount(tx, input);
-    const invoiced = INVOICED_STATUSES.includes(order.status);
     const number = await this.sequences.next(tx, 'RCPT');
     const payment = await tx.payment.create({
       data: {
@@ -68,14 +67,93 @@ export class PaymentsService {
         paidAt: new Date(),
       },
     });
+    const updated = await this.postReceipt(tx, order, payment, userId);
+    return { payment, order: updated };
+  }
 
+  /**
+   * Opens a card payment attempt for what the customer still owes. It reaches the
+   * ledger only when the gateway confirms it. Caller holds the order row lock.
+   */
+  async openGatewayAttempt(tx: Tx, order: Order, gateway: string) {
+    if (order.paymentMethod !== PaymentMethod.CARD) {
+      throw new UnprocessableEntityException('This order is not paid by card');
+    }
+    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.RETURNED) {
+      throw new UnprocessableEntityException(`Order is ${order.status.toLowerCase()}`);
+    }
+    const due = balanceDue(order);
+    if (!due.gt(0)) throw new UnprocessableEntityException('This order is already paid');
+    // Only the newest attempt stays open; an older tab that still succeeds is recorded anyway.
+    await tx.payment.updateMany({
+      where: { orderId: order.id, status: TransactionStatus.PENDING, gateway: { not: null } },
+      data: { status: TransactionStatus.CANCELLED },
+    });
+    return tx.payment.create({
+      data: {
+        number: await this.sequences.next(tx, 'PAY'),
+        orderId: order.id,
+        method: PaymentMethod.CARD,
+        status: TransactionStatus.PENDING,
+        amount: due,
+        accountId: await this.resolveCashAccount(tx, { method: PaymentMethod.CARD, amount: due }),
+        gateway,
+      },
+    });
+  }
+
+  /**
+   * Books a gateway-confirmed attempt. Money the gateway actually took is always
+   * recorded, even for an order cancelled meanwhile: it then sits as a customer
+   * advance until refunded. Returns null if the attempt was already settled.
+   */
+  async confirmGatewayAttempt(
+    tx: Tx,
+    order: Order,
+    paymentId: string,
+    result: { success: boolean; amount: Decimal; transactionId: string; payload: Record<string, string> },
+  ) {
+    const payment = await tx.payment.findFirst({ where: { id: paymentId, orderId: order.id } });
+    if (!payment || !payment.gateway) return null;
+    const open: TransactionStatus[] = [TransactionStatus.PENDING, TransactionStatus.CANCELLED];
+    if (!open.includes(payment.status)) return null;
+    const payload = { ...((payment.gatewayPayload as object) ?? {}), ...result.payload } as Prisma.InputJsonObject;
+
+    if (!result.success) {
+      // A superseded attempt stays cancelled; only the live one is shown as declined.
+      if (payment.status === TransactionStatus.PENDING) {
+        await tx.payment.update({ where: { id: payment.id }, data: { status: TransactionStatus.FAILED, gatewayPayload: payload } });
+      }
+      return null;
+    }
+
+    const amount = money(result.amount);
+    if (!amount.gt(0)) return null;
+    const confirmed = await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: TransactionStatus.SUCCEEDED,
+        amount,
+        gatewayRef: result.transactionId || null,
+        gatewayPayload: payload,
+        paidAt: new Date(),
+      },
+    });
+    const updated = await this.postReceipt(tx, order, confirmed, null);
+    return { payment: confirmed, order: updated };
+  }
+
+  /** Dr cash/bank/clearing — Cr AR (invoiced) or customer advances (not shipped yet). */
+  private async postReceipt(tx: Tx, order: Order, payment: Payment, userId: string | null) {
+    const amount = dec(payment.amount);
+    const invoiced = INVOICED_STATUSES.includes(order.status);
     await this.ledger.post(tx, {
-      description: `Receipt ${number} for order ${order.number}`,
+      description: `Receipt ${payment.number} for order ${order.number}`,
       sourceType: 'CUSTOMER_PAYMENT',
       sourceId: payment.id,
       userId,
       lines: [
-        { account: { id: cashAccount }, debit: amount },
+        { account: { id: payment.accountId }, debit: amount },
         { account: invoiced ? 'AR' : 'CUSTOMER_ADVANCES', credit: amount, customerId: order.customerId },
       ],
     });
@@ -86,7 +164,7 @@ export class PaymentsService {
       data: { amountPaid, paymentStatus: await this.statusOf(tx, order, amountPaid) },
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Payment', entityId: payment.id, after: payment }, tx);
-    return { payment, order: updated };
+    return updated;
   }
 
   /** Returns money held as an advance: unshipped, cancelled or refused-delivery orders. */

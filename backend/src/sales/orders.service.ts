@@ -4,7 +4,16 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { Order, OrderStatus, PaymentMethod, PaymentStatus, Prisma, ShipmentStatus, StockMovementType } from '../generated/prisma/client';
+import {
+  Order,
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  ShipmentStatus,
+  StockMovementType,
+  TransactionStatus,
+} from '../generated/prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
@@ -16,6 +25,7 @@ import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
 import { balanceDue, PaymentsService } from './payments.service';
+import { GatewayResult } from './gateways/card-gateway';
 import { revenueSplit } from './pricing';
 import { getSetting } from './settings';
 
@@ -310,6 +320,63 @@ export class OrdersService {
     return this.adminGet(id);
   }
 
+  // -------------------------------------------------------- card payments ---
+
+  /** Opens a card payment attempt on the customer's own order. */
+  async openCardPayment(customerId: string, number: string, gateway: string) {
+    const found = await this.prisma.order.findFirst({ where: { number, customerId }, select: { id: true } });
+    if (!found) throw new NotFoundException('Order not found');
+    return this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, found.id);
+      const payment = await this.payments.openGatewayAttempt(tx, order, gateway);
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { name: true, phone: true, email: true } });
+      return { payment, order, customer };
+    });
+  }
+
+  /** Applies a verified gateway result. Safe to call repeatedly for the same attempt. */
+  async applyGatewayResult(result: GatewayResult): Promise<boolean> {
+    const attempt = await this.prisma.payment.findUnique({ where: { id: result.paymentId }, select: { orderId: true } });
+    if (!attempt) return false;
+    return this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, attempt.orderId);
+      const done = await this.payments.confirmGatewayAttempt(tx, order, result.paymentId, result);
+      if (done) await this.autoConfirm(tx, done.order, null);
+      return done !== null;
+    });
+  }
+
+  /** Cancels card orders nobody paid for within [minutes], so their stock goes back on sale. */
+  async expireUnpaidCardOrders(minutes: number, now = new Date()): Promise<string[]> {
+    const cutoff = new Date(now.getTime() - minutes * 60_000);
+    const stale = await this.prisma.order.findMany({
+      where: {
+        status: OrderStatus.PENDING,
+        paymentMethod: PaymentMethod.CARD,
+        paymentStatus: PaymentStatus.UNPAID,
+        placedAt: { lt: cutoff },
+        // A checkout opened recently gets its full window too.
+        payments: { none: { status: TransactionStatus.PENDING, createdAt: { gte: cutoff } } },
+      },
+      select: { id: true },
+      take: 100,
+    });
+    const cancelled: string[] = [];
+    for (const { id } of stale) {
+      await this.prisma.$transaction(async (tx) => {
+        const order = await this.lockOrder(tx, id);
+        if (order.status !== OrderStatus.PENDING || order.paymentStatus !== PaymentStatus.UNPAID) return;
+        await tx.payment.updateMany({
+          where: { orderId: id, status: TransactionStatus.PENDING },
+          data: { status: TransactionStatus.CANCELLED },
+        });
+        await this.cancel(tx, order, 'Card payment not completed in time', null);
+        cancelled.push(order.number);
+      });
+    }
+    return cancelled;
+  }
+
   // ------------------------------------------------------ state handlers ---
 
   private async transition(
@@ -459,7 +526,7 @@ export class OrdersService {
     await this.transition(tx, order, OrderStatus.RETURNED, reason, userId);
   }
 
-  private async autoConfirm(tx: Tx, order: Order, userId: string) {
+  private async autoConfirm(tx: Tx, order: Order, userId: string | null) {
     if (order.status !== OrderStatus.PENDING || order.paymentStatus !== PaymentStatus.PAID) return;
     if (!(await getSetting(tx, 'orders.autoConfirmPaid', true))) return;
     await this.transition(tx, order, OrderStatus.CONFIRMED, 'Auto-confirmed after full payment', userId, {

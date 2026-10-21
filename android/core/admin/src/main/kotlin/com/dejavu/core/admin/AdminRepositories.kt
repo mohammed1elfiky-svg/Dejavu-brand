@@ -57,6 +57,9 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
 
     fun can(permission: String) = (state.value as? StaffSession.LoggedIn)?.can(permission) == true
 
+    /** Checks that the configured server is reachable and its database is up. */
+    suspend fun ping(): Result<Health> = apiCall { api.health() }
+
     suspend fun restore() {
         if (tokens.current() == null) return
         apiCall { api.me() }

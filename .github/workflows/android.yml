@@ -68,11 +68,16 @@ jobs:
           for a in com/android/tools/build/gradle androidx/compose/compose-bom; do
             echo "$a: $(curl -sL https://dl.google.com/dl/android/maven2/$a/maven-metadata.xml | grep -oE '<release>[^<]+' | sed 's/<release>//')"
           done
-      - name: Build and unit-test the customer app
+      - name: Build and unit-test both apps
         working-directory: android
-        run: ./gradlew :app-customer:assembleDebug :app-customer:testDebugUnitTest --console=plain
+        run: ./gradlew :app-customer:assembleDebug :app-customer:testDebugUnitTest :app-admin:assembleDebug :app-admin:testDebugUnitTest --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: dejavu-customer-debug-apk
           path: android/app-customer/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejavu-admin-debug-apk
+          path: android/app-admin/build/outputs/apk/debug/*.apk
           if-no-files-found: error

@@ -16,6 +16,9 @@ import kotlinx.serialization.Serializable
 // ------------------------------------------------------------------ auth ---
 
 @Serializable
+data class Health(val status: String)
+
+@Serializable
 data class StaffLoginRequest(val email: String, val password: String)
 
 @Serializable

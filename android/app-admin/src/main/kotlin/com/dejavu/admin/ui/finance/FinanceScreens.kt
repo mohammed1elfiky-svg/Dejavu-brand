@@ -1,0 +1,611 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
+package com.dejavu.admin.ui.finance
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import com.dejavu.admin.ui.AccountPickerDialog
+import com.dejavu.admin.ui.ChipFilter
+import com.dejavu.admin.ui.InfoCard
+import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.tint
+import com.dejavu.core.admin.AdminCustomerDetail
+import com.dejavu.core.admin.AdminCustomerSummary
+import com.dejavu.core.admin.BalanceSheet
+import com.dejavu.core.admin.DashboardRepository
+import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.IncomeStatement
+import com.dejavu.core.admin.LedgerAccount
+import com.dejavu.core.admin.PendingCod
+import com.dejavu.core.admin.Perm
+import com.dejavu.core.admin.ReportSection
+import com.dejavu.core.admin.SalesReport
+import com.dejavu.core.admin.StaffSession
+import com.dejavu.core.data.userMessage
+import com.dejavu.core.model.Money
+import com.dejavu.core.ui.BackTopBar
+import com.dejavu.core.ui.BaseViewModel
+import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.EmptyState
+import com.dejavu.core.ui.Load
+import com.dejavu.core.ui.LoadContent
+import com.dejavu.core.ui.StatusChip
+import com.dejavu.core.ui.SummaryRow
+import com.dejavu.core.ui.formatDate
+import com.dejavu.core.ui.label
+import com.dejavu.core.ui.theme.Success
+import com.dejavu.core.ui.toLoad
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.math.BigDecimal
+import java.time.LocalDate
+
+// ------------------------------------------------------------ settlements ---
+
+class SettlementsViewModel(private val repo: FinanceRepository) : BaseViewModel() {
+    private val _state = MutableStateFlow<Load<PendingCod>>(Load.Loading)
+    val state = _state.asStateFlow()
+    private val _accounts = MutableStateFlow<List<LedgerAccount>>(emptyList())
+    val accounts = _accounts.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+
+    fun load() {
+        if (_state.value !is Load.Ready) _state.value = Load.Loading
+        viewModelScope.launch { _state.value = repo.pendingCod().toLoad() }
+        viewModelScope.launch { _accounts.value = repo.cashAccounts() }
+    }
+
+    fun settle(carrier: String, shipmentIds: Set<String>, account: LedgerAccount, fees: String, reference: String, done: () -> Unit) {
+        if (_busy.value || shipmentIds.isEmpty()) return
+        _busy.value = true
+        viewModelScope.launch {
+            repo.settle(carrier, shipmentIds.toList(), account.id, fees, reference).orSay()?.let {
+                say("تم توريد ${Money.format(it.netAmount)} إلى ${account.nameAr} (${it.number})")
+                done()
+                _state.value = repo.pendingCod().toLoad()
+            }
+            _busy.value = false
+        }
+    }
+}
+
+@Composable
+fun SettlementsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
+    val canSettle = session.can(Perm.PAYMENTS_RECORD)
+    val vm = adminViewModel { SettlementsViewModel(it.finance) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val accounts by vm.accounts.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var carrier by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var fees by rememberSaveable { mutableStateOf("") }
+    var reference by rememberSaveable { mutableStateOf("") }
+    var picking by remember { mutableStateOf(false) }
+    CollectMessages(vm, snackbar)
+    LifecycleResumeEffect(vm) {
+        vm.load()
+        onPauseOrDispose {}
+    }
+
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("توريدات شركات الشحن", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { pending ->
+            if (pending.carriers.isEmpty()) {
+                EmptyState(Icons.Filled.CheckCircle, "لا توجد مبالغ تحصيل معلقة", "كل شحنات الدفع عند الاستلام تم توريدها", modifier = Modifier.padding(padding))
+                return@LoadContent
+            }
+            val current = carrier?.takeIf { c -> pending.carriers.any { it.carrier == c } } ?: pending.carriers.first().carrier
+            val shipments = pending.shipments.filter { it.carrier == current }
+            val chosen = shipments.filter { it.id in selected }
+            val collected = chosen.fold(BigDecimal.ZERO) { acc, s -> acc + Money.parse(s.codAmount) }
+            val feeValue = fees.toBigDecimalOrNull() ?: BigDecimal.ZERO
+            val validFees = fees.isBlank() || (feeValue.signum() >= 0 && feeValue.scale() <= 2 && feeValue <= collected)
+
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
+                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                item {
+                    ChipFilter(pending.carriers.map { it.carrier }, current, { c ->
+                        val info = pending.carriers.first { it.carrier == c }
+                        "$c (${info.shipments}) · ${Money.format(info.collected)}"
+                    }) { c ->
+                        carrier = c
+                        selected = emptySet()
+                    }
+                }
+                item {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${shipments.size} شحنة مسلّمة بانتظار التوريد", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                        OutlinedButton(onClick = {
+                            selected = if (chosen.size == shipments.size) emptySet() else shipments.map { it.id }.toSet()
+                        }) { Text(if (chosen.size == shipments.size) "إلغاء التحديد" else "تحديد الكل") }
+                    }
+                }
+                items(shipments, key = { it.id }) { s ->
+                    val checked = s.id in selected
+                    Row(
+                        Modifier.fillMaxWidth().clickable { selected = if (checked) selected - s.id else selected + s.id }.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = checked, onCheckedChange = { selected = if (it) selected + s.id else selected - s.id })
+                        Column(Modifier.weight(1f)) {
+                            Text("${s.order.number} · ${s.order.customer.name}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                listOfNotNull(s.trackingNumber, s.deliveredAt?.let { "سُلّمت ${formatDate(it)}" }).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(Money.format(s.codAmount), style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+                item {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        InfoCard {
+                            SummaryRow("المحصّل (${chosen.size} شحنة)", Money.format(collected))
+                            SummaryRow("عمولة شركة الشحن", Money.format(feeValue))
+                            SummaryRow("الصافي المورَّد", Money.format(collected - feeValue), strong = true)
+                        }
+                        OutlinedTextField(
+                            value = fees,
+                            onValueChange = { fees = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = { Text("عمولة التحصيل (اختياري)") },
+                            isError = !validFees,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = reference,
+                            onValueChange = { reference = it.take(100) },
+                            label = { Text("رقم التحويل / المرجع (اختياري)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            onClick = { picking = true },
+                            enabled = canSettle && !busy && chosen.isNotEmpty() && validFees,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(if (canSettle) "تسجيل التوريد" else "لا تملك صلاحية تسجيل التوريد") }
+                    }
+                }
+            }
+
+            if (picking) {
+                AccountPickerDialog("استلام المبلغ في", accounts, onDismiss = { picking = false }) { account ->
+                    vm.settle(current, chosen.map { it.id }.toSet(), account, fees, reference) {
+                        selected = emptySet()
+                        fees = ""
+                        reference = ""
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------- reports ---
+
+enum class Period(val label: String) {
+    THIS_MONTH("هذا الشهر"),
+    LAST_MONTH("الشهر الماضي"),
+    THIS_YEAR("هذا العام");
+
+    /** Inclusive ISO `from`/`to` dates. */
+    fun range(today: LocalDate = LocalDate.now()): Pair<String, String> = when (this) {
+        THIS_MONTH -> today.withDayOfMonth(1) to today
+        LAST_MONTH -> today.minusMonths(1).withDayOfMonth(1).let { it to it.withDayOfMonth(it.lengthOfMonth()) }
+        THIS_YEAR -> today.withDayOfYear(1) to today
+    }.let { (a, b) -> a.toString() to b.toString() }
+}
+
+internal enum class SalesGroup(val key: String, val label: String) {
+    PRODUCT("product", "حسب المنتج"),
+    CATEGORY("category", "حسب القسم"),
+    DAY("day", "حسب اليوم"),
+}
+
+class ReportsViewModel(private val repo: DashboardRepository) : BaseViewModel() {
+    private val _income = MutableStateFlow<Load<IncomeStatement>>(Load.Loading)
+    val income = _income.asStateFlow()
+    private val _balance = MutableStateFlow<Load<BalanceSheet>>(Load.Loading)
+    val balance = _balance.asStateFlow()
+    private val _sales = MutableStateFlow<Load<SalesReport>>(Load.Loading)
+    val sales = _sales.asStateFlow()
+
+    var period = Period.THIS_MONTH
+        private set
+    internal var group = SalesGroup.PRODUCT
+        private set
+
+    fun setPeriod(p: Period) {
+        period = p
+        _income.value = Load.Loading
+        _sales.value = Load.Loading
+    }
+
+    internal fun setGroup(g: SalesGroup) {
+        group = g
+        _sales.value = Load.Loading
+    }
+
+    fun loadIncome() {
+        val (from, to) = period.range()
+        viewModelScope.launch { _income.value = repo.incomeStatement(from, to).toLoad() }
+    }
+
+    fun loadBalance() {
+        viewModelScope.launch { _balance.value = repo.balanceSheet().toLoad() }
+    }
+
+    fun loadSales() {
+        val (from, to) = period.range()
+        viewModelScope.launch { _sales.value = repo.sales(group.key, from, to).toLoad() }
+    }
+}
+
+@Composable
+fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
+    val vm = adminViewModel { ReportsViewModel(it.dashboard) }
+    val tabs = buildList {
+        if (session.can(Perm.REPORTS_FINANCIAL)) {
+            add("الأرباح والخسائر")
+            add("المركز المالي")
+        }
+        if (session.can(Perm.REPORTS_SALES)) add("المبيعات")
+    }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var period by remember { mutableStateOf(vm.period) }
+
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("التقارير", onBack) }) { padding ->
+        Column(Modifier.padding(padding)) {
+            if (tabs.isEmpty()) {
+                EmptyState(Icons.Filled.Search, "لا توجد تقارير متاحة لحسابك")
+                return@Column
+            }
+            val current = tabs[tab.coerceIn(tabs.indices)]
+            PrimaryTabRow(selectedTabIndex = tab.coerceIn(tabs.indices)) {
+                tabs.forEachIndexed { i, t -> Tab(selected = i == tab, onClick = { tab = i }, text = { Text(t) }) }
+            }
+            if (current != "المركز المالي") {
+                ChipFilter(Period.entries, period, { it?.label.orEmpty() }) { p ->
+                    if (p != null) {
+                        vm.setPeriod(p)
+                        period = p
+                    }
+                }
+            }
+            when (current) {
+                "الأرباح والخسائر" -> IncomeTab(vm, period)
+                "المركز المالي" -> BalanceTab(vm)
+                else -> SalesTab(vm, period)
+            }
+        }
+    }
+}
+
+@Composable
+private fun IncomeTab(vm: ReportsViewModel, period: Period) {
+    val state by vm.income.collectAsStateWithLifecycle()
+    LaunchedEffect(period) { vm.loadIncome() }
+    LoadContent(state, onRetry = vm::loadIncome) { r ->
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Section("الإيرادات", r.revenue) }
+            item { Section("تكلفة المبيعات", r.costOfSales) }
+            item {
+                InfoCard {
+                    SummaryRow("مجمل الربح", Money.format(r.grossProfit), strong = true, valueColor = signColor(r.grossProfit))
+                    r.grossMarginPct?.let { SummaryRow("هامش مجمل الربح", "$it٪") }
+                }
+            }
+            item { Section("المصروفات التشغيلية", r.operatingExpenses) }
+            item {
+                InfoCard {
+                    SummaryRow("صافي الربح", Money.format(r.netIncome), strong = true, valueColor = signColor(r.netIncome))
+                    r.netMarginPct?.let { SummaryRow("هامش صافي الربح", "$it٪") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BalanceTab(vm: ReportsViewModel) {
+    val state by vm.balance.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.loadBalance() }
+    LoadContent(state, onRetry = vm::loadBalance) { b ->
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Text("حتى ${formatDate(LocalDate.now().toString())}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Section("الأصول", b.assets) }
+            item { Section("الالتزامات", b.liabilities) }
+            item {
+                InfoCard {
+                    Text("حقوق الملكية", style = MaterialTheme.typography.titleSmall)
+                    b.equity.lines.forEach { SummaryRow(it.nameAr, Money.format(it.amount)) }
+                    SummaryRow("أرباح الفترة الحالية", Money.format(b.equity.currentEarnings))
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    SummaryRow("الإجمالي", Money.format(b.equity.total), strong = true)
+                }
+            }
+            item {
+                InfoCard {
+                    SummaryRow("إجمالي الالتزامات وحقوق الملكية", Money.format(b.totalLiabilitiesAndEquity), strong = true)
+                    Text(
+                        if (b.balanced) "✓ الميزانية متوازنة" else "✗ الميزانية غير متوازنة — راجع القيود",
+                        color = if (b.balanced) Success else MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SalesTab(vm: ReportsViewModel, period: Period) {
+    val state by vm.sales.collectAsStateWithLifecycle()
+    var group by remember { mutableStateOf(vm.group) }
+    LaunchedEffect(period, group) { vm.loadSales() }
+    Column {
+        ChipFilter(SalesGroup.entries, group, { it?.label.orEmpty() }) { g ->
+            if (g != null) {
+                vm.setGroup(g)
+                group = g
+            }
+        }
+        LoadContent(state, onRetry = vm::loadSales) { r ->
+            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    InfoCard {
+                        SummaryRow("صافي المبيعات", Money.format(r.totals.netSales), strong = true)
+                        SummaryRow("تكلفة البضاعة", Money.format(r.totals.costOfGoods))
+                        SummaryRow("مجمل الربح", Money.format(r.totals.grossProfit), valueColor = signColor(r.totals.grossProfit))
+                        SummaryRow("الخصومات الممنوحة", Money.format(r.totals.discounts))
+                        SummaryRow("القطع المباعة", "${r.totals.units}")
+                    }
+                }
+                if (r.groups.isEmpty()) item { EmptyState(Icons.Filled.Search, "لا توجد مبيعات في هذه الفترة") }
+                items(r.groups, key = { it.key }) { g ->
+                    InfoCard {
+                        Text(if (group == SalesGroup.DAY) formatDate(g.label) else g.label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "${g.orders} طلب · ${g.units} قطعة" + if (g.returnedUnits > 0) " · ${g.returnedUnits} مرتجع" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SummaryRow("صافي المبيعات", Money.format(g.netSales))
+                        SummaryRow("مجمل الربح", Money.format(g.grossProfit), valueColor = signColor(g.grossProfit))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Section(title: String, section: ReportSection) {
+    InfoCard {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        section.lines.forEach { SummaryRow("${it.code} ${it.nameAr}", Money.format(it.amount)) }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+        SummaryRow("الإجمالي", Money.format(section.total), strong = true)
+    }
+}
+
+@Composable
+private fun signColor(amount: String) = if (Money.parse(amount).signum() < 0) MaterialTheme.colorScheme.error else Success
+
+// ------------------------------------------------------------- customers ---
+
+class CustomersViewModel(private val repo: FinanceRepository) : BaseViewModel() {
+    private val _state = MutableStateFlow<Load<List<AdminCustomerSummary>>>(Load.Loading)
+    val state = _state.asStateFlow()
+    private val _hasMore = MutableStateFlow(false)
+    val hasMore = _hasMore.asStateFlow()
+    private var query = ""
+    private var page = 1
+    private var search: Job? = null
+
+    fun search(q: String) {
+        query = q
+        search?.cancel()
+        search = viewModelScope.launch {
+            delay(350)
+            fetch(reset = true)
+        }
+    }
+
+    fun load() {
+        if (_state.value !is Load.Ready) _state.value = Load.Loading
+        viewModelScope.launch { fetch(reset = true) }
+    }
+
+    fun more() {
+        viewModelScope.launch { fetch(reset = false) }
+    }
+
+    private suspend fun fetch(reset: Boolean) {
+        val next = if (reset) 1 else page + 1
+        repo.customers(query, next).fold(
+            { p ->
+                page = next
+                val before = if (reset) emptyList() else (_state.value as? Load.Ready)?.value.orEmpty()
+                _state.value = Load.Ready(before + p.items)
+                _hasMore.value = p.page * p.pageSize < p.total
+            },
+            { e -> if (reset) _state.value = Load.Failed(e.userMessage()) else say(e.userMessage()) },
+        )
+    }
+}
+
+@Composable
+fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
+    val vm = adminViewModel { CustomersViewModel(it.finance) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val hasMore by vm.hasMore.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var query by rememberSaveable { mutableStateOf("") }
+    CollectMessages(vm, snackbar)
+    LifecycleResumeEffect(vm) {
+        vm.load()
+        onPauseOrDispose {}
+    }
+
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("العملاء", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+        Column(Modifier.padding(padding)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    vm.search(it)
+                },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                placeholder = { Text("الاسم أو رقم الهاتف أو الكود") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+            )
+            LoadContent(state, onRetry = vm::load) { customers ->
+                if (customers.isEmpty()) {
+                    EmptyState(Icons.Filled.Person, "لا يوجد عملاء مطابقون")
+                    return@LoadContent
+                }
+                LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+                    items(customers, key = { it.id }) { c ->
+                        Card(
+                            onClick = { openCustomer(c.id) },
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(c.name, style = MaterialTheme.typography.titleSmall)
+                                    Text("${c.code} · ${c.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                c.count?.let { Text("${it.orders} طلب", style = MaterialTheme.typography.labelMedium) }
+                            }
+                        }
+                    }
+                    if (hasMore) {
+                        item {
+                            OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(16.dp)) { Text("عرض المزيد") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+class CustomerDetailViewModel(private val id: String, private val repo: FinanceRepository) : BaseViewModel() {
+    private val _state = MutableStateFlow<Load<AdminCustomerDetail>>(Load.Loading)
+    val state = _state.asStateFlow()
+
+    fun load() {
+        if (_state.value !is Load.Ready) _state.value = Load.Loading
+        viewModelScope.launch { _state.value = repo.customer(id).toLoad() }
+    }
+}
+
+@Composable
+fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> Unit) {
+    val vm = adminViewModel(key = "customer:$id") { CustomerDetailViewModel(id, it.finance) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(vm) {
+        vm.load()
+        onPauseOrDispose {}
+    }
+
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar((state as? Load.Ready)?.value?.name ?: "عميل", onBack) }) { padding ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { c ->
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    InfoCard {
+                        Text(c.name, style = MaterialTheme.typography.titleMedium)
+                        Text(listOfNotNull(c.code, c.phone, c.email).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                item {
+                    InfoCard {
+                        SummaryRow("عدد الطلبات", "${c.lifetime.orders}")
+                        SummaryRow("إجمالي المشتريات", Money.format(c.lifetime.spent))
+                        val balance = Money.parse(c.ledgerBalance)
+                        SummaryRow(
+                            when {
+                                balance.signum() > 0 -> "مستحق على العميل"
+                                balance.signum() < 0 -> "رصيد دائن للعميل"
+                                else -> "الرصيد"
+                            },
+                            Money.format(balance.abs()),
+                            strong = true,
+                            valueColor = if (balance.signum() > 0) MaterialTheme.colorScheme.error else Success,
+                        )
+                    }
+                }
+                item { Text("آخر الطلبات", style = MaterialTheme.typography.titleSmall) }
+                if (c.orders.isEmpty()) item { Text("لا توجد طلبات بعد", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                items(c.orders, key = { it.id }) { o ->
+                    Card(
+                        onClick = { openOrder(o.id) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(o.number, style = MaterialTheme.typography.titleSmall)
+                                Text("${formatDate(o.placedAt)} · ${Money.format(o.grandTotal)}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            StatusChip(o.status.label, o.status.tint())
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

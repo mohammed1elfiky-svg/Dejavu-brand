@@ -12,6 +12,8 @@ import retrofit2.http.Query
 
 /** Staff endpoints used by the admin app. Paths are relative to `.../api/v1/`. */
 interface AdminApi {
+    @GET("health") suspend fun health(): Health
+
     // auth
     @POST("auth/staff/login") suspend fun login(@Body body: StaffLoginRequest): StaffAuthResponse
     @GET("auth/me") suspend fun me(): StaffProfile

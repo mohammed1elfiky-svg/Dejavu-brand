@@ -62,6 +62,7 @@ class AdminContractTest {
 
         // ---- staff sign in
         val (session, api) = staff()
+        assertEquals("ok", session.ping().getOrThrow().status)
         val profile = session.login("ADMIN@dejavu.local ", "ChangeMe!2026").getOrThrow()
         assertTrue(profile.can(Perm.ORDERS_UPDATE))
         val dashboard = DashboardRepository(api).dashboard().getOrThrow()

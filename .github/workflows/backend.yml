@@ -2,9 +2,9 @@ name: Backend
 
 on:
   push:
-    paths: ['backend/**', '.github/workflows/backend.yml']
+    paths: ['backend/**', '.devcontainer/**', '.github/workflows/backend.yml']
   pull_request:
-    paths: ['backend/**', '.github/workflows/backend.yml']
+    paths: ['backend/**', '.devcontainer/**', '.github/workflows/backend.yml']
 
 jobs:
   test:
@@ -38,3 +38,11 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:e2e
+      # Same steps a new Codespace runs, so a broken demo setup fails CI.
+      - run: npm run db:deploy && npm run db:seed && npm run db:seed:demo
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t dejavu-api backend

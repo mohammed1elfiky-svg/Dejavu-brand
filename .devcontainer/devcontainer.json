@@ -1,0 +1,24 @@
+{
+  "name": "Dejavu",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Dejavu API (Swagger)", "onAutoForward": "openBrowser" }
+  },
+  // One-time setup: install, create tables, load base + demo data.
+  "postCreateCommand": "cd backend && cp -n .env.example .env && npm ci && npm run db:deploy && npm run db:seed && npm run db:seed:demo",
+  // Starts the API in a terminal every time you open the codespace.
+  "postAttachCommand": {
+    "api": "cd backend && npm run start:dev"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["Prisma.prisma", "dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    },
+    "codespaces": {
+      "openFiles": ["docs/TRY_IT.md"]
+    }
+  }
+}

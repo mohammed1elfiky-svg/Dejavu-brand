@@ -14,6 +14,19 @@ services:
       interval: 5s
       retries: 10
 
+  api:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dejavu:dejavu@postgres:5432/dejavu
+      # Demo-only secret. Generate a real one for any shared deployment.
+      JWT_ACCESS_SECRET: local-demo-secret-not-for-production-0123456789
+      DEMO_DATA: "true"
+    ports:
+      - "3000:3000"
+
   redis:
     image: redis:7-alpine
     ports:

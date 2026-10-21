@@ -21,24 +21,16 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
-      # "true" loads demo products, orders and accounts: for a demo server only.
+      # Demo products, orders and accounts to try the apps. Set to "false" (or remove)
+      # before using it as a real store: demo accounts have well-known passwords.
       - key: DEMO_DATA
-        value: "false"
+        value: "true"
       - key: TRUST_PROXY
         value: "1"
-      # none until Paymob keys are added; then set to "paymob".
+      # Card payments stay off until Paymob keys are added in the dashboard
+      # (PAYMENT_GATEWAY=paymob + PAYMOB_* , see docs/DEPLOY.md). Push: FCM_SERVICE_ACCOUNT.
       - key: PAYMENT_GATEWAY
         value: none
-      - key: PAYMOB_SECRET_KEY
-        sync: false
-      - key: PAYMOB_PUBLIC_KEY
-        sync: false
-      - key: PAYMOB_INTEGRATION_ID
-        sync: false
-      - key: PAYMOB_HMAC_SECRET
-        sync: false
-      - key: FCM_SERVICE_ACCOUNT
-        sync: false
 
 databases:
   - name: dejavu-db

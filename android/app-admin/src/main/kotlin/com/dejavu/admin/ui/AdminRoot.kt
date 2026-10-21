@@ -68,6 +68,7 @@ import com.dejavu.admin.ui.finance.SettlementsScreen
 import com.dejavu.admin.ui.inventory.ProductDetailScreen
 import com.dejavu.admin.ui.inventory.ProductsScreen
 import com.dejavu.admin.ui.inventory.StockScreen
+import com.dejavu.admin.ui.products.ProductFormScreen
 import com.dejavu.admin.ui.more.MoreScreen
 import com.dejavu.admin.ui.more.ServerScreen
 import com.dejavu.admin.ui.orders.OrderDetailScreen
@@ -92,6 +93,8 @@ object R {
     const val RETURN = "return/{id}"
     const val PRODUCTS = "products"
     const val PRODUCT = "product/{id}"
+    const val PRODUCT_NEW = "product-new"
+    const val PRODUCT_EDIT = "product-edit/{id}"
     const val PURCHASING = "purchasing"
     const val PURCHASE = "purchase/{id}"
     const val EXPENSES = "expenses"
@@ -177,8 +180,23 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.RETURNS) { ReturnsScreen(back, openReturn = { open(R.RETURN, it) }) }
             composable(R.RETURN) { e -> ReturnDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.STOCK) { StockScreen(session, openProducts = { nav.navigate(R.PRODUCTS) }) }
-            composable(R.PRODUCTS) { ProductsScreen(back, openProduct = { open(R.PRODUCT, it) }) }
-            composable(R.PRODUCT) { e -> ProductDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.PRODUCTS) {
+                ProductsScreen(
+                    back,
+                    openProduct = { open(R.PRODUCT, it) },
+                    newProduct = if (session.can(Perm.PRODUCTS_WRITE)) ({ nav.navigate(R.PRODUCT_NEW) }) else null,
+                )
+            }
+            composable(R.PRODUCT) { e ->
+                val id = e.arguments?.getString("id").orEmpty()
+                ProductDetailScreen(id, session, back, edit = { open(R.PRODUCT_EDIT, id) })
+            }
+            composable(R.PRODUCT_NEW) {
+                ProductFormScreen(null, back, saved = { id -> nav.navigate(R.of(R.PRODUCT, id)) { popUpTo(R.PRODUCTS) } })
+            }
+            composable(R.PRODUCT_EDIT) { e ->
+                ProductFormScreen(e.arguments?.getString("id").orEmpty(), back, saved = { nav.popBackStack() })
+            }
             composable(R.PURCHASING) { PurchasingScreen(back, openOrder = { open(R.PURCHASE, it) }) }
             composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }

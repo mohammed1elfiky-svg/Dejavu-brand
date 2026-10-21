@@ -290,12 +290,16 @@ data class AdminVariant(
     val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
+    val colorHex: String? = null,
     val price: String? = null,
     val avgCost: String,
     val lowStockThreshold: Int = 5,
     val isActive: Boolean = true,
     val stockLevels: List<StockLevelRef> = emptyList(),
 ) {
+    /** "M · أسود", or the SKU for a product without options. */
+    val title: String get() = listOfNotNull(size, color).joinToString(" · ").ifBlank { sku }
+
     val onHand: Int get() = stockLevels.sumOf { it.onHand }
     val available: Int get() = stockLevels.sumOf { it.onHand - it.reserved }
 }
@@ -315,6 +319,8 @@ data class AdminProduct(
     val slug: String,
     val nameAr: String,
     val nameEn: String,
+    val descriptionAr: String? = null,
+    val descriptionEn: String? = null,
     val status: ProductStatus,
     val basePrice: String,
     val compareAtPrice: String? = null,
@@ -330,7 +336,75 @@ data class UpdateProductRequest(
     val basePrice: String? = null,
     val compareAtPrice: String? = null,
     val isFeatured: Boolean? = null,
+    val categoryId: String? = null,
+    val nameAr: String? = null,
+    val nameEn: String? = null,
+    val slug: String? = null,
+    val descriptionAr: String? = null,
+    val descriptionEn: String? = null,
 )
+
+/** Category tree node from GET admin/categories. */
+@Serializable
+data class AdminCategory(
+    val id: String,
+    val nameAr: String,
+    val nameEn: String,
+    val slug: String,
+    val children: List<AdminCategory> = emptyList(),
+) {
+    /** This category and all below it, depth-first, with their depth (for an indented picker). */
+    fun flatten(depth: Int = 0): List<Pair<AdminCategory, Int>> = listOf(this to depth) + children.flatMap { it.flatten(depth + 1) }
+}
+
+@Serializable
+data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slug: String, val parentId: String? = null)
+
+@Serializable
+data class NewVariantRequest(
+    val sku: String,
+    val size: String? = null,
+    val color: String? = null,
+    val colorHex: String? = null,
+    /** Overrides the product price for this variant. */
+    val price: String? = null,
+    val lowStockThreshold: Int? = null,
+    /** Pieces on hand now, booked as opening stock with [unitCost] (SAR). */
+    val initialQuantity: Int? = null,
+    val unitCost: String? = null,
+)
+
+@Serializable
+data class ImageRequest(val url: String)
+
+@Serializable
+data class CreateProductRequest(
+    val categoryId: String,
+    val nameAr: String,
+    val nameEn: String,
+    val slug: String,
+    val basePrice: String,
+    val variants: List<NewVariantRequest>,
+    val descriptionAr: String? = null,
+    val compareAtPrice: String? = null,
+    val status: ProductStatus? = null,
+    val isFeatured: Boolean? = null,
+    val images: List<ImageRequest>? = null,
+)
+
+@Serializable
+data class UpdateVariantRequest(
+    val sku: String? = null,
+    val size: String? = null,
+    val color: String? = null,
+    val colorHex: String? = null,
+    val price: String? = null,
+    val lowStockThreshold: Int? = null,
+    val isActive: Boolean? = null,
+)
+
+@Serializable
+data class ImagesRequest(val images: List<ImageRequest>)
 
 // ------------------------------------------------------------- inventory ---
 

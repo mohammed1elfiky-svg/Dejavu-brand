@@ -150,6 +150,26 @@ class InventoryRepository(private val api: AdminApi) {
     suspend fun products(query: String? = null, page: Int = 1) = apiCall { api.products(query?.trim()?.ifBlank { null }, page = page) }
     suspend fun product(id: String) = apiCall { api.product(id) }
     suspend fun updateProduct(id: String, request: UpdateProductRequest) = apiCall { api.updateProduct(id, request) }
+
+    private var categoriesCache: List<AdminCategory>? = null
+
+    /** Categories as a flat, indented list for pickers. */
+    suspend fun categories(): Result<List<Pair<AdminCategory, Int>>> {
+        categoriesCache?.let { return Result.success(it.flatMap { c -> c.flatten() }) }
+        return apiCall { api.categories() }.onSuccess { categoriesCache = it }.map { it.flatMap { c -> c.flatten() } }
+    }
+
+    suspend fun createCategory(nameAr: String, nameEn: String, parentId: String? = null) =
+        apiCall { api.createCategory(CreateCategoryRequest(nameAr.trim(), nameEn.trim(), VariantPlanner.slugOf(nameEn), parentId)) }
+            .onSuccess { categoriesCache = null }
+
+    suspend fun createProduct(request: CreateProductRequest) = apiCall { api.createProduct(request) }
+
+    /** Replaces the product's images with [urls], in order. */
+    suspend fun setImages(id: String, urls: List<String>) = apiCall { api.replaceImages(id, ImagesRequest(urls.map(::ImageRequest))) }
+
+    suspend fun addVariant(productId: String, request: NewVariantRequest) = apiCall { api.addVariant(productId, request) }
+    suspend fun updateVariant(variantId: String, request: UpdateVariantRequest) = apiCall { api.updateVariant(variantId, request) }
 }
 
 class PurchasingRepository(private val api: AdminApi) {

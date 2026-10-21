@@ -162,4 +162,50 @@ class AdminContractTest {
         val wrong = staff().first.login("store@dejavu.local", "wrong-password").exceptionOrNull() as ApiException
         assertEquals(401, wrong.status)
     }
+
+    @Test
+    fun `admin creates a product with sizes, colors and stock, then edits it`() = runBlocking {
+        assumeTrue("Set DEJAVU_API_URL to run contract tests", url.isNotBlank())
+        val (session, api) = staff()
+        session.login("admin@dejavu.local", "ChangeMe!2026").getOrThrow()
+        val repo = InventoryRepository(api)
+        val run = System.currentTimeMillis().toString(36)
+
+        val category = repo.createCategory("قسم $run", "Section $run").getOrThrow()
+        assertTrue(repo.categories().getOrThrow().any { it.first.id == category.id })
+
+        val slug = VariantPlanner.slugOf("Contract Shirt $run")
+        val planned = VariantPlanner.plan(slug, listOf("M", "L"), listOf("أسود"))
+        val created = repo.createProduct(
+            CreateProductRequest(
+                categoryId = category.id,
+                nameAr = "قميص $run",
+                nameEn = "Contract Shirt $run",
+                slug = slug,
+                basePrice = "99.5",
+                status = ProductStatus.ACTIVE,
+                variants = planned.mapIndexed { i, p ->
+                    NewVariantRequest(p.sku, p.size, p.color, p.colorHex, initialQuantity = if (i == 0) 4 else null, unitCost = if (i == 0) "30" else null)
+                },
+            ),
+        ).getOrThrow()
+        assertEquals(planned.map { it.sku }.toSet(), created.variants.map { it.sku }.toSet())
+        assertEquals(4, created.variants.first { it.size == "M" }.onHand)
+        assertEquals("#000000", created.variants.first().colorHex)
+
+        val red = repo.addVariant(created.id, NewVariantRequest("${VariantPlanner.skuBase(slug)}-M-RED", "M", "أحمر", initialQuantity = 2, unitCost = "31")).getOrThrow()
+        assertEquals("M · أحمر", red.title)
+        repo.updateVariant(red.id, UpdateVariantRequest(price = "105", isActive = false)).getOrThrow()
+
+        val edited = repo.updateProduct(created.id, UpdateProductRequest(nameAr = "قميص معدّل $run", descriptionAr = "وصف", compareAtPrice = "120")).getOrThrow()
+        assertEquals("قميص معدّل $run", edited.nameAr)
+        assertEquals("وصف", edited.descriptionAr)
+        val withImages = repo.setImages(created.id, listOf("https://example.com/a.jpg")).getOrThrow()
+        assertEquals(listOf("https://example.com/a.jpg"), withImages.images.map { it.url })
+
+        val reloaded = repo.product(created.id).getOrThrow()
+        val redNow = reloaded.variants.first { it.id == red.id }
+        assertEquals(2, redNow.onHand)
+        assertTrue(!redNow.isActive)
+    }
 }

@@ -11,6 +11,7 @@ import retrofit2.http.GET
 import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -60,6 +61,12 @@ interface AdminApi {
     ): Page<AdminProduct>
     @GET("admin/products/{id}") suspend fun product(@Path("id") id: String): AdminProduct
     @PATCH("admin/products/{id}") suspend fun updateProduct(@Path("id") id: String, @Body body: UpdateProductRequest): AdminProduct
+    @POST("admin/products") suspend fun createProduct(@Body body: CreateProductRequest): AdminProduct
+    @PUT("admin/products/{id}/images") suspend fun replaceImages(@Path("id") id: String, @Body body: ImagesRequest): AdminProduct
+    @POST("admin/products/{id}/variants") suspend fun addVariant(@Path("id") id: String, @Body body: NewVariantRequest): AdminVariant
+    @PATCH("admin/variants/{id}") suspend fun updateVariant(@Path("id") id: String, @Body body: UpdateVariantRequest): AdminVariant
+    @GET("admin/categories") suspend fun categories(): List<AdminCategory>
+    @POST("admin/categories") suspend fun createCategory(@Body body: CreateCategoryRequest): AdminCategory
 
     // inventory
     @GET("admin/warehouses") suspend fun warehouses(): List<Warehouse>

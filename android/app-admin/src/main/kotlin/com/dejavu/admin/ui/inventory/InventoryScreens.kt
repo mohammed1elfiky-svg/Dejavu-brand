@@ -2,6 +2,15 @@
 
 package com.dejavu.admin.ui.inventory
 
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.IconButton
+import com.dejavu.admin.ui.products.AddVariantDialog
+import com.dejavu.admin.ui.products.EditVariantDialog
+import com.dejavu.core.admin.AdminVariant
+import com.dejavu.core.admin.NewVariantRequest
+import com.dejavu.core.admin.UpdateVariantRequest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -267,7 +276,7 @@ class ProductsViewModel(private val repo: InventoryRepository) : BaseViewModel()
 }
 
 @Composable
-fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit) {
+fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct: (() -> Unit)?) {
     val vm = adminViewModel { ProductsViewModel(it.inventory) }
     val state by vm.state.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(vm.query) }
@@ -275,7 +284,19 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit) {
         vm.load()
         onPauseOrDispose {}
     }
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("المنتجات", onBack) }) { padding ->
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar("المنتجات", onBack) },
+        floatingActionButton = {
+            if (newProduct != null) {
+                ExtendedFloatingActionButton(
+                    onClick = newProduct,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("منتج جديد") },
+                )
+            }
+        },
+    ) { padding ->
         Column(Modifier.padding(padding)) {
             OutlinedTextField(
                 value = query,
@@ -319,29 +340,61 @@ class ProductDetailViewModel(private val id: String, private val repo: Inventory
         viewModelScope.launch { _state.value = repo.product(id).toLoad() }
     }
 
-    fun update(request: UpdateProductRequest) {
+    fun update(request: UpdateProductRequest) = act {
+        repo.updateProduct(id, request).orSay()?.let {
+            _state.value = Load.Ready(it)
+            say("تم الحفظ")
+        }
+    }
+
+    fun addVariant(request: NewVariantRequest) = act {
+        repo.addVariant(id, request).orSay()?.let {
+            say("تمت إضافة ${it.title}")
+            _state.value = repo.product(id).toLoad()
+        }
+    }
+
+    fun updateVariant(variantId: String, request: UpdateVariantRequest) = act {
+        repo.updateVariant(variantId, request).orSay()?.let {
+            say("تم حفظ ${it.title}")
+            _state.value = repo.product(id).toLoad()
+        }
+    }
+
+    private fun act(block: suspend () -> Unit) {
+        if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            repo.updateProduct(id, request).orSay()?.let {
-                _state.value = Load.Ready(it)
-                say("تم الحفظ")
-            }
+            block()
             _busy.value = false
         }
     }
 }
 
 @Composable
-fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) {
+fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, edit: () -> Unit) {
     val vm = adminViewModel(key = "product:$id") { ProductDetailViewModel(id, it.inventory) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<AdminVariant?>(null) }
     CollectMessages(vm, snackbar)
-    LaunchedEffect(vm) { vm.load() }
+    LifecycleResumeEffect(vm) {
+        vm.load()
+        onPauseOrDispose {}
+    }
     val canEdit = session.can(Perm.PRODUCTS_WRITE)
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar((state as? Load.Ready)?.value?.nameAr ?: "", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            BackTopBar((state as? Load.Ready)?.value?.nameAr ?: "", onBack) {
+                if (canEdit && state is Load.Ready) IconButton(onClick = edit) { Icon(Icons.Filled.Edit, contentDescription = "تعديل") }
+            }
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             var price by rememberSaveable(p.basePrice) { mutableStateOf(p.basePrice) }
             var compareAt by rememberSaveable(p.compareAtPrice) { mutableStateOf(p.compareAtPrice.orEmpty()) }
@@ -378,13 +431,22 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         }
                     }
                 }
-                item { Text("المقاسات والألوان", style = MaterialTheme.typography.titleSmall) }
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("المقاسات والألوان (${p.variants.size})", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                        if (canEdit) TextButton(onClick = { adding = true }, enabled = !busy) { Text("+ إضافة مقاس / لون") }
+                    }
+                }
                 items(p.variants, key = { it.id }) { v ->
-                    InfoCard {
-                        Row {
+                    Card(
+                        onClick = { if (canEdit) editing = v },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(Modifier.padding(16.dp)) {
                             Column(Modifier.weight(1f)) {
-                                Text("${v.sku}${if (!v.isActive) " · موقوف" else ""}", style = MaterialTheme.typography.titleSmall)
-                                Text(listOfNotNull(v.size, v.color).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
+                                Text("${v.title}${if (!v.isActive) " · موقوف" else ""}", style = MaterialTheme.typography.titleSmall)
+                                Text(v.sku, style = MaterialTheme.typography.bodySmall)
                                 Text("متوسط التكلفة ${Money.format(v.avgCost)}${v.price?.let { " · سعر خاص ${Money.format(it)}" } ?: ""}", style = MaterialTheme.typography.bodySmall)
                             }
                             Column(horizontalAlignment = Alignment.End) {
@@ -397,4 +459,8 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
             }
         }
     }
+
+    val product = (state as? Load.Ready)?.value
+    if (adding && product != null) AddVariantDialog(product, onDismiss = { adding = false }, onSave = vm::addVariant)
+    editing?.let { v -> EditVariantDialog(v, onDismiss = { editing = null }, onSave = { vm.updateVariant(v.id, it) }) }
 }

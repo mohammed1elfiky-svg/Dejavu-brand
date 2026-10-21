@@ -229,8 +229,7 @@ async function main() {
 
   const settings: Record<string, unknown> = {
     "store.name": "Dejavu",
-    "store.currency": "EGP",
-    "store.locale": "ar-EG",
+    "store.locale": "ar",
     "store.timezone": "Africa/Cairo",
     "orders.autoConfirmPaid": true,
     "inventory.costingMethod": "WEIGHTED_AVERAGE",
@@ -238,6 +237,12 @@ async function main() {
   };
   for (const [key, value] of Object.entries(settings)) {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value: value as never } });
+  }
+  // Base currency of all prices, costs and the ledger (YER is a sales currency converted from it).
+  await prisma.setting.upsert({ where: { key: "store.currency" }, update: { value: "SAR" }, create: { key: "store.currency", value: "SAR" } });
+  // Starting YER rate so the YER option works out of the box; update it from the admin app.
+  if (!(await prisma.exchangeRate.count({ where: { currency: "YER" } }))) {
+    await prisma.exchangeRate.create({ data: { currency: "YER", rate: "140", note: "Initial rate, please update" } });
   }
 
   console.log(`Seeded ${ACCOUNTS.length} accounts, ${Object.keys(ROLES).length} roles, fiscal year and defaults.`);

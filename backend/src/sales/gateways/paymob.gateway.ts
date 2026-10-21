@@ -9,6 +9,8 @@ export interface PaymobConfig {
   publicKey: string;
   integrationId: string;
   hmacSecret: string;
+  /** Account currency, e.g. SAR (Paymob KSA). Orders are charged their SAR (base) amount. */
+  currency: string;
   /** Where Paymob POSTs transaction results. */
   notificationUrl: string;
   /** Where the customer's browser lands after paying. */
@@ -55,7 +57,7 @@ export function paymobHmac(obj: Json, secret: string): string {
   return createHmac('sha512', secret).update(data).digest('hex');
 }
 
-/** Paymob Accept, Egypt: Intention API + Unified Checkout. */
+/** Paymob (Intention API + Unified Checkout). Use the KSA endpoint for SAR accounts. */
 export class PaymobGateway extends CardGateway {
   readonly name = 'paymob';
   private readonly log = new Logger('Paymob');
@@ -70,13 +72,13 @@ export class PaymobGateway extends CardGateway {
     const na = (v?: string) => (v && v.trim() ? v.trim() : 'NA');
     const body = {
       amount: cents,
-      currency: 'EGP',
+      currency: this.cfg.currency,
       payment_methods: [Number(this.cfg.integrationId)],
       items: [{ name: `Order ${req.orderNumber}`, amount: cents, description: `Dejavu order ${req.orderNumber}`, quantity: 1 }],
       billing_data: {
         first_name: first || 'Customer',
         last_name: rest.join(' ') || 'Dejavu',
-        phone_number: req.customer.phone.startsWith('+') ? req.customer.phone : `+2${req.customer.phone}`,
+        phone_number: req.customer.phone,
         email: req.customer.email || 'customer@dejavu.store',
         city: na(req.address.city),
         street: na(req.address.street),

@@ -9,6 +9,7 @@ import {
 } from './admin-sales.controller';
 import { CartService } from './cart.service';
 import { CourierSettlementsService } from './courier-settlements.service';
+import { AdminExchangeRatesController, StoreCurrenciesController } from './currency.controller';
 import { CustomersService } from './customers.service';
 import { OrdersService } from './orders.service';
 import { OnlinePaymentsService } from './online-payments.service';
@@ -34,6 +35,8 @@ import {
     StoreReturnsController,
     StorePaymentMethodsController,
     PaymentsController,
+    StoreCurrenciesController,
+    AdminExchangeRatesController,
     AdminOrdersController,
     AdminReturnsController,
     AdminCustomersController,

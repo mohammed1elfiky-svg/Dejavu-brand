@@ -20,7 +20,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { CouponType, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
+import { CouponType, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus, Currency } from '../../generated/prisma/client';
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
 import { IsAmount } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
@@ -174,6 +174,11 @@ export class CheckoutDto {
   @IsString()
   @MaxLength(500)
   customerNote?: string;
+
+  @ApiPropertyOptional({ enum: Currency, default: Currency.SAR, description: 'Currency to invoice in; the current rate is locked into the order' })
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
 }
 
 export class CancelOrderDto {
@@ -256,6 +261,14 @@ export class RecordPaymentDto {
   @IsString()
   @MaxLength(100)
   reference?: string;
+
+  @ApiPropertyOptional({
+    enum: Currency,
+    description: "Currency of `amount`: SAR (default) or the order's own currency, converted at the order's rate",
+  })
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
 }
 
 export class RefundDto extends RecordPaymentDto {

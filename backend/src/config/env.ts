@@ -43,6 +43,8 @@ export function validateEnv(raw: Record<string, unknown>) {
     PAYMOB_PUBLIC_KEY: str('PAYMOB_PUBLIC_KEY', ''),
     PAYMOB_INTEGRATION_ID: str('PAYMOB_INTEGRATION_ID', ''),
     PAYMOB_HMAC_SECRET: str('PAYMOB_HMAC_SECRET', ''),
+    /** Currency of the Paymob account; card payments are charged in it (the base SAR amount). */
+    PAYMOB_CURRENCY: str('PAYMOB_CURRENCY', 'SAR'),
     /** Unpaid card orders are cancelled (and their stock released) after this many minutes. 0 = never. */
     /** Firebase service-account key (JSON or base64 JSON). Empty = in-app notifications only, no push. */
     FCM_SERVICE_ACCOUNT: str('FCM_SERVICE_ACCOUNT', ''),

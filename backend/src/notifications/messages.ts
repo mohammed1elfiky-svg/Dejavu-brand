@@ -1,10 +1,15 @@
-import { NotificationType, OrderStatus, PaymentMethod } from '../generated/prisma/client';
-import { DecimalLike, money } from '../common/utils/money';
+import { Currency, NotificationType, OrderStatus, PaymentMethod } from '../generated/prisma/client';
+import { formatAmount } from '../common/currency.service';
+import { DecimalLike } from '../common/utils/money';
 import { NewNotification } from './notifications.service';
 
 /** Customer-facing texts (Arabic, gender-neutral). */
 
-export const egp = (v: DecimalLike) => `${money(v).toFixed(2)} ج.م`;
+type Priced = { number: string; currency: Currency; exchangeRate: DecimalLike };
+
+/** A SAR amount shown in the order's own currency, at its locked rate. */
+export const orderAmount = (order: Pick<Priced, 'currency' | 'exchangeRate'>, amountSar: DecimalLike) =>
+  formatAmount(amountSar, order.currency, order.exchangeRate);
 
 /** Internal cancel reasons the customer should see in plain words. */
 const CANCEL_REASONS: Record<string, string> = {
@@ -42,22 +47,22 @@ export function orderStatusMessage(
   }
 }
 
-export function paymentReceivedMessage(order: { number: string }, amount: DecimalLike, method: PaymentMethod): NewNotification | null {
+export function paymentReceivedMessage(order: Priced, amount: DecimalLike, method: PaymentMethod): NewNotification | null {
   // Cash on delivery is covered by the "delivered" message.
   if (method === PaymentMethod.CASH_ON_DELIVERY) return null;
   return {
     type: NotificationType.ORDER_STATUS,
     title: 'تم استلام الدفع ✓',
-    body: `استلمنا ${egp(amount)} للطلب ${order.number}. شكراً لك!`,
+    body: `استلمنا ${orderAmount(order, amount)} للطلب ${order.number}. شكراً لك!`,
     data: { order: order.number },
   };
 }
 
-export function refundMessage(order: { number: string }, amount: DecimalLike): NewNotification {
+export function refundMessage(order: Priced, amount: DecimalLike): NewNotification {
   return {
     type: NotificationType.ORDER_STATUS,
     title: 'تم رد المبلغ',
-    body: `رددنا ${egp(amount)} عن الطلب ${order.number}. قد يستغرق ظهوره في حسابك بضعة أيام حسب وسيلة الدفع.`,
+    body: `رددنا ${orderAmount(order, amount)} عن الطلب ${order.number}. قد يستغرق ظهوره في حسابك بضعة أيام حسب وسيلة الدفع.`,
     data: { order: order.number },
   };
 }

@@ -13,15 +13,17 @@ import {
   ShipmentStatus,
   StockMovementType,
   TransactionStatus,
+  Currency,
 } from '../generated/prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
+import { CurrencyService, toCurrency } from '../common/currency.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { parseDateOnly } from '../common/utils/dates';
 import { dec, money, sum } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
-import { egp, orderStatusMessage } from '../notifications/messages';
+import { orderAmount, orderStatusMessage } from '../notifications/messages';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CartService } from './cart.service';
@@ -53,6 +55,8 @@ const customerOrderSelect = {
   status: true,
   paymentStatus: true,
   paymentMethod: true,
+  currency: true,
+  exchangeRate: true,
   shippingAddress: true,
   subtotal: true,
   discountTotal: true,
@@ -60,6 +64,7 @@ const customerOrderSelect = {
   taxTotal: true,
   grandTotal: true,
   amountPaid: true,
+  returnedTotal: true,
   customerNote: true,
   placedAt: true,
   confirmedAt: true,
@@ -107,6 +112,7 @@ export class OrdersService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly currencies: CurrencyService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
@@ -135,6 +141,8 @@ export class OrdersService {
       }
 
       const p = quote.pricing;
+      const currency = dto.currency ?? Currency.SAR;
+      const exchangeRate = await this.currencies.rate(currency, tx);
       const order = await tx.order.create({
         data: {
           number: await this.sequences.next(tx, 'SO'),
@@ -143,6 +151,8 @@ export class OrdersService {
           warehouseId: warehouse.id,
           couponId: quote.coupon?.id,
           paymentMethod: dto.paymentMethod,
+          currency,
+          exchangeRate,
           shippingAddress: snapshotAddress(address),
           subtotal: p.subtotal,
           discountTotal: p.discountTotal,
@@ -182,7 +192,7 @@ export class OrdersService {
     void this.notifications.notifyStaff('orders.update', {
       type: 'ORDER_STATUS',
       title: 'طلب جديد 🛍️',
-      body: `${placed.number} · ${egp(placed.grandTotal)}`,
+      body: `${placed.number} · ${orderAmount(placed, placed.grandTotal)}`,
       data: { orderId: placed.id, order: placed.number },
     });
     return this.customerOrderById(customerId, placed.id);
@@ -201,6 +211,8 @@ export class OrdersService {
           status: true,
           paymentStatus: true,
           grandTotal: true,
+          currency: true,
+          exchangeRate: true,
           placedAt: true,
           _count: { select: { items: true } },
         },
@@ -210,17 +222,21 @@ export class OrdersService {
       }),
       this.prisma.order.count({ where }),
     ]);
-    return paginated(items, total, q);
+    return paginated(
+      items.map((o) => ({ ...o, grandTotalInCurrency: toCurrency(o.grandTotal, o.currency, o.exchangeRate) })),
+      total,
+      q,
+    );
   }
 
   async customerOrder(customerId: string, number: string) {
     const order = await this.prisma.order.findFirst({ where: { number, customerId }, select: customerOrderSelect });
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+    return withCurrencyTotals(order);
   }
 
   private async customerOrderById(customerId: string, id: string) {
-    return this.prisma.order.findFirstOrThrow({ where: { id, customerId }, select: customerOrderSelect });
+    return withCurrencyTotals(await this.prisma.order.findFirstOrThrow({ where: { id, customerId }, select: customerOrderSelect }));
   }
 
   async customerCancel(customerId: string, number: string, reason: string) {
@@ -280,7 +296,7 @@ export class OrdersService {
     const costOfGoods = money(sum(order.items.map((i) => dec(i.unitCost).mul(i.quantity))));
     const netRevenue = dec(order.grandTotal).sub(order.taxTotal);
     return {
-      ...order,
+      ...withCurrencyTotals(order),
       balanceDue: balanceDue(order),
       returns,
       profit: { netRevenue, costOfGoods, grossProfit: netRevenue.sub(costOfGoods) },
@@ -560,6 +576,33 @@ export class OrdersService {
     if (!rows.length) throw new NotFoundException('Order not found');
     return tx.order.findUniqueOrThrow({ where: { id } });
   }
+}
+
+type Amounts = Pick<
+  Order,
+  'currency' | 'exchangeRate' | 'subtotal' | 'discountTotal' | 'shippingFee' | 'taxTotal' | 'grandTotal' | 'amountPaid' | 'returnedTotal'
+>;
+
+/**
+ * Adds the invoice in the order's own currency, at the rate locked at checkout.
+ * Each figure is converted on its own (see toCurrency), exactly as the apps do.
+ */
+function withCurrencyTotals<T extends Amounts>(order: T) {
+  const c = (v: Prisma.Decimal) => toCurrency(v, order.currency, order.exchangeRate);
+  return {
+    ...order,
+    inCurrency: {
+      currency: order.currency,
+      exchangeRate: order.exchangeRate,
+      subtotal: c(order.subtotal),
+      discountTotal: c(order.discountTotal),
+      shippingFee: c(order.shippingFee),
+      taxTotal: c(order.taxTotal),
+      grandTotal: c(order.grandTotal),
+      amountPaid: c(order.amountPaid),
+      balanceDue: c(balanceDue(order)),
+    },
+  };
 }
 
 function snapshotAddress(a: Prisma.CustomerAddressGetPayload<object>) {

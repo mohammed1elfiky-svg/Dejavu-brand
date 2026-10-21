@@ -10,6 +10,7 @@ const gateway = new PaymobGateway({
   publicKey: 'pk',
   integrationId: '123',
   hmacSecret: SECRET,
+  currency: 'SAR',
   notificationUrl: 'https://api.example/cb',
   redirectionUrl: 'https://api.example/return',
 });

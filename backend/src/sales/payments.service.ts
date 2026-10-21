@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
-import { Order, OrderStatus, Payment, PaymentMethod, Prisma, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
+import { Currency, Order, OrderStatus, Payment, PaymentMethod, Prisma, PaymentStatus, TransactionStatus } from '../generated/prisma/client';
 import { LedgerService, SystemAccount } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
+import { CURRENCY_INFO, toBase, toCurrency } from '../common/currency.service';
 import { SequenceService } from '../common/sequence.service';
 import { Decimal, dec, money } from '../common/utils/money';
 import { paymentReceivedMessage, refundMessage } from '../notifications/messages';
@@ -30,9 +31,53 @@ const DEFAULT_ACCOUNT: Record<PaymentMethod, SystemAccount> = {
 
 export interface MoneyMovement {
   method: PaymentMethod;
+  /** In [currency]; SAR when omitted. */
   amount: string | Decimal;
+  /** SAR, or the order's own currency (converted at the rate locked into the order). */
+  currency?: Currency;
   accountId?: string;
   reference?: string;
+}
+
+/** A movement's SAR value plus what was actually handed over. */
+interface Converted {
+  amount: Decimal;
+  currency: Currency;
+  currencyAmount: Decimal;
+  exchangeRate: Prisma.Decimal | Decimal;
+}
+
+/**
+ * Turns an amount given in SAR or in the order's currency into SAR at the order's
+ * locked rate. Paying (or refunding) exactly the converted [limit] maps to the exact
+ * SAR [limit], so a full payment in YER never leaves a rounding remainder.
+ */
+function convert(order: Order, input: MoneyMovement, limit: Decimal, overLimit: (shown: string) => string): Converted {
+  const currency = input.currency ?? Currency.SAR;
+  if (currency === Currency.SAR) {
+    const amount = money(input.amount);
+    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
+    if (amount.greaterThan(limit)) throw new UnprocessableEntityException(overLimit(money(limit).toFixed(2) + ' SAR'));
+    // Cash the courier collected on a YER order was collected in YER.
+    if (input.method === PaymentMethod.CASH_ON_DELIVERY && order.currency !== Currency.SAR) {
+      return { amount, currency: order.currency, currencyAmount: toCurrency(amount, order.currency, order.exchangeRate), exchangeRate: order.exchangeRate };
+    }
+    return { amount, currency, currencyAmount: amount, exchangeRate: dec(1) };
+  }
+  if (currency !== order.currency) {
+    throw new UnprocessableEntityException(`Use SAR or the order's currency (${order.currency})`);
+  }
+  const decimals = CURRENCY_INFO[currency].decimals;
+  const given = dec(input.amount);
+  if (given.decimalPlaces() > decimals) {
+    throw new BadRequestException(`${currency} amounts have at most ${decimals} decimals`);
+  }
+  if (!given.gt(0)) throw new BadRequestException('Amount must be greater than zero');
+  const limitShown = toCurrency(limit, currency, order.exchangeRate);
+  if (given.greaterThan(limitShown)) throw new UnprocessableEntityException(overLimit(`${limitShown.toFixed(decimals)} ${currency}`));
+  const amount = given.eq(limitShown) ? money(limit) : toBase(given, currency, order.exchangeRate);
+  if (!amount.gt(0)) throw new BadRequestException('Amount is too small');
+  return { amount, currency, currencyAmount: given, exchangeRate: order.exchangeRate };
 }
 
 @Injectable()
@@ -49,12 +94,7 @@ export class PaymentsService {
     if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.RETURNED) {
       throw new UnprocessableEntityException(`Order is ${order.status.toLowerCase()}`);
     }
-    const amount = money(input.amount);
-    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
-    const due = balanceDue(order);
-    if (amount.greaterThan(due)) {
-      throw new UnprocessableEntityException(`Amount exceeds the balance due (${money(due)})`);
-    }
+    const c = convert(order, input, dec(balanceDue(order)), (shown) => `Amount exceeds the balance due (${shown})`);
 
     const cashAccount = await this.resolveCashAccount(tx, input);
     const number = await this.sequences.next(tx, 'RCPT');
@@ -64,7 +104,10 @@ export class PaymentsService {
         orderId: order.id,
         method: input.method,
         status: TransactionStatus.SUCCEEDED,
-        amount,
+        amount: c.amount,
+        currency: c.currency,
+        currencyAmount: c.currencyAmount,
+        exchangeRate: c.exchangeRate,
         accountId: cashAccount,
         gatewayRef: input.reference,
         paidAt: new Date(),
@@ -99,6 +142,7 @@ export class PaymentsService {
         method: PaymentMethod.CARD,
         status: TransactionStatus.PENDING,
         amount: due,
+        currencyAmount: due,
         accountId: await this.resolveCashAccount(tx, { method: PaymentMethod.CARD, amount: due }),
         gateway,
       },
@@ -137,6 +181,7 @@ export class PaymentsService {
       data: {
         status: TransactionStatus.SUCCEEDED,
         amount,
+        currencyAmount: amount,
         gatewayRef: result.transactionId || null,
         gatewayPayload: payload,
         paidAt: new Date(),
@@ -195,11 +240,8 @@ export class PaymentsService {
     if (input.method === PaymentMethod.CASH_ON_DELIVERY) {
       throw new BadRequestException('Refunds are paid in cash, by card reversal, wallet or bank transfer');
     }
-    const amount = money(input.amount);
-    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
-    if (amount.greaterThan(order.amountPaid)) {
-      throw new UnprocessableEntityException(`Refund exceeds the amount paid (${order.amountPaid})`);
-    }
+    const c = convert(order, input, dec(order.amountPaid), (shown) => `Refund exceeds the amount paid (${shown})`);
+    const amount = c.amount;
 
     const cashAccount = await this.resolveCashAccount(tx, input);
     const number = await this.sequences.next(tx, 'RFND');
@@ -210,6 +252,9 @@ export class PaymentsService {
         method: input.method,
         status: TransactionStatus.SUCCEEDED,
         amount: amount.neg(),
+        currency: c.currency,
+        currencyAmount: c.currencyAmount.neg(),
+        exchangeRate: c.exchangeRate,
         accountId: cashAccount,
         gatewayRef: input.reference,
         gatewayPayload: { reason: input.reason },

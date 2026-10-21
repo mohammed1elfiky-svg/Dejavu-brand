@@ -62,6 +62,7 @@ export class OnlinePaymentsService implements OnModuleInit, OnModuleDestroy {
           publicKey: config.get('PAYMOB_PUBLIC_KEY', { infer: true }),
           integrationId: config.get('PAYMOB_INTEGRATION_ID', { infer: true }),
           hmacSecret: config.get('PAYMOB_HMAC_SECRET', { infer: true }),
+          currency: config.get('PAYMOB_CURRENCY', { infer: true }),
           notificationUrl: `${base}/api/v1/payments/paymob/callback`,
           redirectionUrl: `${base}/api/v1/payments/return`,
         });

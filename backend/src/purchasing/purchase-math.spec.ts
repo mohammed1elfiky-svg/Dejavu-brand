@@ -1,4 +1,4 @@
-import { landedUnitCost, purchaseTotals, receivedValue } from './purchase-math';
+import { importLandedCosts, landedUnitCost, purchaseTotals, receivedValue } from './purchase-math';
 
 describe('purchase math', () => {
   const lines = [
@@ -34,5 +34,53 @@ describe('purchase math', () => {
   it('spreads shipping into the landed unit cost', () => {
     expect(landedUnitCost('100', '1000', '50').toFixed(4)).toBe('105.0000');
     expect(landedUnitCost('100', '0', '50').toFixed(4)).toBe('100.0000');
+  });
+});
+
+describe('importLandedCosts', () => {
+  const base = {
+    foreignPerUsd: '7.2',
+    sarPerUsd: '3.75',
+    commissionPercent: '5',
+    domesticShipping: '360',
+    totalCbm: '2',
+    cbmRateUsd: '200',
+  };
+
+  it('adds commission, inland shipping and CBM freight to the converted price', () => {
+    const r = importLandedCosts({
+      ...base,
+      lines: [
+        { quantity: 100, priceForeign: '10', cbm: '0.5' },
+        { quantity: 50, priceForeign: '20' },
+      ],
+    });
+    const [a, b] = r.lines;
+    expect(a.goods.toString()).toBe('520.83');
+    expect(a.domestic.toString()).toBe('93.75');
+    expect(a.commission.toString()).toBe('26.04');
+    expect(a.freight.toString()).toBe('375');
+    expect(a.unitCost.toString()).toBe('10.1562');
+    // The unmeasured line takes the rest of the shipment volume.
+    expect(b.cbm.toString()).toBe('1.5');
+    expect(b.freight.toString()).toBe('1125');
+    expect(b.unitCost.toString()).toBe('35.3124');
+    expect(r.totals.total.toString()).toBe('2781.24');
+    expect(r.totals.total.equals(a.total.add(b.total))).toBe(true);
+  });
+
+  it('shares the volume by value when no line was measured, and copes with free items', () => {
+    const r = importLandedCosts({
+      ...base,
+      domesticShipping: 0,
+      commissionPercent: 0,
+      lines: [
+        { quantity: 10, priceForeign: '30' },
+        { quantity: 10, priceForeign: '10' },
+        { quantity: 0, priceForeign: '10' },
+      ],
+    });
+    expect(r.lines.map((l) => l.cbm.toString())).toEqual(['1.5', '0.5', '0']);
+    expect(r.lines[2].unitCost.toString()).toBe('0');
   });
 });

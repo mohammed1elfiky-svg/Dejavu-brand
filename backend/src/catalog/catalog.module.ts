@@ -8,5 +8,6 @@ import { PromotionsService } from './promotions.service';
   imports: [InventoryModule],
   controllers: [AdminCatalogController, StoreCatalogController, AdminPromotionsController],
   providers: [CatalogService, PromotionsService],
+  exports: [CatalogService],
 })
 export class CatalogModule {}

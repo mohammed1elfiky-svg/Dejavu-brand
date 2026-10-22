@@ -170,6 +170,13 @@ enum ReturnStatus {
   REFUNDED
 }
 
+/// LOCAL: bought in SAR, received as is. IMPORT: bought abroad (e.g. China) in a foreign
+/// currency; the landed cost (commission, inland shipping, CBM freight & customs) is set on receipt.
+enum PurchaseKind {
+  LOCAL
+  IMPORT
+}
+
 enum PurchaseOrderStatus {
   DRAFT
   ORDERED
@@ -1037,6 +1044,8 @@ model Supplier {
   email       String?
   address     String?
   taxNumber   String?  @map("tax_number")
+  /// Agent / supplier commission, percent of the goods value, added to import costs.
+  commissionPercent Decimal @default(0) @map("commission_percent") @db.Decimal(5, 2)
   /// Payable sub-ledger account (optional; defaults to the global AP account).
   accountId   String?  @map("account_id") @db.Uuid
   isActive    Boolean  @default(true) @map("is_active")
@@ -1053,6 +1062,7 @@ model Supplier {
 model PurchaseOrder {
   id                String              @id @default(uuid()) @db.Uuid
   number            String              @unique // PO-2026-000123
+  kind              PurchaseKind        @default(LOCAL)
   supplierId        String              @map("supplier_id") @db.Uuid
   warehouseId       String              @map("warehouse_id") @db.Uuid
   status            PurchaseOrderStatus @default(DRAFT)
@@ -1066,6 +1076,23 @@ model PurchaseOrder {
   grandTotal        Decimal             @map("grand_total") @db.Decimal(14, 2)
   amountPaid        Decimal             @default(0) @map("amount_paid") @db.Decimal(14, 2)
   note              String?
+  // ---- import orders (kind = IMPORT) ----
+  /// Currency the supplier prices in (e.g. CNY).
+  foreignCurrency   String?             @map("foreign_currency")
+  /// Units of the foreign currency per 1 USD (e.g. 7.20 yuan).
+  foreignPerUsd     Decimal?            @map("foreign_per_usd") @db.Decimal(14, 6)
+  /// SAR per 1 USD (e.g. 3.75).
+  sarPerUsd         Decimal?            @map("sar_per_usd") @db.Decimal(14, 6)
+  /// Supplier commission copied from the supplier when ordered.
+  commissionPercent Decimal             @default(0) @map("commission_percent") @db.Decimal(5, 2)
+  /// Shipping inside the origin country, in the foreign currency, shared by value.
+  domesticShipping  Decimal             @default(0) @map("domestic_shipping") @db.Decimal(14, 2)
+  /// Whole shipment volume (m³) and freight + customs per m³ in USD, set on receipt.
+  totalCbm          Decimal?            @map("total_cbm") @db.Decimal(12, 4)
+  cbmRateUsd        Decimal?            @map("cbm_rate_usd") @db.Decimal(14, 2)
+  /// Freight & customs booked on receipt (SAR), owed to the forwarder / clearing agent.
+  freightCost       Decimal             @default(0) @map("freight_cost") @db.Decimal(14, 2)
+  receivedAt        DateTime?           @map("received_at")
   createdById       String              @map("created_by_id") @db.Uuid
   createdAt         DateTime            @default(now()) @map("created_at")
   updatedAt         DateTime            @updatedAt @map("updated_at")
@@ -1090,6 +1117,14 @@ model PurchaseOrderItem {
   unitCost        Decimal @map("unit_cost") @db.Decimal(14, 4)
   taxRate         Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
   lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
+  /// Import orders: supplier price per piece in the order's foreign currency.
+  unitPriceForeign Decimal? @map("unit_price_foreign") @db.Decimal(14, 4)
+  /// Import orders: volume of this line (m³), if measured.
+  cbm             Decimal? @db.Decimal(12, 4)
+  /// Import orders: final cost per piece in SAR once received.
+  landedUnitCost  Decimal? @map("landed_unit_cost") @db.Decimal(14, 4)
+  /// The product was created with this order; it stays a draft (not sold) until received.
+  createdProduct  Boolean  @default(false) @map("created_product")
 
   purchaseOrder PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   variant       ProductVariant @relation(fields: [variantId], references: [id])

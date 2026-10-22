@@ -1,5 +1,6 @@
+import { applyDecorators } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsBoolean,
@@ -11,6 +12,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -56,6 +58,11 @@ export class CreateSupplierDto {
   @IsString()
   @MaxLength(30)
   taxNumber?: string;
+
+  @ApiPropertyOptional({ example: '5', description: 'Supplier / agent commission, percent of the goods value (import costs)' })
+  @IsOptional()
+  @IsDecimalText(2)
+  commissionPercent?: string;
 }
 
 export class UpdateSupplierDto extends PartialType(CreateSupplierDto) {
@@ -63,6 +70,14 @@ export class UpdateSupplierDto extends PartialType(CreateSupplierDto) {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+/** A non-negative decimal as text (numbers accepted), with up to [places] decimals. */
+function IsDecimalText(places: number) {
+  return applyDecorators(
+    Transform(({ value }) => (typeof value === 'number' ? String(value) : value)),
+    Matches(new RegExp(`^\\d{1,10}(\\.\\d{1,${places}})?$`), { message: `$property must be a non-negative number with up to ${places} decimals` }),
+  );
 }
 
 export class SuppliersQueryDto extends PaginationQueryDto {
@@ -239,4 +254,210 @@ export class QuickPurchaseDto extends PurchaseOrderDto {
   @IsOptional()
   @IsUUID()
   payAccountId?: string;
+}
+
+// ------------------------------------------------------------- imports ---
+
+export class ImportItemDto {
+  @ApiProperty({ description: 'An existing size/colour' })
+  @IsUUID()
+  variantId: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  @Max(100000)
+  quantity: number;
+
+  @ApiProperty({ example: '35.50', description: 'Supplier price per piece in the order currency (e.g. CNY)' })
+  @IsDecimalText(4)
+  unitPriceForeign: string;
+}
+
+export class ImportNewVariantDto {
+  @ApiPropertyOptional({ example: 'M' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  size?: string;
+
+  @ApiPropertyOptional({ example: 'أسود' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  color?: string;
+
+  @ApiPropertyOptional({ example: '#000000' })
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  colorHex?: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  @Max(100000)
+  quantity: number;
+}
+
+/** A product that does not exist yet: created as a draft, sold only once received. */
+export class ImportNewProductDto {
+  @ApiProperty()
+  @IsUUID()
+  categoryId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  brandId?: string;
+
+  @ApiProperty({ example: 'فستان سهرة' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(200)
+  nameAr: string;
+
+  @ApiProperty({ example: '250', description: 'Selling price, SAR' })
+  @IsAmount()
+  basePrice: string;
+
+  @ApiProperty({ example: '35.50', description: 'Supplier price per piece in the order currency' })
+  @IsDecimalText(4)
+  unitPriceForeign: string;
+
+  @ApiPropertyOptional({ description: 'Product photo (uploaded image URL)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @ApiProperty({ type: [ImportNewVariantDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ImportNewVariantDto)
+  @ArrayMinSize(1)
+  variants: ImportNewVariantDto[];
+}
+
+export class ImportOrderDto {
+  @ApiProperty()
+  @IsUUID()
+  supplierId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiPropertyOptional({ example: 'CNY', default: 'CNY' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Matches(/^[A-Z]{3}$/)
+  foreignCurrency?: string;
+
+  @ApiProperty({ example: '7.2', description: 'Order currency units per 1 USD' })
+  @IsDecimalText(6)
+  foreignPerUsd: string;
+
+  @ApiPropertyOptional({ example: '3.75', description: 'SAR per 1 USD; defaults to the current USD rate' })
+  @IsOptional()
+  @IsDecimalText(6)
+  sarPerUsd?: string;
+
+  @ApiPropertyOptional({ description: "Defaults to the supplier's commission" })
+  @IsOptional()
+  @IsDecimalText(2)
+  commissionPercent?: string;
+
+  @ApiPropertyOptional({ example: '300', description: 'Inland shipping in the origin country, order currency' })
+  @IsOptional()
+  @IsDecimalText(2)
+  domesticShipping?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  supplierInvoiceNo?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-01' })
+  @IsOptional()
+  @IsDateString()
+  expectedDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @ApiPropertyOptional({ type: [ImportItemDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ImportItemDto)
+  items?: ImportItemDto[];
+
+  @ApiPropertyOptional({ type: [ImportNewProductDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ImportNewProductDto)
+  newProducts?: ImportNewProductDto[];
+}
+
+export class ImportReceiveItemDto {
+  @ApiProperty()
+  @IsUUID()
+  itemId: string;
+
+  @ApiProperty({ minimum: 0, description: 'Pieces actually counted on arrival' })
+  @IsInt()
+  @Min(0)
+  quantity: number;
+
+  @ApiPropertyOptional({ example: '0.35', description: 'Volume of this line (m³), if measured on its own' })
+  @IsOptional()
+  @IsDecimalText(4)
+  cbm?: string;
+}
+
+/** Arrival of an import shipment: counted pieces and the costs known now. */
+export class ImportReceiveDto {
+  @ApiProperty({ type: [ImportReceiveItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ImportReceiveItemDto)
+  @ArrayMinSize(1)
+  items: ImportReceiveItemDto[];
+
+  @ApiPropertyOptional({ example: '2.5', description: 'Whole shipment volume (m³)' })
+  @IsOptional()
+  @IsDecimalText(4)
+  totalCbm?: string;
+
+  @ApiProperty({ example: '180', description: 'Freight + customs per m³, USD' })
+  @IsDecimalText(2)
+  cbmRateUsd: string;
+
+  @ApiPropertyOptional({ description: 'Correct the rates or costs known at ordering' })
+  @IsOptional()
+  @IsDecimalText(6)
+  foreignPerUsd?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDecimalText(6)
+  sarPerUsd?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDecimalText(2)
+  commissionPercent?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDecimalText(2)
+  domesticShipping?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }

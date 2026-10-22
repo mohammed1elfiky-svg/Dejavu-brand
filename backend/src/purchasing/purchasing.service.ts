@@ -37,7 +37,17 @@ const poInclude = {
   warehouse: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   items: {
-    include: { variant: { select: { sku: true, size: true, color: true, product: { select: { nameAr: true, nameEn: true } } } } },
+    orderBy: { id: 'asc' },
+    include: {
+      variant: {
+        select: {
+          sku: true,
+          size: true,
+          color: true,
+          product: { select: { id: true, nameAr: true, nameEn: true, skuNumber: true, images: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } } } },
+        },
+      },
+    },
   },
   payments: { orderBy: { paidAt: 'asc' } },
 } satisfies Prisma.PurchaseOrderInclude;
@@ -239,6 +249,7 @@ export class PurchasingService {
       if (!['ORDERED', 'PARTIALLY_RECEIVED'].includes(po.status)) {
         throw new UnprocessableEntityException(`Cannot receive goods for a ${po.status} purchase order`);
       }
+      if (po.kind === 'IMPORT') throw new BadRequestException('Receive import orders with their landed costs (import-receive)');
       const items = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id }, orderBy: { id: 'asc' } });
       const before = items.map((i) => i.receivedQty);
       const after = items.map((i) => {

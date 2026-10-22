@@ -3,6 +3,8 @@ import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import {
   CreateSupplierDto,
+  ImportOrderDto,
+  ImportReceiveDto,
   PurchaseOrderDto,
   PurchaseOrdersQueryDto,
   QuickPurchaseDto,
@@ -13,12 +15,16 @@ import {
   SuppliersQueryDto,
   UpdateSupplierDto,
 } from './dto/purchasing.dto';
+import { ImportService } from './import.service';
 import { PurchasingService } from './purchasing.service';
 
 @ApiTags('Admin · Purchasing')
 @Controller('admin')
 export class PurchasingController {
-  constructor(private readonly purchasing: PurchasingService) {}
+  constructor(
+    private readonly purchasing: PurchasingService,
+    private readonly imports: ImportService,
+  ) {}
 
   // suppliers
   @RequirePermissions('purchases.read')
@@ -31,6 +37,13 @@ export class PurchasingController {
   @Get('suppliers/:id')
   getSupplier(@Param('id', ParseUUIDPipe) id: string) {
     return this.purchasing.getSupplier(id);
+  }
+
+  /** Pieces ordered from this supplier and not received yet ("pending delivery"). */
+  @RequirePermissions('purchases.read')
+  @Get('suppliers/:id/pending-items')
+  pendingItems(@Param('id', ParseUUIDPipe) id: string) {
+    return this.imports.pendingItems(id);
   }
 
   @RequirePermissions('purchases.read')
@@ -71,6 +84,29 @@ export class PurchasingController {
   }
 
   /** Buy and receive in one go (the till-style purchase screen). */
+  /** Import order priced in the supplier's currency; new items are created as drafts held for it. */
+  @RequirePermissions('purchases.write', 'products.write')
+  @Post('purchase-orders/import')
+  createImport(@Body() dto: ImportOrderDto, @CurrentUser() u: AuthPrincipal) {
+    return this.imports.createOrder(dto, u.id);
+  }
+
+  /** Landed cost per piece for the counted quantities and CBM, without saving. */
+  @RequirePermissions('purchases.read')
+  @Post('purchase-orders/:id/import-costs')
+  @HttpCode(HttpStatus.OK)
+  importCosts(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ImportReceiveDto) {
+    return this.imports.preview(id, dto);
+  }
+
+  /** "Receive and confirm matching": counted pieces go into stock at their landed cost. */
+  @RequirePermissions('purchases.receive')
+  @Post('purchase-orders/:id/import-receive')
+  @HttpCode(HttpStatus.OK)
+  importReceive(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ImportReceiveDto, @CurrentUser() u: AuthPrincipal) {
+    return this.imports.receive(id, dto, u.id);
+  }
+
   @RequirePermissions('purchases.write', 'purchases.receive')
   @Post('purchase-orders/quick')
   quick(@Body() dto: QuickPurchaseDto, @CurrentUser() u: AuthPrincipal) {

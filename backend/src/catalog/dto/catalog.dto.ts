@@ -219,6 +219,7 @@ export class CreateProductDto {
 
   @ApiPropertyOptional({ example: '900.00', nullable: true, description: 'Price for merchant (wholesale) customers, SAR' })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
   @ValidateIf((_, v) => v !== null)
   @IsAmount()
   wholesalePrice?: string | null;

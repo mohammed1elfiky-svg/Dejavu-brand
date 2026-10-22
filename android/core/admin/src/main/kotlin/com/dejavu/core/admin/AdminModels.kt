@@ -460,11 +460,20 @@ data class BrandRequest(
 /** Typed by the admin to confirm wiping the test data. */
 const val WIPE_PHRASE = "حذف البيانات التجريبية"
 
+/** ALL: everything incl. customers and staff; OPERATIONS: catalog and transactions only. */
 @Serializable
-data class WipeRequest(val confirm: String, val dryRun: Boolean = false)
+enum class WipeScope { ALL, OPERATIONS }
 
 @Serializable
-data class WipeSummary(val dryRun: Boolean, val deleted: Map<String, Int> = emptyMap(), val keptUsers: List<String> = emptyList())
+data class WipeRequest(val confirm: String, val dryRun: Boolean = false, val scope: WipeScope = WipeScope.ALL)
+
+@Serializable
+data class WipeSummary(
+    val dryRun: Boolean,
+    val scope: WipeScope = WipeScope.ALL,
+    val deleted: Map<String, Int> = emptyMap(),
+    val keptUsers: List<String> = emptyList(),
+)
 
 @Serializable
 data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slug: String, val parentId: String? = null)

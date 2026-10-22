@@ -198,7 +198,7 @@ class InventoryRepository(private val api: AdminApi) {
     }
 
     /** Deletes all test data (admin only); [dryRun] only counts what would go. */
-    suspend fun wipeTestData(dryRun: Boolean) = apiCall { api.wipeTestData(WipeRequest(WIPE_PHRASE, dryRun)) }
+    suspend fun wipeTestData(dryRun: Boolean, scope: WipeScope = WipeScope.ALL) = apiCall { api.wipeTestData(WipeRequest(WIPE_PHRASE, dryRun, scope)) }
     suspend fun product(id: String) = apiCall { api.product(id) }
     suspend fun updateProduct(id: String, request: UpdateProductRequest) = apiCall { api.updateProduct(id, request) }
 

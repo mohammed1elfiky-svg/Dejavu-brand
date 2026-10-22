@@ -1,5 +1,9 @@
 package com.dejavu.admin.ui.system
 
+import com.dejavu.core.admin.WipeScope
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -54,16 +58,28 @@ class WipeViewModel(private val repo: InventoryRepository) : BaseViewModel() {
     val busy = _busy.asStateFlow()
     private val _done = MutableStateFlow<WipeSummary?>(null)
     val done = _done.asStateFlow()
+    private val _scope = MutableStateFlow(WipeScope.OPERATIONS)
+
+    /** What to delete: operations only (keeps customers and staff), or everything. */
+    val scope = _scope.asStateFlow()
+
+    fun pick(scope: WipeScope) {
+        if (_done.value != null || scope == _scope.value) return
+        _scope.value = scope
+        load()
+    }
 
     fun load() {
-        viewModelScope.launch { _preview.value = repo.wipeTestData(dryRun = true).toLoad() }
+        _preview.value = Load.Loading
+        val scope = _scope.value
+        viewModelScope.launch { _preview.value = repo.wipeTestData(dryRun = true, scope = scope).toLoad() }
     }
 
     fun wipe() {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            repo.wipeTestData(dryRun = false).orSay()?.let { _done.value = it }
+            repo.wipeTestData(dryRun = false, scope = _scope.value).orSay()?.let { _done.value = it }
             _busy.value = false
         }
     }
@@ -88,6 +104,28 @@ private val LABELS = linkedMapOf(
     "cashierDrawers" to "صناديق الكاشير",
 )
 
+/** Counts that only the full wipe touches. */
+private val PEOPLE_KEYS = setOf("customers", "users", "cashierDrawers", "suppliers")
+
+@Composable
+private fun ScopeChoice(scope: WipeScope, enabled: Boolean, onPick: (WipeScope) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = scope == WipeScope.OPERATIONS,
+            onClick = { onPick(WipeScope.OPERATIONS) },
+            enabled = enabled,
+            label = { Text("العمليات فقط (يبقى العملاء والموظفون)") },
+            modifier = Modifier.weight(1f),
+        )
+        FilterChip(
+            selected = scope == WipeScope.ALL,
+            onClick = { onPick(WipeScope.ALL) },
+            enabled = enabled,
+            label = { Text("كل البيانات") },
+        )
+    }
+}
+
 /** Deletes all test data before going live, after a preview and the typed confirmation. */
 @Composable
 fun WipeDataScreen(onBack: () -> Unit, done: () -> Unit) {
@@ -95,6 +133,7 @@ fun WipeDataScreen(onBack: () -> Unit, done: () -> Unit) {
     val preview by vm.preview.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val result by vm.done.collectAsStateWithLifecycle()
+    val scope by vm.scope.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var typed by rememberSaveable { mutableStateOf("") }
     var confirm by remember { mutableStateOf(false) }
@@ -106,18 +145,24 @@ fun WipeDataScreen(onBack: () -> Unit, done: () -> Unit) {
         topBar = { BackTopBar("تصفير البيانات التجريبية", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        LoadContent(preview, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(padding)) {
+            ScopeChoice(scope, enabled = result == null && !busy, onPick = vm::pick)
+            LoadContent(preview, onRetry = vm::load) { p ->
+            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("سيُحذف نهائياً", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
                         (result ?: p).deleted.let { counts ->
-                            LABELS.forEach { (key, label) ->
+                            LABELS.filter { (key, _) -> scope == WipeScope.ALL || key !in PEOPLE_KEYS }.forEach { (key, label) ->
                                 Text("$label: ${counts[key] ?: 0}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
                             }
                         }
                         Text(
-                            "يبقى: حساب المدير (${p.keptUsers.joinToString()})، العملات وأسعارها، دليل الحسابات والسنوات المالية، الأدوار والصلاحيات، المخازن والخزائن والبنوك، الحسابات البنكية للمتجر وإعدادات النظام. يبقى العميل النقدي للكاشير.",
+                            if (scope == WipeScope.OPERATIONS) {
+                                "يبقى: كل العملاء (بأرصدة صفرية) وعناوينهم، كل الموظفين وصلاحياتهم وصناديقهم، الموردون، العملات، دليل الحسابات، الخزائن والبنوك وإعدادات النظام."
+                            } else {
+                                "يبقى: حساب المدير (${p.keptUsers.joinToString()})، العملات وأسعارها، دليل الحسابات والسنوات المالية، الأدوار والصلاحيات، المخازن والخزائن والبنوك، الحسابات البنكية للمتجر وإعدادات النظام. يبقى العميل النقدي للكاشير."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = Lux.InkSoft,
                             modifier = Modifier.padding(top = 10.dp),
@@ -151,10 +196,15 @@ fun WipeDataScreen(onBack: () -> Unit, done: () -> Unit) {
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = Color.White),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White) else Text("حذف كل البيانات التجريبية")
+                            if (busy) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                            } else {
+                                Text(if (scope == WipeScope.OPERATIONS) "حذف العمليات والمنتجات" else "حذف كل البيانات التجريبية")
+                            }
                         }
                     }
                 }
+            }
             }
         }
     }

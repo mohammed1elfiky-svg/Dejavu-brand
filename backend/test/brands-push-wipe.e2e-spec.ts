@@ -89,5 +89,11 @@ describe('Brands, product announcements & data wipe (e2e)', () => {
     expect(preview.keptUsers).toEqual(['admin@dejavu.local']);
     expect(await prisma.product.count()).toBe(before);
     expect(await prisma.setting.findUnique({ where: { key: 'system.wipedAt' } })).toBeNull();
+
+    // Operations only: customers, staff and suppliers are not touched.
+    const ops = (await http.post('/admin/system/wipe-test-data', { confirm: 'حذف البيانات التجريبية', dryRun: true, scope: 'OPERATIONS' }, admin).expect(200)).body;
+    expect(ops).toMatchObject({ scope: 'OPERATIONS', keptUsers: [] });
+    expect(ops.deleted).toMatchObject({ products: before, customers: 0, users: 0, suppliers: 0, cashierDrawers: 0 });
+    await http.post('/admin/system/wipe-test-data', { confirm: 'حذف البيانات التجريبية', dryRun: true, scope: 'SOME' }, admin).expect(400);
   });
 });

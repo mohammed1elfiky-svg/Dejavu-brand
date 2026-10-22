@@ -14,6 +14,6 @@ export class SystemController {
   @Post('wipe-test-data')
   @HttpCode(HttpStatus.OK)
   wipe(@Body() dto: WipeTestDataDto, @CurrentUser() u: AuthPrincipal) {
-    return this.system.wipeTestData(u.id, dto.dryRun ?? false);
+    return this.system.wipeTestData(u.id, dto.dryRun ?? false, dto.scope);
   }
 }

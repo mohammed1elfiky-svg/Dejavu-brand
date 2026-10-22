@@ -502,7 +502,7 @@ class PosReturnViewModel(
 
 /** Returns and exchanges at the till: find the sale, pick the pieces, refund or swap them. */
 @Composable
-fun PosReturnScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
+fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val vm = adminViewModel { PosReturnViewModel(it.pos, it.finance) }
     val snackbar = remember { SnackbarHostState() }
     var picking by remember { mutableStateOf<PosProduct?>(null) }
@@ -724,7 +724,7 @@ private fun SaleSection(s: PosReceipt, vm: PosReturnViewModel) {
 private fun ReturnLineRow(i: AdminOrderItem, s: PosReceipt, vm: PosReturnViewModel) {
     val max = vm.returnable(i)
     val q = vm.qty[i.id] ?: 0
-    val unit = returnValue(i, 1).takeIf { i.quantity > 0 }?.let { Money.parse(i.lineTotal).divide(BigDecimal(i.quantity), 2, RoundingMode.HALF_UP) } ?: BigDecimal.ZERO
+    val unit = if (i.quantity > 0) Money.parse(i.lineTotal).divide(BigDecimal(i.quantity), 2, RoundingMode.HALF_UP) else BigDecimal.ZERO
     Column(Modifier.fillMaxWidth().alpha(if (max > 0) 1f else 0.5f)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Thumb(i.productName)

@@ -213,7 +213,7 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.ORDER) { e -> OrderDetailScreen(e.arguments?.getString("id").orEmpty(), session, back, openReturn = { open(R.RETURN, it) }) }
             composable(R.RETURNS) { ReturnsScreen(back, openReturn = { open(R.RETURN, it) }) }
             composable(R.RETURN) { e -> ReturnDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.STOCK) { StockScreen(session, openProducts = { nav.navigate(R.PRODUCTS) }) }
+            composable(R.STOCK) { StockScreen(session, openProducts = { nav.navigate(R.PRODUCTS) }, openProduct = { open(R.PRODUCT, it) }) }
             composable(R.PRODUCTS) {
                 ProductsScreen(
                     back,

@@ -175,8 +175,10 @@ export class CatalogService {
   // ------------------------------------------------------- admin products ---
 
   async listProducts(q: AdminProductsQueryDto) {
+    // A parent category includes its sub-categories.
+    const categoryIds = q.categoryId ? [q.categoryId, ...(await this.descendantIds(q.categoryId))] : undefined;
     const where: Prisma.ProductWhereInput = {
-      categoryId: q.categoryId,
+      categoryId: categoryIds ? { in: categoryIds } : undefined,
       status: q.status,
       ...(q.q && this.searchFilter(q.q)),
     };

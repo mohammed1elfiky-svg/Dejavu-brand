@@ -104,8 +104,6 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
                         SummaryRow("للموردين", Money.format(d.payables.suppliers))
                         SummaryRow("مصروفات مستحقة", Money.format(d.payables.accruedExpenses))
                         SummaryRow("دفعات مقدمة من العملاء", Money.format(d.payables.customerAdvances))
-                        val vat = Money.parse(d.payables.vatDue)
-                        SummaryRow(if (vat.signum() >= 0) "ضريبة مستحقة للدولة" else "ضريبة مستردة", Money.format(vat.abs()))
                     }
                 }
                 item {

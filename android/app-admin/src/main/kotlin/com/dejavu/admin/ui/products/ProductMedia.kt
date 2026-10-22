@@ -5,6 +5,10 @@ package com.dejavu.admin.ui.products
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,6 +73,7 @@ import com.dejavu.core.ui.media.rememberImagePicker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
@@ -216,6 +221,113 @@ private fun ColorTagDialog(current: String?, colors: List<String>, onDismiss: ()
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
     )
+}
+
+// -------------------------------------------------------------------- video ---
+
+/** The API accepts videos up to this size. */
+internal const val MAX_VIDEO_BYTES = 30 * 1024 * 1024
+
+private val VIDEO_TYPES = setOf("video/mp4", "video/webm", "video/3gpp", "video/quicktime")
+
+/** True for an http(s) link. */
+internal fun isWebLink(v: String): Boolean {
+    val t = v.trim().lowercase()
+    return (t.startsWith("https://") || t.startsWith("http://")) && t.length > 10 && t.none { it.isWhitespace() }
+}
+
+/** Opens [url] as a video in the device's player (or browser). */
+fun openVideo(context: Context, url: String) {
+    val ok = runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.isSuccess
+    if (!ok) openLink(context, url)
+}
+
+/** Opens [url] in the browser (or the app that handles it, e.g. Instagram). */
+fun openLink(context: Context, url: String) {
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+/** Reads at most [limit] + 1 bytes of [uri]; null when it cannot be read. */
+private fun readCapped(context: Context, uri: Uri, limit: Int): ByteArray? = runCatching {
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            total += n
+            if (total > limit) break
+        }
+        out.toByteArray()
+    }
+}.getOrNull()
+
+/**
+ * "فيديو الصنف": pick one video from the gallery (MP4/WebM/3GP/MOV ≤ 30 MB), [onPicked] gets
+ * the bytes and MIME type to upload; once attached it can be played or removed.
+ */
+@Composable
+fun ProductVideoCard(
+    videoUrl: String?,
+    uploading: Boolean,
+    onPicked: (bytes: ByteArray, mimeType: String) -> Unit,
+    onError: (String) -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var reading by remember { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val mime = context.contentResolver.getType(uri)?.lowercase() ?: "video/mp4"
+        if (mime !in VIDEO_TYPES) {
+            onError("صيغة الفيديو غير مدعومة؛ استخدم MP4 أو WebM أو 3GP أو MOV")
+            return@rememberLauncherForActivityResult
+        }
+        reading = true
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) { readCapped(context, uri, MAX_VIDEO_BYTES) }
+            reading = false
+            when {
+                bytes == null || bytes.isEmpty() -> onError("تعذّرت قراءة الفيديو")
+                bytes.size > MAX_VIDEO_BYTES -> onError("حجم الفيديو أكبر من 30 ميغابايت")
+                else -> onPicked(bytes, mime)
+            }
+        }
+    }
+    val busy = uploading || reading
+
+    GlassCard(modifier.fillMaxWidth()) {
+        Text("فيديو الصنف", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "فيديو واحد قصير (MP4 أو WebM أو 3GP أو MOV) بحجم 30 ميغابايت كحد أقصى.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Lux.InkSoft,
+        )
+        Spacer(Modifier.height(8.dp))
+        if (busy) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(if (reading) "جارٍ تجهيز الفيديو…" else "جارٍ رفع الفيديو…", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            Spacer(Modifier.height(8.dp))
+        }
+        if (videoUrl != null && !busy) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("تم إرفاق فيديو", Modifier.weight(1f), color = Lux.GoldDeep, style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = { openVideo(context, videoUrl) }) { Text("تشغيل") }
+                TextButton(onClick = onRemove) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        OutlinedButton(
+            onClick = { launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (videoUrl == null) "اختيار فيديو من المعرض" else "استبدال الفيديو") }
+    }
 }
 
 // ----------------------------------------------------------------- stickers ---

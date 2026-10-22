@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -53,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,6 +74,7 @@ import com.dejavu.core.admin.ImageUrl
 import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.NewVariantRequest
 import com.dejavu.core.admin.ProductStatus
+import com.dejavu.core.admin.ProductVisibility
 import com.dejavu.core.admin.UpdateProductRequest
 import com.dejavu.core.admin.UpdateVariantRequest
 import com.dejavu.core.admin.VariantPlanner
@@ -86,8 +91,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-
-private val SLUG = Regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 /** A non-negative amount with up to 2 decimals, as the API accepts. */
 internal fun isAmount(v: String) = v.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
@@ -115,9 +118,14 @@ data class VariantRow(
 data class ProductForm(
     val categoryId: String? = null,
     val nameAr: String = "",
-    val nameEn: String = "",
-    val slug: String = "",
-    val slugEdited: Boolean = false,
+    val brand: String = "",
+    val savedBrand: String = "",
+    val instagramUrl: String = "",
+    val savedInstagram: String = "",
+    /** Uploaded video URL; blank = none. */
+    val videoUrl: String = "",
+    val savedVideo: String = "",
+    val visibility: ProductVisibility = ProductVisibility.ALL,
     val descriptionAr: String = "",
     val price: String = "",
     val compareAt: String = "",
@@ -156,6 +164,10 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
 
     /** Photos still being uploaded. */
     val uploading = _uploading.asStateFlow()
+    private val _videoUploading = MutableStateFlow(false)
+
+    /** True while the product video is being uploaded. */
+    val videoUploading = _videoUploading.asStateFlow()
     private val _saved = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val saved = _saved.asSharedFlow()
     val isNew = productId == null
@@ -186,7 +198,23 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         _form.value = change(_form.value)
     }
 
-    fun setNameEn(v: String) = edit { f -> f.copy(nameEn = v, slug = if (f.slugEdited || !isNew) f.slug else VariantPlanner.slugOf(v)) }
+    /** Shows [message] as a snackbar (used by the screen for picker errors). */
+    fun showMessage(message: String) = say(message)
+
+    /** Uploads a picked video and keeps its URL. */
+    fun uploadVideo(bytes: ByteArray, mimeType: String) {
+        if (_videoUploading.value) return
+        _videoUploading.value = true
+        viewModelScope.launch {
+            repo.uploadVideo(bytes, mimeType).orSay()?.let { file ->
+                edit { it.copy(videoUrl = file.url) }
+                say("تم رفع الفيديو")
+            }
+            _videoUploading.value = false
+        }
+    }
+
+    fun removeVideo() = edit { it.copy(videoUrl = "") }
 
     /** Colors a photo can be tagged with. */
     fun colorsOf(f: ProductForm): List<String> = if (isNew) VariantPlanner.split(f.colors) else f.variantColors
@@ -230,6 +258,7 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
     fun save() {
         val f = _form.value
         if (_uploading.value > 0) return say("انتظر حتى يكتمل رفع الصور")
+        if (_videoUploading.value) return say("انتظر حتى يكتمل رفع الفيديو")
         problem(f)?.let { return say(it) }
         if (_busy.value) return
         _busy.value = true
@@ -242,8 +271,9 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                     CreateProductRequest(
                         categoryId = f.categoryId!!,
                         nameAr = f.nameAr.trim(),
-                        nameEn = f.nameEn.trim(),
-                        slug = f.slug.trim(),
+                        // The server defaults the English name to the Arabic one and generates the slug.
+                        nameEn = null,
+                        slug = null,
                         basePrice = f.price.trim(),
                         costPrice = f.costPrice.trim().ifBlank { null },
                         wholesalePrice = f.wholesalePrice.trim().ifBlank { null },
@@ -253,6 +283,10 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         isFeatured = f.featured,
                         images = requests.ifEmpty { null },
                         variants = f.variants.map { it.toRequest() },
+                        brand = f.brand.trim().ifBlank { null },
+                        videoUrl = f.videoUrl.trim().ifBlank { null },
+                        instagramUrl = f.instagramUrl.trim().ifBlank { null },
+                        visibility = f.visibility,
                     ),
                 ).orSay()?.id
             } else {
@@ -261,8 +295,6 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                     UpdateProductRequest(
                         categoryId = f.categoryId,
                         nameAr = f.nameAr.trim(),
-                        nameEn = f.nameEn.trim(),
-                        slug = f.slug.trim(),
                         descriptionAr = f.descriptionAr.trim().ifBlank { null },
                         basePrice = f.price.trim(),
                         costPrice = f.costPrice.trim().ifBlank { null },
@@ -271,6 +303,11 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         compareAtPrice = f.compareAt.trim().ifBlank { null },
                         status = f.status,
                         isFeatured = f.featured,
+                        // "" clears a value that was set; an unchanged blank is left out.
+                        brand = f.brand.trim().ifBlank { if (f.savedBrand.isNotBlank()) "" else null },
+                        videoUrl = f.videoUrl.trim().ifBlank { if (f.savedVideo.isNotBlank()) "" else null },
+                        instagramUrl = f.instagramUrl.trim().ifBlank { if (f.savedInstagram.isNotBlank()) "" else null },
+                        visibility = f.visibility,
                     ),
                 ).orSay()?.let { p ->
                     if (images != f.savedImages) repo.setImages(p.id, requests).orSay()?.id else p.id
@@ -284,8 +321,8 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
     private fun problem(f: ProductForm): String? = when {
         f.categoryId == null -> "اختر القسم"
         f.nameAr.trim().length < 2 -> "اكتب اسم المنتج بالعربية"
-        f.nameEn.trim().length < 2 -> "اكتب اسم المنتج بالإنجليزية"
-        !SLUG.matches(f.slug.trim()) -> "الرابط: حروف إنجليزية صغيرة وأرقام وشرطات فقط (مثل linen-shirt)"
+        f.brand.trim().length > 80 -> "اسم الماركة طويل جداً (80 حرفاً كحد أقصى)"
+        f.instagramUrl.isNotBlank() && !isWebLink(f.instagramUrl) -> "رابط إنستغرام يجب أن يبدأ بـ http:// أو https://"
         !isAmount(f.price) || f.price.trim().toBigDecimal().signum() == 0 -> "اكتب سعراً صحيحاً"
         f.compareAt.isNotBlank() && !isAmount(f.compareAt) -> "السعر قبل الخصم غير صحيح"
         f.costPrice.isNotBlank() && !isAmount(f.costPrice) -> "التكلفة غير صحيحة"
@@ -320,9 +357,13 @@ private fun VariantRow.toRequest(): NewVariantRequest {
 private fun AdminProduct.toForm() = ProductForm(
     categoryId = category.id,
     nameAr = nameAr,
-    nameEn = nameEn,
-    slug = slug,
-    slugEdited = true,
+    brand = brand.orEmpty(),
+    savedBrand = brand.orEmpty(),
+    instagramUrl = instagramUrl.orEmpty(),
+    savedInstagram = instagramUrl.orEmpty(),
+    videoUrl = videoUrl.orEmpty(),
+    savedVideo = videoUrl.orEmpty(),
+    visibility = visibility,
     descriptionAr = descriptionAr.orEmpty(),
     price = basePrice,
     compareAt = compareAtPrice.orEmpty(),
@@ -347,6 +388,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     val ready by vm.ready.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val uploading by vm.uploading.collectAsStateWithLifecycle()
+    val videoUploading by vm.videoUploading.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var scanRow by rememberSaveable { mutableStateOf(-1) }
     val scan = rememberBarcodeScanner { code -> if (scanRow >= 0) vm.editRow(scanRow) { it.copy(barcode = cleanBarcode(code)) } }
@@ -360,7 +402,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Surface(shadowElevation = 8.dp) {
-                Button(onClick = vm::save, enabled = ready && !busy && uploading == 0, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Button(onClick = vm::save, enabled = ready && !busy && uploading == 0 && !videoUploading, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("حفظ المنتج")
                 }
             }
@@ -373,16 +415,25 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CategoryPicker(cats, form.categoryId, onAdd = vm::addCategory) { id -> vm.edit { it.copy(categoryId = id) } }
-                        Field("اسم المنتج (عربي)", form.nameAr) { v -> vm.edit { it.copy(nameAr = v) } }
-                        Field("اسم المنتج (إنجليزي)", form.nameEn, onChange = vm::setNameEn)
-                        Field("الرابط في المتجر (slug)", form.slug, hint = "يُكتب تلقائياً من الاسم الإنجليزي") { v ->
-                            vm.edit { it.copy(slug = v.lowercase().replace(' ', '-'), slugEdited = true) }
-                        }
+                        Field("اسم المنتج", form.nameAr) { v -> vm.edit { it.copy(nameAr = v) } }
+                        Field("الماركة / العلامة التجارية (اختياري)", form.brand) { v -> vm.edit { it.copy(brand = v.take(80)) } }
                         OutlinedTextField(
                             value = form.descriptionAr,
                             onValueChange = { v -> vm.edit { it.copy(descriptionAr = v) } },
                             label = { Text("الوصف (اختياري)") },
                             minLines = 2,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = form.instagramUrl,
+                            onValueChange = { v -> vm.edit { it.copy(instagramUrl = v.trim()) } },
+                            label = { Text("رابط منشور إنستغرام (اختياري)") },
+                            supportingText = {
+                                Text(if (form.instagramUrl.isNotBlank() && !isWebLink(form.instagramUrl)) "يجب أن يبدأ الرابط بـ https://" else "مثل https://www.instagram.com/p/…")
+                            },
+                            isError = form.instagramUrl.isNotBlank() && !isWebLink(form.instagramUrl),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -391,7 +442,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Field("سعر البيع (شامل الضريبة)", form.price, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(price = v) } }
+                            Field("سعر البيع", form.price, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(price = v) } }
                             Field("قبل الخصم (اختياري)", form.compareAt, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(compareAt = v) } }
                         }
                         Field(
@@ -422,6 +473,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                             Text("مميز في الصفحة الرئيسية", Modifier.weight(1f))
                             Switch(checked = form.featured, onCheckedChange = { v -> vm.edit { it.copy(featured = v) } })
                         }
+                        VisibilityPicker(form.visibility) { v -> vm.edit { it.copy(visibility = v) } }
                     }
                 }
                 if (vm.isNew) {
@@ -453,6 +505,17 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                         uploading = uploading > 0,
                         onChange = vm::setImages,
                         onPicked = vm::upload,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                item { SectionTitle("فيديو الصنف") }
+                item {
+                    ProductVideoCard(
+                        videoUrl = form.videoUrl.ifBlank { null },
+                        uploading = videoUploading,
+                        onPicked = vm::uploadVideo,
+                        onError = vm::showMessage,
+                        onRemove = vm::removeVideo,
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
@@ -669,6 +732,26 @@ fun EditVariantDialog(variant: AdminVariant, onDismiss: () -> Unit, onSave: (Upd
 }
 
 // ----------------------------------------------------------------- widgets ---
+
+/** "ظهور المنتج": where the product is sold (till, customer app, merchants only, hidden). */
+@Composable
+private fun VisibilityPicker(selected: ProductVisibility, onPick: (ProductVisibility) -> Unit) {
+    Column(Modifier.fillMaxWidth().selectableGroup().padding(top = 8.dp)) {
+        Text("ظهور المنتج", style = MaterialTheme.typography.titleSmall)
+        ProductVisibility.entries.forEach { v ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .selectable(selected = v == selected, onClick = { onPick(v) }, role = Role.RadioButton)
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = v == selected, onClick = null)
+                Text(v.label, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
 
 /** "باركود المصنع" with a camera scan button. */
 @Composable

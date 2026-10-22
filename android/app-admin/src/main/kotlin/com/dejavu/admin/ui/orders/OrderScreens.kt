@@ -307,7 +307,6 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                         SummaryRow("المجموع", Money.format(o.subtotal))
                         if (!Money.isZero(o.discountTotal)) SummaryRow("الخصم", "- ${Money.format(o.discountTotal)}")
                         SummaryRow("الشحن", Money.format(o.shippingFee))
-                        SummaryRow("منها ضريبة", Money.format(o.taxTotal))
                         SummaryRow("الإجمالي", Money.format(o.grandTotal), strong = true)
                         SummaryRow("المدفوع", Money.format(o.amountPaid), valueColor = Success)
                         if (!Money.isZero(o.returnedTotal)) SummaryRow("قيمة المرتجعات", Money.format(o.returnedTotal))
@@ -329,7 +328,7 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                 item {
                     InfoCard {
                         Text("الربحية", style = MaterialTheme.typography.titleSmall)
-                        SummaryRow("صافي الإيراد (بدون ضريبة)", Money.format(o.profit.netRevenue))
+                        SummaryRow("صافي الإيراد", Money.format(o.profit.netRevenue))
                         SummaryRow("تكلفة البضاعة", Money.format(o.profit.costOfGoods))
                         SummaryRow("مجمل الربح", Money.format(o.profit.grossProfit), strong = true)
                     }

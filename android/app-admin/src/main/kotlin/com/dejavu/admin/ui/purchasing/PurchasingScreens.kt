@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,7 +44,10 @@ import com.dejavu.admin.ui.ChipFilter
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.JournalEntriesCard
 import com.dejavu.admin.ui.MoneyDialog
+import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.theme.Lux
+import androidx.compose.ui.graphics.Color
 import com.dejavu.admin.ui.label
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.Perm
@@ -68,6 +74,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/** Permission to create purchase orders (not in [Perm]). */
+internal const val PURCHASES_WRITE = "purchases.write"
+
 private val SUPPLIER_METHODS = listOf(PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.INSTAPAY, PaymentMethod.WALLET)
 
 class PurchasingViewModel(private val repo: PurchasingRepository) : BaseViewModel() {
@@ -91,16 +100,31 @@ class PurchasingViewModel(private val repo: PurchasingRepository) : BaseViewMode
 }
 
 @Composable
-fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
+fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchase: () -> Unit) {
     val vm = adminViewModel { PurchasingViewModel(it.purchasing) }
+    val canWrite = adminContainer().session.can(PURCHASES_WRITE)
     val orders by vm.orders.collectAsStateWithLifecycle()
     val suppliers by vm.suppliers.collectAsStateWithLifecycle()
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
     }
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("المشتريات", onBack) }) { padding ->
-        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar("المشتريات", onBack) },
+        floatingActionButton = {
+            if (canWrite) {
+                ExtendedFloatingActionButton(
+                    onClick = newPurchase,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("أمر شراء جديد") },
+                    containerColor = Lux.GoldDeep,
+                    contentColor = Color.White,
+                )
+            }
+        },
+    ) { padding ->
+        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 88.dp)) {
             if (suppliers.isNotEmpty()) {
                 item {
                     Column(Modifier.padding(16.dp)) {

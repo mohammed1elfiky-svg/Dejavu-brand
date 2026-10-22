@@ -13,6 +13,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.ui.graphics.Color
 import com.dejavu.admin.ui.barcode.StickerData
 import com.dejavu.admin.ui.products.StickerDialog
+import androidx.compose.ui.platform.LocalContext
+import com.dejavu.admin.ui.products.openLink
+import com.dejavu.admin.ui.products.openVideo
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.core.admin.FinanceRepository
@@ -857,10 +860,20 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     InfoCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(p.nameEn, style = MaterialTheme.typography.bodySmall)
+                                p.brand?.takeIf { it.isNotBlank() }?.let { Text("الماركة: $it", style = MaterialTheme.typography.bodySmall) }
                                 Text("القسم: ${p.category.nameAr}")
                             }
                             GoldPill { Text("SKU ${p.skuNumber ?: "—"}", color = Color.White, style = MaterialTheme.typography.labelLarge) }
+                        }
+                        SummaryRow("ظهور المنتج", p.visibility.label)
+                        val context = LocalContext.current
+                        val instagram = p.instagramUrl?.takeIf { it.isNotBlank() }
+                        val video = p.videoUrl?.takeIf { it.isNotBlank() }
+                        if (instagram != null || video != null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (video != null) OutlinedButton(onClick = { openVideo(context, video) }) { Text("تشغيل الفيديو") }
+                                if (instagram != null) OutlinedButton(onClick = { openLink(context, instagram) }) { Text("منشور إنستغرام") }
+                            }
                         }
                         SummaryRow("التكلفة", Money.formatBase(p.costPrice))
                         SummaryRow("سعر التاجر", p.wholesalePrice?.let { Money.format(it) } ?: "غير محدد")
@@ -875,7 +888,7 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                                 }
                             }
                             OutlinedTextField(
-                                value = price, onValueChange = { price = it }, label = { Text("السعر (شامل الضريبة)") }, singleLine = true,
+                                value = price, onValueChange = { price = it }, label = { Text("سعر البيع") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                             )
                             OutlinedTextField(

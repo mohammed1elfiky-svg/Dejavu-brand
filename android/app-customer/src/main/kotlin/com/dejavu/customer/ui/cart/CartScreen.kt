@@ -195,7 +195,6 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
                         if (cart.shipping == null) "يُحدد عند إتمام الطلب" else Money.format(t.shippingFee),
                     )
                     cart.shippingProblem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    Text("الأسعار شاملة ضريبة القيمة المضافة (${Money.format(t.taxTotal)})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

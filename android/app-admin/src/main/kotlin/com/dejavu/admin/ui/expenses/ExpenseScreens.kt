@@ -210,7 +210,6 @@ fun ExpenseDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         Text("${e.number} · ${e.category.name} · ${formatDate(e.expenseDate)}", style = MaterialTheme.typography.bodySmall)
                         e.payee?.let { Text("المستفيد: $it") }
                         SummaryRow("المبلغ", Money.format(e.amount))
-                        SummaryRow("ضريبة قابلة للاسترداد", Money.format(e.taxAmount))
                         SummaryRow("الإجمالي", Money.format(e.total), strong = true)
                         e.createdBy?.let { Text("أنشأه: ${it.name}", style = MaterialTheme.typography.bodySmall) }
                         e.approvedBy?.let { Text("اعتمده: ${it.name}", style = MaterialTheme.typography.bodySmall) }
@@ -276,7 +275,6 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var categoryId by rememberSaveable { mutableStateOf<String?>(null) }
     var amount by rememberSaveable { mutableStateOf("") }
-    var tax by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var payee by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf(LocalDate.now(ZoneId.of("Asia/Aden")).toString()) }
@@ -284,9 +282,8 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
     LaunchedEffect(vm) { vm.created.collect { created(it) } }
 
     val validAmount = amount.toBigDecimalOrNull()?.let { it.signum() > 0 && it.scale() <= 2 } == true
-    val validTax = tax.isBlank() || tax.toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
     val validDate = runCatching { LocalDate.parse(date) }.isSuccess
-    val canSave = categoryId != null && validAmount && validTax && validDate && description.trim().length >= 3 && !saving
+    val canSave = categoryId != null && validAmount && validDate && description.trim().length >= 3 && !saving
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("مصروف جديد", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(
@@ -302,11 +299,7 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
             }
             OutlinedTextField(value = description, onValueChange = { description = it.take(500) }, label = { Text("الوصف") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
-                value = amount, onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("المبلغ قبل الضريبة") },
-                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = tax, onValueChange = { tax = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("ضريبة القيمة المضافة (اختياري)") },
+                value = amount, onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("المبلغ") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(value = payee, onValueChange = { payee = it.take(150) }, label = { Text("المستفيد (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -320,7 +313,7 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
             }
             Button(
                 onClick = {
-                    vm.save(ExpenseRequest(categoryId!!, amount, date, description.trim(), tax.ifBlank { null }, payee.trim().ifBlank { null }))
+                    vm.save(ExpenseRequest(categoryId!!, amount, date, description.trim(), null, payee.trim().ifBlank { null }))
                 },
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth(),

@@ -202,9 +202,11 @@ export class CreateProductDto {
 
   @ApiPropertyOptional({ example: 'Zara' })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || null : value))
+  @ValidateIf((_, v) => v !== null)
   @IsString()
   @MaxLength(80)
-  brand?: string;
+  brand?: string | null;
 
   @ApiPropertyOptional({ description: 'Uploaded product video URL (POST admin/files/video)' })
   @IsOptional()

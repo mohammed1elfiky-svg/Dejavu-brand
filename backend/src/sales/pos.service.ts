@@ -124,9 +124,11 @@ export class PosService {
 
   /** Saves the cashier grid order: products listed first show first. */
   async arrange(productIds: string[], userId: string) {
-    await this.prisma.$transaction(
-      productIds.map((id, i) => this.prisma.product.update({ where: { id }, data: { posSortOrder: i + 1 }, select: { id: true } })),
-    );
+    await this.prisma.$transaction([
+      ...productIds.map((id, i) => this.prisma.product.update({ where: { id }, data: { posSortOrder: i + 1 }, select: { id: true } })),
+      // Products left out (e.g. not yet shown on the till) go after the arranged ones.
+      this.prisma.product.updateMany({ where: { id: { notIn: productIds } }, data: { posSortOrder: productIds.length + 1 } }),
+    ]);
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'PosProductOrder', after: { count: productIds.length } });
     return { arranged: productIds.length };
   }

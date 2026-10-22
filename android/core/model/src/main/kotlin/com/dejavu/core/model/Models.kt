@@ -522,5 +522,16 @@ data class TopUpRequest(
     val note: String? = null,
 )
 
+/** Changes to a request still under review; null leaves a field as it is. */
+@Serializable
+data class UpdateTopUpRequest(
+    val currency: Currency? = null,
+    val amount: String? = null,
+    val receiptFileId: String? = null,
+    val bankAccountId: String? = null,
+    val reference: String? = null,
+    val note: String? = null,
+)
+
 @Serializable
 data class UploadedFile(val id: String, val url: String, val mimeType: String, val size: Int)

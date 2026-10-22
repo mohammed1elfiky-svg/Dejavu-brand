@@ -1,6 +1,7 @@
 package com.dejavu.core.data
 
 import com.dejavu.core.model.Brand
+import com.dejavu.core.model.UpdateTopUpRequest
 import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
@@ -275,6 +276,29 @@ class WalletRepository(private val api: DejavuApi) {
         val part = MultipartBody.Part.createFormData("file", "receipt.jpg", receipt.toRequestBody(mimeType.toMediaType()))
         val file = api.uploadFile(part)
         api.requestTopUp(TopUpRequest(currency, amount, file.id, bankAccountId, reference?.ifBlank { null }, note?.ifBlank { null }))
+    }
+
+    /** Edits a request still under review; [receipt] replaces the deposit slip when given. */
+    suspend fun updateTopUp(
+        id: String,
+        currency: Currency? = null,
+        amount: String? = null,
+        receipt: ByteArray? = null,
+        mimeType: String = "image/jpeg",
+        bankAccountId: String? = null,
+        reference: String? = null,
+        note: String? = null,
+    ): Result<TopUp> = apiCall {
+        val fileId = receipt?.let {
+            api.uploadFile(MultipartBody.Part.createFormData("file", "receipt.jpg", it.toRequestBody(mimeType.toMediaType()))).id
+        }
+        api.updateTopUp(id, UpdateTopUpRequest(currency, amount?.trim(), fileId, bankAccountId, reference, note))
+    }
+
+    /** Withdraws a request still under review. */
+    suspend fun deleteTopUp(id: String): Result<Unit> = apiCall {
+        val res = api.deleteTopUp(id)
+        if (!res.isSuccessful) throw retrofit2.HttpException(res)
     }
 }
 

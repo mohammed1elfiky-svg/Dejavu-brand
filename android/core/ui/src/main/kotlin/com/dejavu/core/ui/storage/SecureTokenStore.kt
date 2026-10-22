@@ -44,7 +44,7 @@ class SecureTokenStore(context: Context, name: String = "session") : TokenStore 
     }
 }
 
-private class TokenCipher(private val alias: String) {
+internal class TokenCipher(private val alias: String) {
     private val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
     fun encrypt(plain: String): String {
@@ -76,5 +76,33 @@ private class TokenCipher(private val alias: String) {
         const val PROVIDER = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_SIZE = 12
+    }
+}
+
+/** A remembered sign-in: what was typed in the login field and the password. */
+data class SavedLogin(val login: String, val password: String)
+
+/**
+ * "Remember me": keeps the last sign-in encrypted (Keystore AES-GCM, like the tokens) so
+ * the login screen is filled in after signing out.
+ */
+class CredentialsStore(context: Context, name: String) {
+    private val prefs = context.getSharedPreferences("${name}_login", Context.MODE_PRIVATE)
+    private val cipher = TokenCipher("dejavu_${name}_login")
+
+    fun load(): SavedLogin? {
+        val stored = prefs.getString(KEY, null) ?: return null
+        val parts = cipher.decrypt(stored)?.split("\n", limit = 2)
+        return if (parts?.size == 2) SavedLogin(parts[0], parts[1]) else null
+    }
+
+    fun save(login: SavedLogin?) {
+        prefs.edit {
+            if (login == null) remove(KEY) else putString(KEY, cipher.encrypt("${login.login}\n${login.password}"))
+        }
+    }
+
+    private companion object {
+        const val KEY = "login"
     }
 }

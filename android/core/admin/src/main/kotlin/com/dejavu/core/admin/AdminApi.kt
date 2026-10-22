@@ -143,6 +143,7 @@ interface AdminApi {
     @GET("admin/customers/{id}") suspend fun customer(@Path("id") id: String): AdminCustomerDetail
     @GET("admin/customers/{id}/account") suspend fun customerAccount(@Path("id") id: String, @Query("page") page: Int = 1): CustomerAccount
     @POST("admin/customers/{id}/account/receipts") suspend fun customerReceipt(@Path("id") id: String, @Body body: CustomerReceiptRequest): AccountBalances
+    @POST("admin/customers/{id}/account/opening-balance") suspend fun openingBalance(@Path("id") id: String, @Body body: OpeningBalanceRequest): AccountBalances
 
     @PATCH("admin/customers/{id}") suspend fun updateCustomer(@Path("id") id: String, @Body body: UpdateCustomerRequest): AdminCustomerDetail
 
@@ -163,6 +164,8 @@ interface AdminApi {
     @GET("admin/pos/sales/{id}") suspend fun posReceipt(@Path("id") id: String): PosReceipt
     @GET("admin/pos/sales/by-number/{number}") suspend fun findSale(@Path("number") number: String): PosReceipt
     @POST("admin/pos/returns") suspend fun posReturn(@Body body: PosReturnRequest): PosReturnResult
+    @POST("admin/pos/returns/without-invoice") suspend fun posFreeReturn(@Body body: FreeReturnRequest): FreeReturnResult
+    @GET("admin/alerts") suspend fun alerts(@Query("since") since: String? = null): StaffAlerts
     @GET("admin/pos/shift") suspend fun shift(): PosShift
     @POST("admin/pos/customers") suspend fun quickCustomer(@Body body: QuickCustomerRequest): QuickCustomer
 
@@ -174,6 +177,8 @@ interface AdminApi {
     @PATCH("admin/cash-boxes/{id}") suspend fun updateBox(@Path("id") id: String, @Body body: UpdateBoxRequest): CashBox
     @GET("admin/cash-boxes/{id}/entries") suspend fun boxEntries(@Path("id") id: String, @Query("page") page: Int = 1): Page<CashBoxEntry>
     @POST("admin/cash-transfers") suspend fun transfer(@Body body: TransferRequest): CashTransfer
+    @POST("admin/cash-transfers/{id}/cancel") suspend fun cancelTransfer(@Path("id") id: String, @Body body: CancelTransferRequest): CashTransfer
+    @PUT("admin/cash-transfers/{id}") suspend fun editTransfer(@Path("id") id: String, @Body body: TransferRequest): CashTransfer
     @GET("admin/cash-transfers") suspend fun transfers(@Query("exchangesOnly") exchangesOnly: Boolean? = null, @Query("page") page: Int = 1): Page<CashTransfer>
 
     // wallet top-ups & bank accounts

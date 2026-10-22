@@ -30,10 +30,13 @@ class MainActivity : ComponentActivity() {
 
     /** A tapped notification (ours, or FCM's background one whose data keys become extras). */
     private fun handle(intent: Intent?) {
-        (application as AdminApp).container.requestOrder(intent?.getStringExtra(EXTRA_ORDER_ID))
+        val container = (application as AdminApp).container
+        container.requestOrder(intent?.getStringExtra(EXTRA_ORDER_ID))
+        container.requestTopUp(intent?.getStringExtra(EXTRA_TOP_UP_ID))
     }
 
     companion object {
         const val EXTRA_ORDER_ID = "orderId"
+        const val EXTRA_TOP_UP_ID = "topUpId"
     }
 }

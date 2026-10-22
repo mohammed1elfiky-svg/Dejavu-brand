@@ -146,7 +146,7 @@ fun AccountScreen(
                             Column(Modifier.weight(1f)) {
                                 Text(s.customer?.name ?: "…", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    listOfNotNull(s.customer?.phone, s.customer?.email).joinToString(" · "),
+                                    s.customer?.phone.orEmpty(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

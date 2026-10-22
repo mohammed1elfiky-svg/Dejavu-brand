@@ -22,7 +22,11 @@ import kotlinx.serialization.Serializable
 data class Health(val status: String)
 
 @Serializable
-data class StaffLoginRequest(val email: String, val password: String)
+data class StaffLoginRequest(
+    /** Mobile number (or username) the employee signs in with. */
+    val phone: String,
+    val password: String,
+)
 
 @Serializable
 data class RoleRef(val id: String, val name: String)
@@ -31,7 +35,7 @@ data class RoleRef(val id: String, val name: String)
 data class StaffProfile(
     val id: String,
     val name: String,
-    val email: String,
+    val email: String? = null,
     val phone: String? = null,
     val roles: List<RoleRef> = emptyList(),
     val permissions: List<String> = emptyList(),
@@ -45,7 +49,21 @@ data class StaffAuthResponse(val accessToken: String, val refreshToken: String, 
 // ------------------------------------------------------------- dashboard ---
 
 @Serializable
-data class CashAccount(val accountId: String, val code: String, val nameAr: String, val nameEn: String, val balance: String)
+data class CashAccount(
+    val accountId: String,
+    val code: String,
+    val nameAr: String,
+    val nameEn: String,
+    /** SAR book value. */
+    val balance: String,
+    /** Currency the box holds and how much of it (e.g. 100 USD). */
+    val currency: Currency = Currency.SAR,
+    val amount: String? = null,
+    val icon: String? = null,
+) {
+    /** "100 $" for a dollar box, "380 ر.س" otherwise. */
+    val shown: String get() = Money.plain(Money.parse(amount ?: balance), currency)
+}
 
 @Serializable
 data class Dashboard(

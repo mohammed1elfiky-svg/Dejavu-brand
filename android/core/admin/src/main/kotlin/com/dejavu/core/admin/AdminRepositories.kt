@@ -95,8 +95,9 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
             }
     }
 
-    suspend fun login(email: String, password: String): Result<StaffProfile> =
-        apiCall { api.login(StaffLoginRequest(email.trim().lowercase(), password)) }.map { auth ->
+    /** [login]: the employee's mobile number (or username). */
+    suspend fun login(login: String, password: String): Result<StaffProfile> =
+        apiCall { api.login(StaffLoginRequest(login.trim().lowercase().replace(" ", ""), password)) }.map { auth ->
             tokens.save(Tokens(auth.accessToken, auth.refreshToken))
             _state.value = StaffSession.LoggedIn(auth.user)
             auth.user
@@ -312,6 +313,10 @@ class FinanceRepository(private val api: AdminApi) {
     suspend fun customerReceipt(id: String, currency: Currency, amount: String, cashBoxId: String? = null, note: String? = null) =
         apiCall { api.customerReceipt(id, CustomerReceiptRequest(currency, amount.trim(), cashBoxId, note?.ifBlank { null })) }
 
+    /** Balance from before the system: [owes] = the customer owes the store, else the store holds their money. */
+    suspend fun openingBalance(id: String, currency: Currency, amount: String, owes: Boolean, note: String? = null) =
+        apiCall { api.openingBalance(id, OpeningBalanceRequest(currency, amount.trim(), if (owes) "OWES" else "CREDIT", note?.trim()?.ifBlank { null })) }
+
     // ---- currencies
 
     /** Every currency (settings screen); registers their names and decimals for display. */
@@ -355,6 +360,12 @@ class PosRepository(private val api: AdminApi) {
 
     /** Return (refund to the drawer or the account) or exchange for other pieces. */
     suspend fun returnOrExchange(request: PosReturnRequest) = apiCall { api.posReturn(request) }
+
+    /** Return or exchange without the invoice: returned pieces picked by hand. */
+    suspend fun returnWithoutInvoice(request: FreeReturnRequest) = apiCall { api.posFreeReturn(request) }
+
+    /** New app orders and top-up requests since [since] (ISO time); polled for alerts. */
+    suspend fun alerts(since: String? = null) = apiCall { api.alerts(since) }
     suspend fun shift() = apiCall { api.shift() }
     suspend fun quickCustomer(name: String, phone: String) = apiCall { api.quickCustomer(QuickCustomerRequest(name.trim(), phone.trim())) }
 }
@@ -364,14 +375,25 @@ class TreasuryRepository(private val api: AdminApi) {
     suspend fun mine() = apiCall { api.myBoxes() }
     suspend fun all(kind: CashBoxKind? = null, currency: Currency? = null) = apiCall { api.allBoxes(kind?.name, currency?.code) }
     suspend fun safes() = apiCall { api.safes() }
-    suspend fun create(name: String, kind: CashBoxKind, currency: Currency) = apiCall { api.createBox(CreateBoxRequest(name.trim(), kind, currency)) }
-    suspend fun update(id: String, name: String? = null, isActive: Boolean? = null) = apiCall { api.updateBox(id, UpdateBoxRequest(name, isActive)) }
+    suspend fun create(name: String, kind: CashBoxKind, currency: Currency, icon: String? = null, imageUrl: String? = null) =
+        apiCall { api.createBox(CreateBoxRequest(name.trim(), kind, currency, icon?.ifBlank { null }, imageUrl?.ifBlank { null })) }
+
+    /** [icon] / [imageUrl]: null keeps them, "" removes them. */
+    suspend fun update(id: String, name: String? = null, isActive: Boolean? = null, icon: String? = null, imageUrl: String? = null) =
+        apiCall { api.updateBox(id, UpdateBoxRequest(name, isActive, icon, imageUrl)) }
     suspend fun entries(id: String, page: Int = 1) = apiCall { api.boxEntries(id, page) }
 
     suspend fun transfer(fromBoxId: String, toBoxId: String, amount: String, toAmount: String? = null, note: String? = null) =
         apiCall { api.transfer(TransferRequest(fromBoxId, toBoxId, amount.trim(), toAmount?.trim()?.ifBlank { null }, note?.ifBlank { null })) }
 
     suspend fun transfers(exchangesOnly: Boolean = false, page: Int = 1) = apiCall { api.transfers(exchangesOnly.takeIf { it }, page) }
+
+    /** Cancels a transfer or exchange (reversed in the books). */
+    suspend fun cancelTransfer(id: String, reason: String? = null) = apiCall { api.cancelTransfer(id, CancelTransferRequest(reason?.trim()?.ifBlank { null })) }
+
+    /** Corrects a transfer or exchange: the old one is cancelled and this one recorded. */
+    suspend fun editTransfer(id: String, fromBoxId: String, toBoxId: String, amount: String, toAmount: String? = null, note: String? = null) =
+        apiCall { api.editTransfer(id, TransferRequest(fromBoxId, toBoxId, amount.trim(), toAmount?.trim()?.ifBlank { null }, note?.ifBlank { null })) }
 }
 
 /** Wallet top-up requests and the store bank accounts shown to customers. */

@@ -1,6 +1,7 @@
 package com.dejavu.customer
 
 import android.content.Context
+import androidx.core.content.edit
 import com.dejavu.core.data.AddressRepository
 import com.dejavu.core.data.CartRepository
 import com.dejavu.core.data.CatalogRepository
@@ -11,13 +12,16 @@ import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
 import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.network.ApiClient
+import com.dejavu.core.ui.background.BackgroundChecks
 import com.dejavu.core.ui.push.Push
 import com.dejavu.core.ui.push.PushConfig
+import com.dejavu.core.ui.storage.CredentialsStore
 import com.dejavu.core.ui.storage.SecureTokenStore
 import com.dejavu.core.ui.storage.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
@@ -27,6 +31,9 @@ import kotlinx.coroutines.launch
 class AppContainer(private val context: Context) {
     val settings = SettingsStore(context, BuildConfig.API_BASE_URL)
     private val tokens = SecureTokenStore(context)
+
+    /** "Remember me" on the login screen; kept across sign-outs. */
+    val savedLogin = CredentialsStore(context, "customer")
     private lateinit var sessionRef: SessionRepository
 
     private val api = ApiClient.create(
@@ -53,6 +60,15 @@ class AppContainer(private val context: Context) {
         PushConfig(BuildConfig.FIREBASE_APP_ID, BuildConfig.FIREBASE_API_KEY, BuildConfig.FIREBASE_PROJECT_ID, BuildConfig.FIREBASE_SENDER_ID),
     )
     private var pushToken: String? = null
+    private val inboxPrefs = context.getSharedPreferences("customer_inbox_mode", Context.MODE_PRIVATE)
+
+    /**
+     * Notifications come by polling the inbox unless Firebase push works end to end:
+     * configured in this build AND sending from the server (the device registration says so).
+     */
+    @Volatile
+    var inboxByPolling: Boolean = !pushEnabled || !inboxPrefs.getBoolean(SERVER_PUSH, false)
+        private set
 
     private val _openOrder = MutableStateFlow<String?>(null)
 
@@ -94,9 +110,15 @@ class AppContainer(private val context: Context) {
     }
 
     fun start() {
-        if (pushEnabled) {
-            Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")
-            Push.ensureChannel(context, CHANNEL_OFFERS, "العروض والمنتجات الجديدة")
+        // Channels are needed for push and for the background inbox checks alike.
+        ensureChannels(context)
+        // Without working push: poll the notification inbox instead (the checks skip themselves otherwise).
+        BackgroundChecks.schedule(context, InboxWorker.WORK_NAME, InboxWorker::class.java)
+        appScope.launch {
+            while (true) {
+                if (inboxByPolling) InboxChecker.check(context, this@AppContainer)
+                delay(60_000)
+            }
         }
         appScope.launch { session.restore() }
         appScope.launch { currencies.refresh() }
@@ -121,7 +143,12 @@ class AppContainer(private val context: Context) {
         appScope.launch {
             val t = token ?: Push.token() ?: return@launch
             pushToken = t
-            if (session.isLoggedIn) notifications.registerDevice(t, BuildConfig.VERSION_NAME)
+            if (session.isLoggedIn) {
+                notifications.registerDevice(t, BuildConfig.VERSION_NAME).onSuccess { r ->
+                    inboxByPolling = !r.pushEnabled
+                    inboxPrefs.edit { putBoolean(SERVER_PUSH, r.pushEnabled) }
+                }
+            }
         }
     }
 
@@ -134,5 +161,11 @@ class AppContainer(private val context: Context) {
     companion object {
         const val CHANNEL_ORDERS = "orders"
         const val CHANNEL_OFFERS = "offers"
+        private const val SERVER_PUSH = "server_push"
+
+        fun ensureChannels(context: Context) {
+            Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")
+            Push.ensureChannel(context, CHANNEL_OFFERS, "العروض والمنتجات الجديدة")
+        }
     }
 }

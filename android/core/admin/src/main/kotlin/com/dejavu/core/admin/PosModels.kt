@@ -171,6 +171,9 @@ data class CashBox(
     val balance: String = "0",
     /** What that money is carried at in the books (SAR). */
     val bookValue: String = "0",
+    /** Emoji shown on the box (e.g. 💵 🏦) and/or an uploaded picture. */
+    val icon: String? = null,
+    val imageUrl: String? = null,
 ) {
     val shownBalance: String get() = Money.plain(Money.parse(balance), currency)
 }
@@ -186,10 +189,14 @@ data class CashBoxEntry(
 )
 
 @Serializable
-data class CreateBoxRequest(val name: String, val kind: CashBoxKind, val currency: Currency)
+data class CreateBoxRequest(val name: String, val kind: CashBoxKind, val currency: Currency, val icon: String? = null, val imageUrl: String? = null)
+
+/** null leaves a field as it is; icon / imageUrl "" removes them. */
+@Serializable
+data class UpdateBoxRequest(val name: String? = null, val isActive: Boolean? = null, val icon: String? = null, val imageUrl: String? = null)
 
 @Serializable
-data class UpdateBoxRequest(val name: String? = null, val isActive: Boolean? = null)
+data class CancelTransferRequest(val reason: String? = null)
 
 @Serializable
 data class TransferRequest(
@@ -218,9 +225,18 @@ data class CashTransfer(
     val createdAt: String,
     val fromBox: BoxRef,
     val toBox: BoxRef,
+    /** Cancelled transfers were reversed in the books (an edit cancels and records a new one). */
+    val cancelledAt: String? = null,
+    val cancelReason: String? = null,
+    val replacedById: String? = null,
 ) {
     val isExchange: Boolean get() = fromBox.currency != toBox.currency
+    val isCancelled: Boolean get() = cancelledAt != null
 }
+
+/** A balance from before the system: OWES = the customer owes the store, CREDIT = the store holds their money. */
+@Serializable
+data class OpeningBalanceRequest(val currency: Currency, val amount: String, val direction: String, val note: String? = null)
 
 // ------------------------------------------------------- customer accounts ---
 
@@ -359,8 +375,9 @@ data class PermissionDef(val id: String, val key: String, val module: String, va
 data class StaffUser(
     val id: String,
     val name: String,
-    val email: String,
+    val email: String? = null,
     val username: String? = null,
+    /** Mobile number the employee signs in with. */
     val phone: String? = null,
     val status: String = "ACTIVE",
     val lastLoginAt: String? = null,
@@ -379,11 +396,11 @@ data class StaffUser(
 @Serializable
 data class CreateStaffRequest(
     val name: String,
-    val email: String,
+    /** Mobile number the employee signs in with. */
+    val phone: String?,
     val password: String,
     val roleIds: List<String> = emptyList(),
     val username: String? = null,
-    val phone: String? = null,
     val permissions: List<String>? = null,
     val cashBoxIds: List<String>? = null,
 )
@@ -512,6 +529,56 @@ data class PosReturnResult(
     val leftover: String = "0",
 )
 
+/** A returned piece picked by hand (no invoice). */
+@Serializable
+data class FreeReturnItem(
+    val variantId: String,
+    val quantity: Int,
+    /** Value per piece in the return's currency; null = the current shelf price. */
+    val unitPrice: String? = null,
+    val restock: Boolean = true,
+)
+
+/** Return or exchange without the invoice. */
+@Serializable
+data class FreeReturnRequest(
+    val items: List<FreeReturnItem>,
+    /** Null = walk-in customer. */
+    val customerId: String? = null,
+    val currency: Currency? = null,
+    val reason: String? = null,
+    /** CASH (from the drawer) or ACCOUNT (kept as the customer's credit). */
+    val refundTo: String = "CASH",
+    val refundCurrency: Currency? = null,
+    val newItems: List<PosItem>? = null,
+    val payments: List<PosTender>? = null,
+    val paymentMethod: String? = null,
+    val reference: String? = null,
+    val changeCurrency: Currency? = null,
+)
+
+@Serializable
+data class FreeReturnRefund(val amount: String = "0", val currencyAmount: String = "0")
+
+@Serializable
+data class FreeReturnResult(
+    val number: String,
+    val refunded: FreeReturnRefund = FreeReturnRefund(),
+    val sale: PosReceipt? = null,
+    /** Value not used by new pieces (paid back, or kept as credit). */
+    val leftover: String = "0",
+    val keptAsCredit: String = "0",
+)
+
+// --------------------------------------------------------------- alerts ---
+
+/** Something staff should know about (polled, so it works without Firebase). */
+@Serializable
+data class StaffAlert(val id: String, val kind: String, val title: String, val body: String, val at: String, val data: Map<String, String> = emptyMap())
+
+@Serializable
+data class StaffAlerts(val now: String, val alerts: List<StaffAlert> = emptyList(), val pendingTopUps: Int = 0)
+
 // ------------------------------------------------------ inventory value ---
 
 @Serializable
@@ -542,6 +609,8 @@ data class QuickPurchaseItem(val variantId: String, val quantity: Int, val unitC
 data class QuickPurchaseRequest(
     val supplierId: String,
     val items: List<QuickPurchaseItem>,
+    /** Items not in the app yet: numbered (SKU + barcode) now, on sale once received. */
+    val newProducts: List<LocalNewProduct> = emptyList(),
     val supplierInvoiceNo: String? = null,
     val shippingCost: String? = null,
     val note: String? = null,
@@ -552,6 +621,23 @@ data class QuickPurchaseRequest(
     /** SAR paid now; the whole invoice when null. */
     val payAmount: String? = null,
     val payAccountId: String? = null,
+)
+
+@Serializable
+data class LocalNewVariant(val size: String? = null, val color: String? = null, val colorHex: String? = null, val barcode: String? = null, val quantity: Int)
+
+/** A product bought for the first time. */
+@Serializable
+data class LocalNewProduct(
+    val categoryId: String,
+    val nameAr: String,
+    /** Selling price, SAR. */
+    val basePrice: String,
+    /** Purchase price per piece, SAR. */
+    val unitCost: String,
+    val variants: List<LocalNewVariant>,
+    val imageUrl: String? = null,
+    val brandId: String? = null,
 )
 
 @Serializable

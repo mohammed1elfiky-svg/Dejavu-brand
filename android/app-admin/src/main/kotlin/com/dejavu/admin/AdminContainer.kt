@@ -23,6 +23,9 @@ import com.dejavu.core.ui.storage.SecureTokenStore
 import com.dejavu.core.ui.storage.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import com.dejavu.admin.print.PrinterStore
+import com.dejavu.core.ui.storage.CredentialsStore
+import com.dejavu.core.ui.background.BackgroundChecks
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +63,9 @@ class AdminContainer(private val context: Context) {
     /** Receipt and barcode-label printers of this device. */
     val printers = PrinterStore(context)
 
+    /** "Remember me" on the login screen (kept after signing out). */
+    val savedLogin = CredentialsStore(context, "staff")
+
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** Whether Firebase was configured at build time. */
@@ -68,6 +74,15 @@ class AdminContainer(private val context: Context) {
         PushConfig(BuildConfig.FIREBASE_APP_ID, BuildConfig.FIREBASE_API_KEY, BuildConfig.FIREBASE_PROJECT_ID, BuildConfig.FIREBASE_SENDER_ID),
     )
     private var pushToken: String? = null
+    private val alertPrefs = context.getSharedPreferences("staff_alerts_mode", Context.MODE_PRIVATE)
+
+    /**
+     * Alerts come by polling unless Firebase push works end to end: configured in this
+     * build AND sending from the server (the device registration says so).
+     */
+    @Volatile
+    var alertsByPolling: Boolean = !pushEnabled || !alertPrefs.getBoolean(SERVER_PUSH, false)
+        private set
 
     private val _openOrderId = MutableStateFlow<String?>(null)
 
@@ -82,9 +97,33 @@ class AdminContainer(private val context: Context) {
         _openOrderId.value = null
     }
 
+    private val _openTopUpId = MutableStateFlow<String?>(null)
+
+    /** Top-up request to show after an alert tap. */
+    val openTopUpId = _openTopUpId.asStateFlow()
+
+    fun requestTopUp(id: String?) {
+        if (!id.isNullOrBlank()) _openTopUpId.value = id
+    }
+
+    fun topUpOpened() {
+        _openTopUpId.value = null
+    }
+
+    /** Whether this device holds a staff session (also outside the UI, e.g. in workers). */
+    val hasSession: Boolean get() = tokens.current() != null
+
     fun start() {
-        if (pushEnabled) Push.ensureChannel(context, CHANNEL_STAFF, "طلبات جديدة")
+        Push.ensureChannel(context, CHANNEL_STAFF, "طلبات جديدة")
         appScope.launch { session.restore() }
+        // Without working push: poll for new orders and top-up requests instead.
+        BackgroundChecks.schedule(context, "staff-alerts", StaffAlertsWorker::class.java)
+        appScope.launch {
+            while (true) {
+                if (alertsByPolling) StaffAlertsChecker.check(context, this@AdminContainer)
+                delay(60_000)
+            }
+        }
         appScope.launch {
             session.state.distinctUntilChangedBy { it is StaffSession.LoggedIn }.collect {
                 if (it is StaffSession.LoggedIn) registerPush()
@@ -97,16 +136,23 @@ class AdminContainer(private val context: Context) {
         appScope.launch {
             val t = token ?: Push.token() ?: return@launch
             pushToken = t
-            if (session.state.value is StaffSession.LoggedIn) session.registerDevice(t, BuildConfig.VERSION_NAME)
+            if (session.state.value is StaffSession.LoggedIn) {
+                session.registerDevice(t, BuildConfig.VERSION_NAME).onSuccess { r ->
+                    alertsByPolling = !r.pushEnabled
+                    alertPrefs.edit().putBoolean(SERVER_PUSH, r.pushEnabled).apply()
+                }
+            }
         }
     }
 
     suspend fun logout() {
         pushToken?.let { session.unregisterDevice(it) }
         session.logout()
+        StaffAlertsChecker.reset(context)
     }
 
     companion object {
         const val CHANNEL_STAFF = "staff"
+        private const val SERVER_PUSH = "server_push"
     }
 }

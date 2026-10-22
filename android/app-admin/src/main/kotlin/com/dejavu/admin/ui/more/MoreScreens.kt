@@ -137,7 +137,7 @@ fun MoreScreen(session: StaffSession.LoggedIn, navigate: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (profile != null) {
-                item(key = "profile", span = { GridItemSpan(maxLineSpan) }) { ProfileCard(profile.name, profile.email, profile.roles.map { it.name }) }
+                item(key = "profile", span = { GridItemSpan(maxLineSpan) }) { ProfileCard(profile.name, profile.phone ?: profile.email.orEmpty(), profile.roles.map { it.name }) }
             }
             sections.forEach { section ->
                 val inSection = entries.filter { it.section == section }

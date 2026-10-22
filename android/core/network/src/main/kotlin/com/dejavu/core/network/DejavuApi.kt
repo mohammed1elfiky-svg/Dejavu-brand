@@ -1,6 +1,7 @@
 package com.dejavu.core.network
 
 import com.dejavu.core.model.Brand
+import com.dejavu.core.model.UpdateTopUpRequest
 import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
@@ -162,6 +163,12 @@ interface DejavuApi {
 
     @POST("store/me/wallet/top-ups")
     suspend fun requestTopUp(@Body body: TopUpRequest): TopUp
+
+    @PATCH("store/me/wallet/top-ups/{id}")
+    suspend fun updateTopUp(@Path("id") id: String, @Body body: UpdateTopUpRequest): TopUp
+
+    @DELETE("store/me/wallet/top-ups/{id}")
+    suspend fun deleteTopUp(@Path("id") id: String): Response<Unit>
 
     /** Deposit-slip photo (private to the customer and staff). */
     @Multipart

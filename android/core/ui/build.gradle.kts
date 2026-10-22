@@ -31,6 +31,8 @@ dependencies {
     api(libs.coil.compose)
     api(libs.coil.network.okhttp)
     api(libs.androidx.navigation.compose)
+    // Background checks for new notifications when Firebase push is not set up.
+    api(libs.androidx.work.runtime)
 
     // Push notifications (optional at run time: only active when Firebase is configured).
     api(platform(libs.firebase.bom))

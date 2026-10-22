@@ -117,8 +117,9 @@ private fun staffError(t: Throwable): String {
         "cannot deactivate your own account" in raw -> "لا يمكنك إيقاف حسابك أنت"
         "At least one active admin must remain" in raw -> "يجب أن يبقى مدير نظام نشط واحد على الأقل"
         "Some cash boxes do not exist" in raw -> "بعض الصناديق المختارة لم تعد موجودة"
-        "Unique constraint" in raw || ("email" in raw && "exist" in raw) -> "البريد الإلكتروني مستخدم لموظف آخر"
-        "email must be an email" in raw -> "البريد الإلكتروني غير صحيح"
+        "mobile number is already used" in raw -> "رقم الجوال مستخدم لموظف آخر"
+        "phone must be a valid" in raw -> "رقم الجوال غير صحيح (يمني أو سعودي أو مصري)"
+        "Enter the mobile number" in raw -> "اكتب رقم الجوال الذي يسجّل به الموظف الدخول"
         "password must be longer" in raw -> "كلمة المرور 8 أحرف على الأقل"
         else -> t.userMessage()
     }
@@ -217,7 +218,7 @@ private fun StaffCard(u: StaffUser, onClick: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text(u.name, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        listOfNotNull(u.username, u.email).joinToString(" · "),
+                        listOfNotNull(u.phone, u.username).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = Lux.InkSoft,
                     )
@@ -248,7 +249,6 @@ data class StaffEditData(val user: StaffUser?, val roles: List<StaffRole>, val b
 /** What the form holds when saving. */
 data class StaffForm(
     val name: String,
-    val email: String,
     val username: String,
     val phone: String,
     val password: String,
@@ -307,11 +307,10 @@ class StaffEditViewModel(
                 val r = repo.create(
                     CreateStaffRequest(
                         name = form.name.trim(),
-                        email = form.email.trim(),
+                        phone = form.phone.trim().ifBlank { null },
                         password = form.password,
                         roleIds = form.roleIds.toList(),
                         username = form.username.trim().lowercase().ifBlank { null },
-                        phone = form.phone.trim().ifBlank { null },
                         permissions = form.permissions.toList().takeIf { it.isNotEmpty() },
                         cashBoxIds = form.boxIds.toList().takeIf { it.isNotEmpty() },
                     ),
@@ -383,7 +382,6 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
     val u = data.user
     val isNew = u == null
     var name by remember(u?.id) { mutableStateOf(u?.name.orEmpty()) }
-    var email by remember(u?.id) { mutableStateOf(u?.email.orEmpty()) }
     var username by remember(u?.id) { mutableStateOf(u?.username.orEmpty()) }
     var phone by remember(u?.id) { mutableStateOf(u?.phone.orEmpty()) }
     var password by remember(u?.id) { mutableStateOf("") }
@@ -395,9 +393,11 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
     val fromRoles = data.roles.filter { it.id in roleIds }.flatMap { it.permissions }.toSet()
     val usernameOk = username.isBlank() || usernamePattern.matches(username.trim().lowercase())
     val passwordOk = if (isNew) password.length >= 8 else password.isEmpty() || password.length >= 8
-    val emailOk = !isNew || Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").matches(email.trim())
+    // Yemeni (7xxxxxxxx), Saudi (05xxxxxxxx) or Egyptian (01xxxxxxxxx) mobile, optionally with the country code.
+    val phoneOk = phone.isBlank() || Regex("^(\\+967|00967)?7[01378]\\d{7}$|^(\\+966|0)5\\d{8}$|^(\\+20|0)1[0125]\\d{8}$").matches(phone.trim())
+    val canSignIn = phone.isNotBlank() || username.isNotBlank() || !isNew
     val hasAccess = roleIds.isNotEmpty() || perms.isNotEmpty()
-    val valid = name.trim().length >= 2 && emailOk && usernameOk && passwordOk && (!isNew || hasAccess)
+    val valid = name.trim().length >= 2 && phoneOk && canSignIn && usernameOk && passwordOk && (!isNew || hasAccess)
 
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
@@ -414,23 +414,18 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
                     singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
-                    value = email, onValueChange = { email = it.take(150) }, label = { Text("البريد الإلكتروني") },
-                    enabled = isNew, isError = isNew && email.isNotBlank() && !emailOk,
-                    supportingText = if (!isNew) ({ Text("لا يمكن تغيير البريد الإلكتروني") }) else null,
-                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    value = phone, onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' }.take(20) },
+                    label = { Text("رقم الجوال") },
+                    isError = !phoneOk,
+                    supportingText = { Text(if (!phoneOk) "رقم غير صحيح" else "يسجّل به الموظف الدخول مع كلمة المرور") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = username, onValueChange = { username = it.take(40) }, label = { Text("اسم المستخدم (اختياري)") },
                     isError = !usernameOk,
-                    supportingText = { Text("يسجّل به الدخول بدل البريد: أحرف إنجليزية صغيرة وأرقام و . _ -") },
+                    supportingText = { Text("بديل لرقم الجوال عند الدخول: أحرف إنجليزية صغيرة وأرقام و . _ -") },
                     singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = phone, onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' }.take(20) },
-                    label = { Text("رقم الجوال (اختياري)") },
-                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -566,7 +561,7 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
         )
         Button(
             onClick = {
-                onSave(StaffForm(name, email, username, phone, password, active, roleIds, perms, boxIds))
+                onSave(StaffForm(name, username, phone, password, active, roleIds, perms, boxIds))
             },
             enabled = valid && !busy,
             modifier = Modifier.fillMaxWidth().height(52.dp),

@@ -139,7 +139,8 @@ fun DejavuNavHost() {
         nav.navigate(Routes.WALLET) { launchSingleTop = true }
         container.walletOpened()
     }
-    if (session is SessionState.LoggedIn && container.pushEnabled) AskNotificationPermission()
+    // Needed both for push and for the background inbox checks used without Firebase.
+    if (session is SessionState.LoggedIn) AskNotificationPermission()
 
     Scaffold(
         // Screens draw their own top bars; here only the bottom inset is handled.

@@ -2,6 +2,12 @@
 
 package com.dejavu.admin.ui
 
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
+import com.dejavu.core.ui.storage.SavedLogin
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material3.Checkbox
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -201,7 +207,15 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
         if (session.can(Perm.ORDERS_READ)) nav.navigate(R.of(R.ORDER, id)) { launchSingleTop = true }
         container.orderOpened()
     }
-    if (container.pushEnabled) AskNotificationPermission()
+    // A tapped "new top-up request" alert.
+    val openTopUpId by container.openTopUpId.collectAsStateWithLifecycle()
+    LaunchedEffect(openTopUpId) {
+        val id = openTopUpId ?: return@LaunchedEffect
+        if (session.can(Perm.WALLET_MANAGE)) nav.navigate(R.of(R.TOP_UP, id)) { launchSingleTop = true }
+        container.topUpOpened()
+    }
+    // Alerts arrive by Firebase push or, without it, by polling; both need the permission.
+    AskNotificationPermission()
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -397,8 +411,11 @@ private fun RestoringScreen() {
 private fun LoginScreen() {
     val container = adminContainer()
     val scope = rememberCoroutineScope()
-    var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    val saved = remember { container.savedLogin.load() }
+    var login by rememberSaveable { mutableStateOf(saved?.login.orEmpty()) }
+    var password by rememberSaveable { mutableStateOf(saved?.password.orEmpty()) }
+    var remember by rememberSaveable { mutableStateOf(true) }
+    var showPassword by rememberSaveable { mutableStateOf(false) }
     var busy by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var showServer by rememberSaveable { mutableStateOf(false) }
@@ -415,26 +432,35 @@ private fun LoginScreen() {
         Text("Dejavu", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
         Text("لوحة الإدارة — دخول الموظفين", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
-            value = email, onValueChange = { email = it; error = null }, label = { Text("البريد الإلكتروني أو اسم المستخدم") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth(),
+            value = login, onValueChange = { login = it; error = null }, label = { Text("رقم الجوال") }, singleLine = true,
+            supportingText = { Text("أو اسم المستخدم") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = password, onValueChange = { password = it; error = null }, label = { Text("كلمة المرور") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            trailingIcon = { TextButton(onClick = { showPassword = !showPassword }) { Text(if (showPassword) "إخفاء" else "إظهار") } },
             modifier = Modifier.fillMaxWidth(),
         )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { remember = !remember }) {
+            Checkbox(checked = remember, onCheckedChange = { remember = it })
+            Text("تذكرني (حفظ رقم الجوال وكلمة المرور على هذا الجهاز)")
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
             onClick = {
                 busy = true
                 scope.launch {
-                    container.session.login(email, password).onFailure {
-                        error = if ((it as? ApiException)?.isUnauthorized == true) "بيانات الدخول أو كلمة المرور غير صحيحة" else it.userMessage()
-                    }
+                    container.session.login(login, password)
+                        .onSuccess { container.savedLogin.save(if (remember) SavedLogin(login.trim(), password) else null) }
+                        .onFailure {
+                            error = if ((it as? ApiException)?.isUnauthorized == true) "رقم الجوال أو كلمة المرور غير صحيحة" else it.userMessage()
+                        }
                     busy = false
                 }
             },
-            enabled = !busy && email.isNotBlank() && password.isNotEmpty(),
+            enabled = !busy && login.isNotBlank() && password.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
         ) { if (busy) CircularProgressIndicator(strokeWidth = 2.dp) else Text("دخول") }
         TextButton(onClick = { showServer = true }) { Text("إعدادات الخادم: ${container.settings.baseUrl}") }

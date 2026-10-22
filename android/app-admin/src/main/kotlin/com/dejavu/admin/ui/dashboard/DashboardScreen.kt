@@ -94,7 +94,11 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
                 item {
                     InfoCard {
                         Text("النقدية والبنوك", style = MaterialTheme.typography.titleSmall)
-                        d.cashAndBank.forEach { SummaryRow(it.nameAr, Money.format(it.balance)) }
+                        // Each box in its own currency (100 $), with the riyal value for foreign ones.
+                        d.cashAndBank.forEach {
+                            val label = listOfNotNull(it.icon, it.nameAr).joinToString(" ")
+                            SummaryRow(label, if (it.currency.isBase) it.shown else "${it.shown}  (≈ ${Money.format(it.balance)})")
+                        }
                     }
                 }
                 item {

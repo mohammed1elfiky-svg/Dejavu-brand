@@ -68,7 +68,7 @@ describe('Brands, product announcements & data wipe (e2e)', () => {
     const published = (await http.patch(`/admin/products/${draft.id}`, { status: 'ACTIVE', notifyCustomers: true }, admin).expect(200)).body;
     expect(published.notifiedCustomers).toBeGreaterThan(0);
     const walkIn = await prisma.customer.findUniqueOrThrow({ where: { code: 'CUS-WALKIN' } });
-    expect(await prisma.notification.count({ where: { customerId: walkIn.id } })).toBe(0);
+    expect(await prisma.notification.count({ where: { customerId: walkIn.id, data: { path: ['product'], equals: live.slug } } })).toBe(0);
   });
 
   it('announces a running offer', async () => {

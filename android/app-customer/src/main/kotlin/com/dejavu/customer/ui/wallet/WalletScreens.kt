@@ -34,6 +34,17 @@ import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import com.dejavu.core.ui.theme.Button
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.core.ui.theme.glass
+import com.dejavu.customer.ui.components.GlassBottomPanel
+import com.dejavu.customer.ui.components.goldChipColors
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,7 +95,7 @@ import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
-import com.dejavu.core.ui.SectionTitle
+import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.formatDateTime
 import com.dejavu.core.ui.media.rememberImagePicker
@@ -182,12 +193,7 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
                         )
                     }
                 } else {
-                    items(data.wallet.entries, key = { "e" + it.id }) { e ->
-                        Column {
-                            EntryRow(e)
-                            HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-                        }
-                    }
+                    items(data.wallet.entries, key = { "e" + it.id }) { e -> EntryRow(e) }
                 }
             }
         }
@@ -197,34 +203,43 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
 @Composable
 private fun BalanceCard(b: WalletBalance) {
     val balance = Money.parse(b.balance)
-    Card(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    // Liquid-gold highlight card, like the admin app's headline tiles.
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+            .glass(Liquid.CardShape, elevation = 16.dp)
+            .background(Liquid.GoldBrush)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Filled.AccountBox, contentDescription = null)
-                Text("الرصيد المتاح · ${b.currency.nameAr}", style = MaterialTheme.typography.labelLarge)
-            }
-            Text(Money.plain(balance.max(BigDecimal.ZERO), b.currency), style = MaterialTheme.typography.headlineMedium)
-            val owed = Money.parse(b.owed)
-            if (owed.signum() > 0) {
-                Text("مستحق عليك: ${Money.plain(owed, b.currency)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.AccountBox, contentDescription = null, tint = Color.White)
+            Text("الرصيد المتاح · ${b.currency.nameAr}", style = MaterialTheme.typography.labelLarge, color = Color.White)
+        }
+        Text(
+            Money.plain(balance.max(BigDecimal.ZERO), b.currency),
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+        )
+        val owed = Money.parse(b.owed)
+        if (owed.signum() > 0) {
+            Text(
+                "مستحق عليك: ${Money.plain(owed, b.currency)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }
 
 @Composable
 private fun TopUpRow(t: TopUp) {
-    Card(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), elevation = 10.dp, contentPadding = 14.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(Money.plain(Money.parse(t.amount), t.currency), style = MaterialTheme.typography.titleMedium)
+                    Text(Money.plain(Money.parse(t.amount), t.currency), style = MaterialTheme.typography.titleMedium, color = Liquid.GoldDeep)
                     Text("${t.number} · ${formatDateTime(t.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 StatusChip(t.status.label, t.status.color())
@@ -241,17 +256,19 @@ private fun TopUpRow(t: TopUp) {
 @Composable
 private fun EntryRow(e: WalletEntry) {
     val amount = Money.parse(e.amount)
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(e.note, style = MaterialTheme.typography.bodyMedium)
-            Text(formatDateTime(e.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), elevation = 8.dp, contentPadding = 14.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(e.note, style = MaterialTheme.typography.bodyMedium)
+                Text(formatDateTime(e.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            val sign = if (amount.signum() >= 0) "+" else "−"
+            Text(
+                "$sign${Money.plain(amount.abs(), e.currency)}",
+                style = MaterialTheme.typography.titleSmall,
+                color = if (amount.signum() >= 0) Success else MaterialTheme.colorScheme.error,
+            )
         }
-        val sign = if (amount.signum() >= 0) "+" else "−"
-        Text(
-            "$sign${Money.plain(amount.abs(), e.currency)}",
-            style = MaterialTheme.typography.titleSmall,
-            color = if (amount.signum() >= 0) Success else MaterialTheme.colorScheme.error,
-        )
     }
 }
 
@@ -399,9 +416,9 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
         topBar = { BackTopBar("شحن الرصيد", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            Column(Modifier.padding(16.dp)) {
+            GlassBottomPanel {
                 Button(onClick = vm::submit, enabled = !form.submitting, modifier = Modifier.fillMaxWidth()) {
-                    if (form.submitting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("إرسال طلب الشحن")
+                    if (form.submitting) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("إرسال طلب الشحن")
                 }
             }
         },
@@ -413,18 +430,19 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                 Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("1. اختر العملة", style = MaterialTheme.typography.titleSmall)
+                Text("1. اختر العملة", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     choices.forEach { c ->
                         FilterChip(
                             selected = c == form.currency,
                             onClick = { vm.chooseCurrency(c, accounts) },
                             label = { Text("${c.nameAr} (${c.symbol})") },
+                            colors = goldChipColors(),
                         )
                     }
                 }
 
-                Text("2. حوّل المبلغ إلى أحد حساباتنا", style = MaterialTheme.typography.titleSmall)
+                Text("2. حوّل المبلغ إلى أحد حساباتنا", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 val forCurrency = accounts.filter { it.currency == form.currency }
                 if (forCurrency.isEmpty()) {
                     Text(
@@ -439,7 +457,7 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                     }
                 }
 
-                Text("3. بيانات التحويل", style = MaterialTheme.typography.titleSmall)
+                Text("3. بيانات التحويل", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 val amountError = if (form.showErrors) vm.amountError(form) else null
                 OutlinedTextField(
                     value = form.amount,
@@ -466,7 +484,7 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                Text("4. صورة إيصال الإيداع", style = MaterialTheme.typography.titleSmall)
+                Text("4. صورة إيصال الإيداع", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 val slip = receipt
                 if (slip != null) {
                     ReceiptPreview(slip, onRemove = { vm.setReceipt(null) })
@@ -490,14 +508,20 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
 
 @Composable
 private fun BankAccountCard(a: StoreBankAccount, selected: Boolean, onSelect: () -> Unit, copy: (String, String) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().selectable(selected = selected, onClick = onSelect, role = Role.RadioButton),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-        ),
+    Box(
+        modifier = Modifier.fillMaxWidth()
+            .glass(Liquid.CardShape, elevation = if (selected) 14.dp else 8.dp)
+            .then(
+                if (selected) {
+                    Modifier.background(Liquid.GoldPale.copy(alpha = 0.35f)).border(1.5.dp, Liquid.Gold, Liquid.CardShape)
+                } else {
+                    Modifier
+                },
+            )
+            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton),
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RadioButton(selected = selected, onClick = null)
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Liquid.GoldDeep))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(a.bankName, style = MaterialTheme.typography.titleSmall)
                 Text("باسم: ${a.accountName}", style = MaterialTheme.typography.bodySmall)
@@ -519,20 +543,24 @@ private fun CopyLine(label: String, value: String, copy: (String, String) -> Uni
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.bodyMedium)
         }
-        TextButton(onClick = { copy(label, value) }) { Text("نسخ") }
+        TextButton(onClick = { copy(label, value) }) { Text("نسخ", color = Liquid.GoldDeep) }
     }
 }
 
 @Composable
 private fun ReceiptPreview(bytes: ByteArray, onRemove: () -> Unit) {
     val bitmap = remember(bytes) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+        Modifier.fillMaxWidth().glass(Liquid.CardShape, elevation = 8.dp).padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         if (bitmap != null) {
             Image(
                 bitmap = bitmap,
                 contentDescription = "صورة الإيصال",
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier.size(96.dp).clip(RoundedCornerShape(14.dp)),
             )
         }
         Column(Modifier.weight(1f)) {

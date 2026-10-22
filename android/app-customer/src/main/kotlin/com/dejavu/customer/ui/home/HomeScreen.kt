@@ -3,6 +3,7 @@
 package com.dejavu.customer.ui.home
 
 import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.Liquid
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,7 +52,7 @@ import com.dejavu.customer.ui.components.BrandAvatar
 import com.dejavu.customer.ui.components.CategoryAvatar
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.customer.ui.components.ProductCard
-import com.dejavu.core.ui.SectionTitle
+import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -109,7 +110,7 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             GlassTopBar(
-                title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall) },
+                title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall, color = Liquid.GoldDeep) },
                 actions = {
                     if (loggedIn is SessionState.LoggedIn) {
                         IconButton(onClick = openNotifications) {
@@ -137,7 +138,7 @@ fun HomeScreen(
                     )
                 }
                 item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(data.categories, key = { it.id }) { c ->
                             CategoryAvatar(c.nameAr, c.imageUrl) { openProducts(c.nameAr, c.slug, null, false) }
                         }
@@ -146,7 +147,7 @@ fun HomeScreen(
                 if (data.brands.isNotEmpty()) {
                     item { SectionTitle("الماركات") }
                     item {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(data.brands, key = { it.id }) { b -> BrandAvatar(b) { openBrand(b.name, b.slug) } }
                         }
                     }
@@ -164,7 +165,7 @@ fun HomeScreen(
 
 @Composable
 private fun ProductRow(products: List<StoreProduct>, openProduct: (String) -> Unit) {
-    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         items(products, key = { it.id }) { p ->
             Column(Modifier.width(160.dp)) { ProductCard(p, onClick = { openProduct(p.slug) }) }
         }

@@ -3,6 +3,11 @@
 package com.dejavu.customer.ui.orders
 
 import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.GoldBadge
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.customer.ui.components.GoldIconCircle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,7 +74,7 @@ import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.LoadContent
-import com.dejavu.core.ui.SectionTitle
+import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDate
@@ -127,14 +132,17 @@ fun OrdersScreen(openOrder: (String) -> Unit, login: () -> Unit, shop: () -> Uni
             } else {
                 LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(list, key = { it.id }) { o ->
-                        Card(onClick = { openOrder(o.number) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(o.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                    StatusChip(o.status.label, o.status.color())
+                        GlassCard(Modifier.fillMaxWidth(), onClick = { openOrder(o.number) }) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                GoldIconCircle(Icons.AutoMirrored.Filled.List)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(o.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                        StatusChip(o.status.label, o.status.color())
+                                    }
+                                    Text("${formatDate(o.placedAt)} · ${o.count?.items ?: 0} منتج", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(o.format(o.grandTotal), style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
                                 }
-                                Text("${formatDate(o.placedAt)} · ${o.count?.items ?: 0} منتج", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(o.format(o.grandTotal), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -206,8 +214,8 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (justPlaced) {
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = Success.copy(alpha = 0.1f))) {
-                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Success)
                                 Column {
                                     Text("تم استلام طلبك بنجاح", style = MaterialTheme.typography.titleSmall)
@@ -218,29 +226,29 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                     }
                 }
                 item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(formatDateTime(order.placedAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("${order.paymentMethod.label} · ${order.paymentStatus.label}", style = MaterialTheme.typography.bodySmall)
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(formatDateTime(order.placedAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${order.paymentMethod.label} · ${order.paymentStatus.label}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            StatusChip(order.status.label, order.status.color())
                         }
-                        StatusChip(order.status.label, order.status.color())
                     }
                 }
                 item { Timeline(order) }
                 order.shipments.firstOrNull()?.let { s ->
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text("الشحن مع ${s.carrier}", style = MaterialTheme.typography.titleSmall)
-                                s.trackingNumber?.let { Text("رقم التتبع: $it", style = MaterialTheme.typography.bodyMedium) }
-                            }
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Text("الشحن مع ${s.carrier}", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                            s.trackingNumber?.let { Text("رقم التتبع: $it", style = MaterialTheme.typography.bodyMedium) }
                         }
                     }
                 }
                 item { SectionTitle("المنتجات") }
                 items(order.items, key = { it.id }) { item ->
-                    Column(Modifier.fillMaxWidth()) {
-                        SummaryRow("${item.productName} × ${item.quantity}", order.format(item.lineTotal))
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
+                        SummaryRow("${item.productName} × ${item.quantity}", order.format(item.lineTotal), valueColor = Liquid.GoldDeep)
                         Text(
                             listOfNotNull(item.color, item.size?.let { "مقاس $it" }, if (item.returnedQty > 0) "مرتجع: ${item.returnedQty}" else null).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
@@ -249,22 +257,27 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                     }
                 }
                 item {
-                    HorizontalDivider()
-                    SummaryRow("المجموع", order.format(order.subtotal))
-                    if (!Money.isZero(order.discountTotal)) SummaryRow("الخصم" + (order.coupon?.let { " (${it.code})" } ?: ""), "- ${order.format(order.discountTotal)}", valueColor = Success)
-                    SummaryRow("الشحن", order.format(order.shippingFee))
-                    SummaryRow("الإجمالي", order.format(order.grandTotal), strong = true)
-                    if (order.currency != Currency.SAR) {
-                        Text(
-                            "سعر الصرف المثبّت في الفاتورة: 1 ر.س = ${Money.plain(Money.parse(order.exchangeRate), order.currency)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        SummaryRow("المجموع", order.format(order.subtotal))
+                        if (!Money.isZero(order.discountTotal)) SummaryRow("الخصم" + (order.coupon?.let { " (${it.code})" } ?: ""), "- ${order.format(order.discountTotal)}", valueColor = Success)
+                        SummaryRow("الشحن", order.format(order.shippingFee))
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Liquid.Gold.copy(alpha = 0.25f))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("الإجمالي", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            GoldBadge(order.format(order.grandTotal))
+                        }
+                        if (order.currency != Currency.SAR) {
+                            Text(
+                                "سعر الصرف المثبّت في الفاتورة: 1 ر.س = ${Money.plain(Money.parse(order.exchangeRate), order.currency)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 item {
-                    Column(Modifier.padding(top = 4.dp)) {
-                        Text("التوصيل إلى", style = MaterialTheme.typography.titleSmall)
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("التوصيل إلى", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                         val a = order.shippingAddress
                         Text("${a.recipient} · ${a.phone}", style = MaterialTheme.typography.bodyMedium)
                         Text(listOfNotNull(a.street, a.district, a.city, a.governorate).joinToString("، "), style = MaterialTheme.typography.bodySmall)
@@ -273,9 +286,9 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                 order.cancelReason?.let { item { Text("سبب الإلغاء: $it", color = MaterialTheme.colorScheme.error) } }
                 if (order.canPayByCard) {
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = Warning.copy(alpha = 0.12f))) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("بانتظار الدفع بالبطاقة", style = MaterialTheme.typography.titleSmall)
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("بانتظار الدفع بالبطاقة", style = MaterialTheme.typography.titleSmall, color = Warning)
                                 Text(
                                     "أكمل الدفع لنبدأ تجهيز طلبك. بعد الدفع ارجع إلى التطبيق وسيتم تحديث الطلب تلقائياً.",
                                     style = MaterialTheme.typography.bodySmall,
@@ -316,8 +329,8 @@ private fun Timeline(order: OrderDetail) {
     val steps = listOf(OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED)
     val reached = order.statusHistory.associate { it.toStatus to it.createdAt }
     val ended = order.status == OrderStatus.CANCELLED || order.status == OrderStatus.RETURNED
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(16.dp)) {
+    GlassCard(Modifier.fillMaxWidth()) {
+        Column {
             val shown = if (ended) steps.filter { it in reached } + order.status else steps
             shown.forEachIndexed { i, step ->
                 val at = reached[step]
@@ -328,7 +341,7 @@ private fun Timeline(order: OrderDetail) {
                             Modifier.size(14.dp).clip(CircleShape)
                                 .background(if (done) step.color() else MaterialTheme.colorScheme.outline),
                         )
-                        if (i < shown.lastIndex) Box(Modifier.width(2.dp).height(28.dp).background(MaterialTheme.colorScheme.outline))
+                        if (i < shown.lastIndex) Box(Modifier.width(2.dp).height(28.dp).background(if (done) Liquid.Gold.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline))
                     }
                     Spacer(Modifier.width(12.dp))
                     Column {
@@ -404,10 +417,10 @@ fun ReturnRequestScreen(number: String, onBack: () -> Unit, submitted: () -> Uni
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("طلب إرجاع", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { order ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item { Text("اختر القطع التي تريد إرجاعها", style = MaterialTheme.typography.titleSmall) }
+                item { Text("اختر القطع التي تريد إرجاعها", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep) }
                 items(order.items.filter { it.returnableQty > 0 }, key = { it.id }) { item ->
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GlassCard(Modifier.fillMaxWidth(), contentPadding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(item.productName, style = MaterialTheme.typography.titleSmall)
                                 Text(listOfNotNull(item.color, item.size?.let { "مقاس $it" }).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
@@ -416,7 +429,7 @@ fun ReturnRequestScreen(number: String, onBack: () -> Unit, submitted: () -> Uni
                             // Stepper starts at 0 here: picking nothing means "keep this item".
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = { vm.setQuantity(item.id, (q - 1).coerceAtLeast(0)) }, enabled = q > 0) { Text("−") }
-                                Text("$q")
+                                Text("$q", fontWeight = FontWeight.Bold, color = Liquid.GoldDeep)
                                 TextButton(onClick = { vm.setQuantity(item.id, (q + 1).coerceAtMost(item.returnableQty)) }, enabled = q < item.returnableQty) { Text("+") }
                             }
                         }

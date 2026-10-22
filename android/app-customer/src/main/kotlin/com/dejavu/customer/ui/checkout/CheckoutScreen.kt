@@ -15,6 +15,16 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import com.dejavu.core.ui.theme.Button
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.GoldBadge
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.core.ui.theme.glass
+import com.dejavu.customer.ui.components.GlassBottomPanel
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,7 +71,7 @@ import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.SectionTitle
+import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.theme.Success
@@ -193,9 +203,14 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
         topBar = { BackTopBar("إتمام الطلب", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            Surface(shadowElevation = 8.dp) {
-                Column(Modifier.padding(16.dp)) {
-                    cart?.let { SummaryRow("الإجمالي", Money.format(it.totals.grandTotal), strong = true) }
+            GlassBottomPanel {
+                Column {
+                    cart?.let {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("الإجمالي", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            GoldBadge(Money.format(it.totals.grandTotal))
+                        }
+                    }
                     // Recompose when the rate refreshes.
                     rates?.let {
                         val d = Money.display
@@ -213,7 +228,7 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                             !(state.method == PaymentMethod.CUSTOMER_ACCOUNT && walletShort),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
-                        if (state.placing) CircularProgressIndicator(Modifier.padding(2.dp), strokeWidth = 2.dp) else Text("تأكيد الطلب")
+                        if (state.placing) CircularProgressIndicator(Modifier.padding(2.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الطلب")
                     }
                 }
             }
@@ -222,15 +237,15 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
         LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
             if (state.problems.isNotEmpty()) {
                 item {
-                    Card(Modifier.padding(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                        Column(Modifier.padding(12.dp)) { state.problems.forEach { Text("• $it") } }
+                    GlassCard(Modifier.fillMaxWidth().padding(16.dp), elevation = 8.dp, contentPadding = 14.dp) {
+                        state.problems.forEach { Text("• $it", color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }
             item { SectionTitle("عنوان التوصيل") }
             val addresses = state.addresses
             if (addresses == null) {
-                item { CircularProgressIndicator(Modifier.padding(16.dp)) }
+                item { CircularProgressIndicator(Modifier.padding(16.dp), color = Liquid.Gold) }
             } else {
                 items(addresses, key = { it.id }) { a ->
                     Choice(selected = a.id == state.addressId, onClick = { vm.chooseAddress(a.id) }) {
@@ -324,9 +339,9 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
             cart?.let { c ->
                 item { SectionTitle("ملخص الطلب") }
                 item {
-                    Column(Modifier.padding(horizontal = 16.dp)) {
+                    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                         c.items.forEach { SummaryRow("${it.productName} × ${it.quantity}", Money.format(it.lineTotal)) }
-                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Liquid.Gold.copy(alpha = 0.25f))
                         SummaryRow("المجموع", Money.format(c.totals.subtotal))
                         if (!Money.isZero(c.totals.discountTotal)) SummaryRow("الخصم", "- ${Money.format(c.totals.discountTotal)}", valueColor = Success)
                         SummaryRow("الشحن", if (c.shipping == null) "—" else Money.format(c.totals.shippingFee))
@@ -347,15 +362,20 @@ private fun methodHint(m: PaymentMethod): String? = when (m) {
 
 @Composable
 private fun Choice(selected: Boolean, onClick: () -> Unit, enabled: Boolean = true, content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
+            .glass(Liquid.CardShape, elevation = if (selected) 14.dp else 8.dp)
+            .then(
+                if (selected) {
+                    Modifier.background(Liquid.GoldPale.copy(alpha = 0.35f)).border(1.5.dp, Liquid.Gold, Liquid.CardShape)
+                } else {
+                    Modifier
+                },
+            )
             .selectable(selected = selected, onClick = onClick, enabled = enabled, role = Role.RadioButton),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-        ),
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RadioButton(selected = selected, onClick = null, enabled = enabled)
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RadioButton(selected = selected, onClick = null, enabled = enabled, colors = RadioButtonDefaults.colors(selectedColor = Liquid.GoldDeep))
             Column(Modifier.weight(1f)) { content() }
         }
     }

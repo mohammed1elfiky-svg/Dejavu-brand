@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import coil3.compose.AsyncImage
 import com.dejavu.core.model.Brand
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -89,8 +90,10 @@ fun StoreProduct.discountBadge(): String? {
 
 @Composable
 fun CategoryAvatar(name: String, imageUrl: String?, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp).clickable(onClick = onClick)) {
-        ProductImage(imageUrl, Modifier.size(64.dp).clip(CircleShape))
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp).liquidClickable(onClick = onClick)) {
+        Box(Modifier.padding(top = 4.dp).size(64.dp).glass(CircleShape, elevation = 6.dp).padding(3.dp)) {
+            ProductImage(imageUrl, Modifier.fillMaxSize().clip(CircleShape))
+        }
         Spacer(Modifier.height(6.dp))
         Text(name, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -140,4 +143,80 @@ fun BrandChip(brand: Brand, onClick: () -> Unit, modifier: Modifier = Modifier) 
         if (brand.logoUrl != null) BrandLogo(brand, 24.dp)
         Text("الماركة: ${brand.name}", style = MaterialTheme.typography.labelLarge, color = Liquid.GoldDeep, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+// ------------------------------------------------------------ liquid glass helpers ---
+
+/** Gold section title (the admin app's look), with an optional gold action link. */
+@Composable
+fun SectionTitle(text: String, action: String? = null, onAction: () -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text, style = MaterialTheme.typography.titleMedium, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
+        if (action != null) {
+            Text(
+                action,
+                color = Liquid.GoldDeep,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(RoundedCornerShape(50)).liquidClickable(onClick = onAction).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/** An icon on a liquid-gold circle, as used by the admin app's menu tiles. */
+@Composable
+fun GoldIconCircle(icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 42.dp) {
+    Box(
+        modifier.size(size).clip(CircleShape).background(Liquid.GoldBrush),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.5f))
+    }
+}
+
+/** A floating glass row: leading content, title/subtitle and optional trailing content. */
+@Composable
+fun GlassRow(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    GlassCard(modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp, onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            leading?.invoke()
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = Liquid.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Liquid.InkSoft)
+            }
+            trailing?.invoke()
+        }
+    }
+}
+
+/** Gold selected colors for filter chips. */
+@Composable
+fun goldChipColors() = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+    selectedContainerColor = Liquid.GoldPale,
+    selectedLabelColor = Liquid.Ink,
+    selectedLeadingIconColor = Liquid.GoldDeep,
+    containerColor = Color.White.copy(alpha = 0.55f),
+)
+
+/** A bottom action panel floating as glass above the navigation bar. */
+@Composable
+fun GlassBottomPanel(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    GlassCard(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(26.dp),
+        elevation = 16.dp,
+        contentPadding = 16.dp,
+        content = content,
+    )
 }

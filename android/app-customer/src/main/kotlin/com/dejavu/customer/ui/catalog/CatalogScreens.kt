@@ -3,6 +3,10 @@
 package com.dejavu.customer.ui.catalog
 
 import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.core.ui.theme.glass
+import com.dejavu.customer.ui.components.GlassRow
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -89,11 +93,14 @@ fun CategoriesScreen(openCategory: (title: String, slug: String) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("الأقسام") }) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { categories ->
-            LazyColumn(Modifier.padding(padding)) {
+            LazyColumn(
+                Modifier.padding(padding),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 categories.forEach { parent ->
                     item(key = parent.id) { CategoryRow(parent, indent = false) { openCategory(parent.nameAr, parent.slug) } }
                     items(parent.children, key = { it.id }) { child -> CategoryRow(child, indent = true) { openCategory(child.nameAr, child.slug) } }
-                    item { HorizontalDivider() }
                 }
             }
         }
@@ -102,11 +109,17 @@ fun CategoriesScreen(openCategory: (title: String, slug: String) -> Unit) {
 
 @Composable
 private fun CategoryRow(category: Category, indent: Boolean, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(category.nameAr) },
-        supportingContent = { Text(category.nameEn) },
-        leadingContent = { ProductImage(category.imageUrl, Modifier.size(if (indent) 36.dp else 48.dp).clip(CircleShape)) },
-        modifier = Modifier.clickable(onClick = onClick).padding(start = if (indent) 24.dp else 0.dp),
+    GlassRow(
+        title = category.nameAr,
+        subtitle = category.nameEn,
+        leading = {
+            Box(Modifier.size(if (indent) 40.dp else 52.dp).glass(CircleShape, elevation = 4.dp).padding(2.dp)) {
+                ProductImage(category.imageUrl, Modifier.fillMaxSize().clip(CircleShape))
+            }
+        },
+        trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Liquid.GoldDeep) },
+        onClick = onClick,
+        modifier = Modifier.padding(start = if (indent) 24.dp else 0.dp),
     )
 }
 
@@ -191,7 +204,7 @@ fun ProductListScreen(
         topBar = {
             BackTopBar(title, onBack) {
                 Box {
-                    TextButton(onClick = { sortMenu = true }) { Text(sortLabel(state.sort)) }
+                    TextButton(onClick = { sortMenu = true }) { Text(sortLabel(state.sort), color = Liquid.GoldDeep) }
                     DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                         ProductSort.entries.forEach { s ->
                             DropdownMenuItem(text = { Text(sortLabel(s)) }, onClick = { sortMenu = false; vm.sortBy(s) })

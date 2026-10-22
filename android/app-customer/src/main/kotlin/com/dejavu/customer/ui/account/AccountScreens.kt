@@ -3,6 +3,17 @@
 package com.dejavu.customer.ui.account
 
 import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.GoldBadge
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.customer.ui.components.GlassRow
+import com.dejavu.customer.ui.components.GoldIconCircle
+import com.dejavu.customer.ui.components.goldChipColors
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -123,56 +134,69 @@ fun AccountScreen(
     val scope = rememberCoroutineScope()
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("حسابي") }) }) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+        Column(
+            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             when (val s = session) {
                 is SessionState.LoggedIn -> {
-                    ListItem(
-                        headlineContent = { Text(s.customer?.name ?: "…", style = MaterialTheme.typography.titleMedium) },
-                        supportingContent = { Text(listOfNotNull(s.customer?.phone, s.customer?.email).joinToString(" · ")) },
-                        leadingContent = { Icon(Icons.Filled.Person, contentDescription = null) },
-                    )
-                    s.customer?.let { c ->
-                        if (c.loyaltyPoints > 0) Text("نقاط الولاء: ${c.loyaltyPoints}", Modifier.padding(horizontal = 16.dp), color = Gold)
-                        if (c.isMerchant) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Tag("حساب تاجر", Gold)
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 14.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            GoldIconCircle(Icons.Filled.Person, size = 56.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(s.customer?.name ?: "…", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    c.creditLimit?.let { "حد الشراء الآجل: ${Money.formatBase(it)}" } ?: "شراء آجل بدون حد",
+                                    listOfNotNull(s.customer?.phone, s.customer?.email).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Text(
-                                "تظهر لك أسعار التاجر في المتجر، ويمكنك الدفع آجلاً على حسابك",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                            )
+                        }
+                        s.customer?.let { c ->
+                            if (c.loyaltyPoints > 0) GoldBadge("نقاط الولاء: ${c.loyaltyPoints}", Modifier.padding(top = 10.dp))
+                            if (c.isMerchant) {
+                                Row(
+                                    Modifier.padding(top = 10.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Tag("حساب تاجر", Gold)
+                                    Text(
+                                        c.creditLimit?.let { "حد الشراء الآجل: ${Money.formatBase(it)}" } ?: "شراء آجل بدون حد",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(
+                                    "تظهر لك أسعار التاجر في المتجر، ويمكنك الدفع آجلاً على حسابك",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
-                    HorizontalDivider()
+                    MenuHeader("حسابي")
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)
                     MenuRow(Icons.Filled.AccountBox, "المحفظة / رصيدي", wallet)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
                     MenuRow(Icons.Filled.Refresh, "طلبات الإرجاع", returns)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
-                    HorizontalDivider()
+                    MenuHeader("الإعدادات")
                     CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
                     MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.logout() } }
                 }
                 SessionState.LoggedOut -> {
-                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("أهلاً بك في Dejavu", style = MaterialTheme.typography.headlineSmall)
-                        Text("سجّل الدخول لمتابعة طلباتك وحفظ عناوينك.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Button(onClick = login, modifier = Modifier.fillMaxWidth()) { Text("تسجيل الدخول") }
-                        OutlinedButton(onClick = register, modifier = Modifier.fillMaxWidth()) { Text("إنشاء حساب جديد") }
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 14.dp, contentPadding = 20.dp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            GoldIconCircle(Icons.Filled.Person, size = 56.dp)
+                            Text("أهلاً بك في Dejavu", style = MaterialTheme.typography.headlineSmall)
+                            Text("سجّل الدخول لمتابعة طلباتك وحفظ عناوينك.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Button(onClick = login, modifier = Modifier.fillMaxWidth()) { Text("تسجيل الدخول") }
+                            OutlinedButton(onClick = register, modifier = Modifier.fillMaxWidth()) { Text("إنشاء حساب جديد") }
+                        }
                     }
-                    HorizontalDivider()
+                    MenuHeader("الإعدادات")
                     CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
                 }
@@ -181,7 +205,8 @@ fun AccountScreen(
                 "الإصدار ${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth(),
+                textAlign = TextAlign.Center,
             )
         }
     }
@@ -197,11 +222,12 @@ private fun CurrencyRow() {
     var open by remember { mutableStateOf(false) }
     val rateOf = { c: Currency -> rates?.rate(c)?.rate?.toBigDecimalOrNull() }
     val selectedRate = rateOf(selected)
-    ListItem(
-        headlineContent = { Text("العملة: ${selected.nameAr}") },
-        supportingContent = selectedRate?.takeIf { !selected.isBase }?.let { r -> { Text("1 ${Currency.SAR.symbol} = ${Money.plain(r, selected)}") } },
-        leadingContent = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
-        modifier = Modifier.clickable { open = true },
+    GlassRow(
+        title = "العملة: ${selected.nameAr}",
+        subtitle = selectedRate?.takeIf { !selected.isBase }?.let { r -> "1 ${Currency.SAR.symbol} = ${Money.plain(r, selected)}" },
+        leading = { GoldIconCircle(Icons.Filled.ShoppingCart) },
+        trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Liquid.GoldDeep) },
+        onClick = { open = true },
     )
     if (open) {
         AlertDialog(
@@ -216,7 +242,7 @@ private fun CurrencyRow() {
                             Modifier.fillMaxWidth().clickable(enabled = usable) { currencies.select(c); open = false }.padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(selected = c == selected, onClick = null, enabled = usable)
+                            RadioButton(selected = c == selected, onClick = null, enabled = usable, colors = RadioButtonDefaults.colors(selectedColor = Liquid.GoldDeep))
                             Column {
                                 Text("${c.nameAr} (${c.symbol})")
                                 if (!c.isBase && rate != null) {
@@ -243,7 +269,24 @@ private fun CurrencyRow() {
 
 @Composable
 private fun MenuRow(icon: ImageVector, text: String, onClick: () -> Unit) {
-    ListItem(headlineContent = { Text(text) }, leadingContent = { Icon(icon, contentDescription = null) }, modifier = Modifier.clickable(onClick = onClick))
+    GlassRow(
+        title = text,
+        leading = { GoldIconCircle(icon) },
+        trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Liquid.GoldDeep) },
+        onClick = onClick,
+    )
+}
+
+/** Gold heading above a group of menu rows. */
+@Composable
+private fun MenuHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = Liquid.GoldDeep,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+    )
 }
 
 // -------------------------------------------------------------- addresses ---
@@ -285,7 +328,11 @@ fun AddressesScreen(onBack: () -> Unit, edit: (String?) -> Unit) {
         contentWindowInsets = WindowInsets(0),
         topBar = { BackTopBar("عناويني", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = { FloatingActionButton(onClick = { edit(null) }) { Icon(Icons.Filled.Add, contentDescription = "إضافة عنوان") } },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { edit(null) }, containerColor = Liquid.Gold, contentColor = androidx.compose.ui.graphics.Color.White) {
+                Icon(Icons.Filled.Add, contentDescription = "إضافة عنوان")
+            }
+        },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
             if (list.isEmpty()) {
@@ -293,18 +340,19 @@ fun AddressesScreen(onBack: () -> Unit, edit: (String?) -> Unit) {
             } else {
                 LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(list, key = { it.id }) { a ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(Modifier.padding(16.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    GoldIconCircle(Icons.Filled.LocationOn, size = 36.dp)
                                     Text(a.label ?: a.recipient, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                     if (a.isDefault) StatusChip("الافتراضي", Success)
                                 }
                                 Text(a.summary, style = MaterialTheme.typography.bodySmall)
                                 Text("${a.recipient} · ${a.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row {
-                                    if (!a.isDefault) TextButton(onClick = { vm.makeDefault(a) }) { Text("اجعله افتراضياً") }
-                                    IconButton(onClick = { edit(a.id) }) { Icon(Icons.Filled.Edit, contentDescription = "تعديل") }
-                                    IconButton(onClick = { confirmDelete = a }) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
+                                    if (!a.isDefault) TextButton(onClick = { vm.makeDefault(a) }) { Text("اجعله افتراضياً", color = Liquid.GoldDeep) }
+                                    IconButton(onClick = { edit(a.id) }) { Icon(Icons.Filled.Edit, contentDescription = "تعديل", tint = Liquid.GoldDeep) }
+                                    IconButton(onClick = { confirmDelete = a }) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = Liquid.InkSoft) }
                                 }
                             }
                         }
@@ -422,37 +470,45 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
     ) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Field("اسم العنوان (اختياري)", form.label, placeholder = "المنزل، العمل…") { v -> vm.update { copy(label = v) } }
-            Field("اسم المستلم", form.recipient, err("recipient")) { v -> vm.update { copy(recipient = v) } }
-            Field("موبايل المستلم", form.phone, err("phone"), placeholder = "771234567", keyboard = KeyboardType.Phone) { v -> vm.update { copy(phone = v) } }
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Field("اسم العنوان (اختياري)", form.label, placeholder = "المنزل، العمل…") { v -> vm.update { copy(label = v) } }
+                    Field("اسم المستلم", form.recipient, err("recipient")) { v -> vm.update { copy(recipient = v) } }
+                    Field("موبايل المستلم", form.phone, err("phone"), placeholder = "771234567", keyboard = KeyboardType.Phone) { v -> vm.update { copy(phone = v) } }
 
-            // Read-only field that opens the list of governorates we deliver to.
-            Box {
-                OutlinedTextField(
-                    value = form.governorate,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("المحافظة") },
-                    isError = err("governorate") != null,
-                    supportingText = err("governorate")?.let { { Text(it) } },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Box(Modifier.matchParentSize().clickable { pickGovernorate = true })
-            }
-            Field("المدينة / المنطقة", form.city, err("city"), placeholder = "مثال: صنعاء، عدن") { v -> vm.update { copy(city = v) } }
-            Field("الحي (اختياري)", form.district) { v -> vm.update { copy(district = v) } }
-            Field("الشارع ورقم العقار", form.street, err("street")) { v -> vm.update { copy(street = v) } }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Field("المبنى", form.building, modifier = Modifier.weight(1f)) { v -> vm.update { copy(building = v) } }
-                Field("الدور", form.floor, modifier = Modifier.weight(1f)) { v -> vm.update { copy(floor = v) } }
-                Field("الشقة", form.apartment, modifier = Modifier.weight(1f)) { v -> vm.update { copy(apartment = v) } }
-            }
-            Field("علامة مميزة (اختياري)", form.landmark) { v -> vm.update { copy(landmark = v) } }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = form.isDefault, onCheckedChange = { c -> vm.update { copy(isDefault = c) } })
-                Text("اجعله العنوان الافتراضي")
+                    // Read-only field that opens the list of governorates we deliver to.
+                    Box {
+                        OutlinedTextField(
+                            value = form.governorate,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("المحافظة") },
+                            isError = err("governorate") != null,
+                            supportingText = err("governorate")?.let { { Text(it) } },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Box(Modifier.matchParentSize().clickable { pickGovernorate = true })
+                    }
+                    Field("المدينة / المنطقة", form.city, err("city"), placeholder = "مثال: صنعاء، عدن") { v -> vm.update { copy(city = v) } }
+                    Field("الحي (اختياري)", form.district) { v -> vm.update { copy(district = v) } }
+                    Field("الشارع ورقم العقار", form.street, err("street")) { v -> vm.update { copy(street = v) } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Field("المبنى", form.building, modifier = Modifier.weight(1f)) { v -> vm.update { copy(building = v) } }
+                        Field("الدور", form.floor, modifier = Modifier.weight(1f)) { v -> vm.update { copy(floor = v) } }
+                        Field("الشقة", form.apartment, modifier = Modifier.weight(1f)) { v -> vm.update { copy(apartment = v) } }
+                    }
+                    Field("علامة مميزة (اختياري)", form.landmark) { v -> vm.update { copy(landmark = v) } }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = form.isDefault,
+                            onCheckedChange = { c -> vm.update { copy(isDefault = c) } },
+                            colors = CheckboxDefaults.colors(checkedColor = Liquid.GoldDeep),
+                        )
+                        Text("اجعله العنوان الافتراضي")
+                    }
+                }
             }
             Button(onClick = vm::save, enabled = !saving, modifier = Modifier.fillMaxWidth()) { Text("حفظ العنوان") }
         }
@@ -533,15 +589,20 @@ fun ReturnsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
             } else {
                 LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(list, key = { it.id }) { r ->
-                        Card(onClick = { openOrder(r.order.number) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        GlassCard(Modifier.fillMaxWidth(), onClick = { openOrder(r.order.number) }) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(r.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                     StatusChip(r.status.label, r.status.color())
                                 }
                                 Text("الطلب ${r.order.number} · ${formatDate(r.requestedAt)}", style = MaterialTheme.typography.bodySmall)
                                 r.items.forEach { Text("• ${it.orderItem.productName} × ${it.quantity}", style = MaterialTheme.typography.bodySmall) }
-                                Text("قيمة الإرجاع: ${Money.format(r.refundAmount, r.order.currency, r.order.exchangeRate)}", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "قيمة الإرجاع: ${Money.format(r.refundAmount, r.order.currency, r.order.exchangeRate)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Liquid.GoldDeep,
+                                    fontWeight = FontWeight.Bold,
+                                )
                                 r.rejectReason?.let { Text("سبب الرفض: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                             }
                         }
@@ -570,37 +631,44 @@ fun ServerSettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("الخادم", onBack) }) { padding ->
-        Column(Modifier.padding(padding).padding(16.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("عنوان خادم Dejavu الذي يتصل به التطبيق.", style = MaterialTheme.typography.bodyMedium)
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("رابط الخادم") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "• المحاكي على نفس الجهاز: http://10.0.2.2:3000\n• GitHub Codespaces: رابط المنفذ 3000 بعد جعله Public",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    settings.setBaseUrl(url)
-                    url = settings.baseUrl
-                    status = "جارٍ الاختبار…"
-                    scope.launch {
-                        status = container.catalog.categories(refresh = true).fold(
-                            { "✓ متصل بنجاح (${it.size} أقسام)" },
-                            { "✗ ${it.userMessage()}" },
-                        )
-                        container.session.restore()
+        Column(Modifier.padding(padding).padding(16.dp).imePadding()) {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GoldIconCircle(Icons.Filled.Settings)
+                        Text("عنوان خادم Dejavu الذي يتصل به التطبيق.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     }
-                }) { Text("حفظ واختبار") }
-                OutlinedButton(onClick = { url = settings.defaultBaseUrl }) { Text("الافتراضي") }
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("رابط الخادم") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "• المحاكي على نفس الجهاز: http://10.0.2.2:3000\n• GitHub Codespaces: رابط المنفذ 3000 بعد جعله Public",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            settings.setBaseUrl(url)
+                            url = settings.baseUrl
+                            status = "جارٍ الاختبار…"
+                            scope.launch {
+                                status = container.catalog.categories(refresh = true).fold(
+                                    { "✓ متصل بنجاح (${it.size} أقسام)" },
+                                    { "✗ ${it.userMessage()}" },
+                                )
+                                container.session.restore()
+                            }
+                        }) { Text("حفظ واختبار") }
+                        OutlinedButton(onClick = { url = settings.defaultBaseUrl }) { Text("الافتراضي") }
+                    }
+                    status?.let { Text(it, color = Liquid.GoldDeep) }
+                }
             }
-            status?.let { Text(it) }
         }
     }
 }

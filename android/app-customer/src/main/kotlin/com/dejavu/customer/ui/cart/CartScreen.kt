@@ -3,6 +3,11 @@
 package com.dejavu.customer.ui.cart
 
 import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.GoldBadge
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.customer.ui.components.GlassBottomPanel
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -126,12 +131,13 @@ fun CartScreen(openProduct: (String) -> Unit, checkout: () -> Unit, login: () ->
         bottomBar = {
             val c = cart
             if (c != null && c.items.isNotEmpty()) {
-                Surface(shadowElevation = 8.dp) {
-                    Column(Modifier.padding(16.dp)) {
-                        SummaryRow("الإجمالي", Money.format(c.totals.grandTotal), strong = true)
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = checkout, enabled = c.canCheckout && !busy, modifier = Modifier.fillMaxWidth()) { Text("إتمام الطلب") }
+                GlassBottomPanel {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("الإجمالي", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        GoldBadge(Money.format(c.totals.grandTotal))
                     }
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = checkout, enabled = c.canCheckout && !busy, modifier = Modifier.fillMaxWidth()) { Text("إتمام الطلب") }
                 }
             }
         },
@@ -152,13 +158,11 @@ fun CartScreen(openProduct: (String) -> Unit, checkout: () -> Unit, login: () ->
 private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduct: (String) -> Unit, modifier: Modifier) {
     var coupon by rememberSaveable { mutableStateOf("") }
     LazyColumn(modifier, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Liquid.Gold, trackColor = Liquid.GoldPale) }
         if (cart.problems.isNotEmpty()) {
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Column(Modifier.padding(12.dp)) {
-                        cart.problems.forEach { Text("• ${ServerMessages.translate(it)}", color = MaterialTheme.colorScheme.onErrorContainer) }
-                    }
+                GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
+                    cart.problems.forEach { Text("• ${ServerMessages.translate(it)}", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
@@ -166,8 +170,8 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
             CartRow(item, busy, onOpen = { openProduct(item.slug) }, onQuantity = { vm.setQuantity(item, it) }, onRemove = { vm.remove(item) })
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp)) {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column {
                     if (cart.couponCode != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("كود الخصم: ${cart.couponCode}", Modifier.weight(1f), color = if (cart.couponProblem == null) Success else MaterialTheme.colorScheme.error)
@@ -187,7 +191,7 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
                             OutlinedButton(onClick = { vm.applyCoupon(coupon) }, enabled = coupon.isNotBlank() && !busy) { Text("تطبيق") }
                         }
                     }
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Liquid.Gold.copy(alpha = 0.25f))
                     val t = cart.totals
                     SummaryRow("المجموع", Money.format(t.subtotal))
                     if (!Money.isZero(t.discountTotal)) SummaryRow("الخصم", "- ${Money.format(t.discountTotal)}", valueColor = Success)
@@ -204,18 +208,18 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
 
 @Composable
 private fun CartRow(item: CartItem, busy: Boolean, onOpen: () -> Unit, onQuantity: (Int) -> Unit, onRemove: () -> Unit) {
-    Card(onClick = onOpen, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ProductImage(item.imageUrl, Modifier.size(width = 72.dp, height = 96.dp).clip(MaterialTheme.shapes.small))
+    GlassCard(Modifier.fillMaxWidth(), elevation = 10.dp, contentPadding = 12.dp, onClick = onOpen) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ProductImage(item.imageUrl, Modifier.size(width = 72.dp, height = 96.dp).clip(MaterialTheme.shapes.medium))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.productName, style = MaterialTheme.typography.titleSmall)
                 Text(listOfNotNull(item.color, item.size?.let { "مقاس $it" }).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(Money.format(item.lineTotal), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Text(Money.format(item.lineTotal), style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
                 item.problem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     QuantityStepper(item.quantity, onQuantity, max = minOf(20, maxOf(item.availableQty, item.quantity)), enabled = !busy)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = onRemove, enabled = !busy) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
+                    IconButton(onClick = onRemove, enabled = !busy) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = Liquid.InkSoft) }
                 }
             }
         }

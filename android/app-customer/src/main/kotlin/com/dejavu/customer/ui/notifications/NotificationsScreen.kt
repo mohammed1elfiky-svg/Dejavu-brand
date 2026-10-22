@@ -20,6 +20,10 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.Liquid
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -131,7 +135,7 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWal
         contentWindowInsets = WindowInsets(0),
         topBar = {
             BackTopBar("الإشعارات", onBack) {
-                if (unread > 0) TextButton(onClick = vm::readAll) { Text("تحديد الكل كمقروء") }
+                if (unread > 0) TextButton(onClick = vm::readAll) { Text("تحديد الكل كمقروء", color = Liquid.GoldDeep) }
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -141,13 +145,16 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWal
                 EmptyState(Icons.Filled.Notifications, "لا توجد إشعارات بعد", "سنخبرك هنا بكل جديد عن طلباتك ورصيدك والعروض", modifier = Modifier.padding(padding))
                 return@LoadContent
             }
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
+            LazyColumn(
+                Modifier.padding(padding),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 items(items, key = { it.id }) { n ->
                     NotificationRow(n) { vm.open(n, openOrder, openWallet, openProduct) }
-                    HorizontalDivider()
                 }
                 if (hasMore) {
-                    item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(16.dp)) { Text("عرض المزيد") } }
+                    item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) { Text("عرض المزيد") } }
                 }
             }
         }
@@ -156,23 +163,34 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWal
 
 @Composable
 private fun NotificationRow(n: AppNotification, onClick: () -> Unit) {
-    val background = if (n.isRead) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
-    Row(
-        Modifier.fillMaxWidth().background(background).clickable(onClick = onClick).padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top,
+    // Unread notifications glow faintly gold.
+    GlassCard(
+        Modifier.fillMaxWidth(),
+        elevation = if (n.isRead) 6.dp else 12.dp,
+        contentPadding = 0.dp,
+        onClick = onClick,
     ) {
-        Box(
-            Modifier.padding(top = 6.dp).size(8.dp)
-                .background(if (n.isRead) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.primary, CircleShape),
-        )
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(n.title, style = MaterialTheme.typography.titleSmall, fontWeight = if (n.isRead) FontWeight.Normal else FontWeight.Bold)
-            Text(n.body, style = MaterialTheme.typography.bodyMedium)
-            Text(formatDateTime(n.sentAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        n.data["image"]?.takeIf { it.isNotBlank() }?.let { url ->
-            ProductImage(url, Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)), contentDescription = null)
+        Row(
+            Modifier.fillMaxWidth().background(if (n.isRead) Color.Transparent else Liquid.GoldPale.copy(alpha = 0.30f)).padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape)
+                    .background(if (n.isRead) Liquid.GoldPale.copy(alpha = 0.6f) else Color.Transparent)
+                    .then(if (n.isRead) Modifier else Modifier.background(Liquid.GoldBrush)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Notifications, contentDescription = null, tint = if (n.isRead) Liquid.GoldDeep else Color.White, modifier = Modifier.size(20.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(n.title, style = MaterialTheme.typography.titleSmall, fontWeight = if (n.isRead) FontWeight.Normal else FontWeight.Bold)
+                Text(n.body, style = MaterialTheme.typography.bodyMedium)
+                Text(formatDateTime(n.sentAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            n.data["image"]?.takeIf { it.isNotBlank() }?.let { url ->
+                ProductImage(url, Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)), contentDescription = null)
+            }
         }
     }
 }

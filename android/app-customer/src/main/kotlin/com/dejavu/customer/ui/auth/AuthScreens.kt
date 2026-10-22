@@ -13,6 +13,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import com.dejavu.core.ui.theme.Button
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.Liquid
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import com.dejavu.core.ui.theme.OutlinedTextField
@@ -101,26 +106,32 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar(if (registering) "إنشاء حساب" else "تسجيل الدخول", onBack) }) { padding ->
         Column(
-            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(if (registering) "انضم إلى Dejavu" else "أهلاً بعودتك", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(4.dp))
-            if (registering) {
-                Input("الاسم", form.name, errors["name"]) { v -> vm.update { copy(name = v) } }
-            }
-            Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
-            if (registering) {
-                Input("البريد الإلكتروني (اختياري)", form.email, errors["email"], KeyboardType.Email) { v -> vm.update { copy(email = v) } }
-            }
-            Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
+            Text("Dejavu", style = MaterialTheme.typography.headlineMedium, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
+            GlassCard(Modifier.fillMaxWidth(), elevation = 16.dp, contentPadding = 20.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(if (registering) "انضم إلى Dejavu" else "أهلاً بعودتك", style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.height(4.dp))
+                    if (registering) {
+                        Input("الاسم", form.name, errors["name"]) { v -> vm.update { copy(name = v) } }
+                    }
+                    Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
+                    if (registering) {
+                        Input("البريد الإلكتروني (اختياري)", form.email, errors["email"], KeyboardType.Email) { v -> vm.update { copy(email = v) } }
+                    }
+                    Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
 
-            form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(onClick = vm::submit, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
-                if (form.busy) CircularProgressIndicator(strokeWidth = 2.dp) else Text(if (registering) "إنشاء الحساب" else "دخول")
-            }
-            TextButton(onClick = switch, modifier = Modifier.fillMaxWidth()) {
-                Text(if (registering) "لديك حساب؟ سجّل الدخول" else "ليس لديك حساب؟ أنشئ حساباً جديداً")
+                    form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Button(onClick = vm::submit, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
+                        if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text(if (registering) "إنشاء الحساب" else "دخول")
+                    }
+                    TextButton(onClick = switch, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (registering) "لديك حساب؟ سجّل الدخول" else "ليس لديك حساب؟ أنشئ حساباً جديداً", color = Liquid.GoldDeep)
+                    }
+                }
             }
         }
     }

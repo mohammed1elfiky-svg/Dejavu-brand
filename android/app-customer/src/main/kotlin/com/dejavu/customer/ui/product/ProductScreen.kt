@@ -64,6 +64,11 @@ import com.dejavu.core.ui.Tag
 import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.theme.Gold
 import com.dejavu.customer.ui.components.BrandChip
+import com.dejavu.customer.ui.components.GlassBottomPanel
+import com.dejavu.customer.ui.components.goldChipColors
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.core.ui.theme.glass
 import com.dejavu.customer.ui.components.discountBadge
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.theme.Warning
@@ -179,10 +184,10 @@ fun ProductScreen(
             val p = (state as? Load.Ready)?.value
             if (p != null) {
                 val variant = vm.selectedVariant()
-                Surface(shadowElevation = 8.dp) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                GlassBottomPanel {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            if (p.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Gold)
+                            if (p.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Liquid.GoldDeep)
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                         }
                         Button(
@@ -199,48 +204,59 @@ fun ProductScreen(
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
                 Gallery(p, selection.color)
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(p.category.nameAr, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                    Text(p.nameAr, style = MaterialTheme.typography.headlineSmall)
-                    p.brand?.let { b -> BrandChip(b, onClick = { openBrand(b.name, b.slug) }) }
-                    if (p.merchantPrice) Tag("سعر التاجر", Gold)
-                    PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
-                    Promotion(p)
-
-                    val colors = p.variants.map { it.color to it.colorHex }.distinctBy { it.first }
-                    if (colors.size > 1 || colors.firstOrNull()?.first != null) {
-                        Text("اللون: ${selection.color ?: ""}", style = MaterialTheme.typography.titleSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            colors.forEach { (name, hex) -> ColorDot(hex, selected = name == selection.color) { vm.pickColor(name) } }
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(p.category.nameAr, style = MaterialTheme.typography.labelLarge, color = Liquid.GoldDeep)
+                            Text(p.nameAr, style = MaterialTheme.typography.headlineSmall)
+                            p.brand?.let { b -> BrandChip(b, onClick = { openBrand(b.name, b.slug) }) }
+                            if (p.merchantPrice) Tag("سعر التاجر", Gold)
+                            PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
+                            Promotion(p)
                         }
                     }
 
-                    val sizes = p.variants.filter { it.color == selection.color }
-                    if (sizes.any { it.size != null }) {
-                        Text("المقاس", style = MaterialTheme.typography.titleSmall)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            sizes.forEach { v ->
-                                FilterChip(
-                                    selected = v.size == selection.size,
-                                    onClick = { vm.pickSize(v.size) },
-                                    enabled = v.inStock,
-                                    label = { Text(v.size ?: "-") },
-                                )
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val colors = p.variants.map { it.color to it.colorHex }.distinctBy { it.first }
+                            if (colors.size > 1 || colors.firstOrNull()?.first != null) {
+                                Text("اللون: ${selection.color ?: ""}", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    colors.forEach { (name, hex) -> ColorDot(hex, selected = name == selection.color) { vm.pickColor(name) } }
+                                }
+                            }
+
+                            val sizes = p.variants.filter { it.color == selection.color }
+                            if (sizes.any { it.size != null }) {
+                                Text("المقاس", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    sizes.forEach { v ->
+                                        FilterChip(
+                                            selected = v.size == selection.size,
+                                            onClick = { vm.pickSize(v.size) },
+                                            enabled = v.inStock,
+                                            label = { Text(v.size ?: "-") },
+                                            colors = goldChipColors(),
+                                        )
+                                    }
+                                }
+                            }
+
+                            Availability(variant)
+                            if (variant?.inStock == true) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("الكمية", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                    QuantityStepper(selection.quantity, vm::setQuantity, max = minOf(variant.availableQty, 20))
+                                }
                             }
                         }
                     }
 
-                    Availability(variant)
-                    if (variant?.inStock == true) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("الكمية", style = MaterialTheme.typography.titleSmall)
-                            QuantityStepper(selection.quantity, vm::setQuantity, max = minOf(variant.availableQty, 20))
-                        }
-                    }
-
                     if (!p.descriptionAr.isNullOrBlank()) {
-                        HorizontalDivider()
-                        Text("الوصف", style = MaterialTheme.typography.titleSmall)
-                        Text(p.descriptionAr!!, style = MaterialTheme.typography.bodyMedium)
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Text("الوصف", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                            Spacer(Modifier.height(8.dp))
+                            Text(p.descriptionAr!!, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -259,7 +275,7 @@ private fun Gallery(p: StoreProduct, color: String?) {
 private fun ColorGallery(p: StoreProduct, color: String?) {
     val images = remember(p, color) { p.imagesFor(color) }.ifEmpty { listOf(null) }
     val pager = rememberPagerState { images.size }
-    Box {
+    Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).glass(Liquid.CardShape, elevation = 14.dp)) {
         HorizontalPager(pager, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 5f)) { page ->
             ProductImage(images[page]?.url, Modifier.fillMaxSize(), contentDescription = p.nameAr)
         }
@@ -268,7 +284,7 @@ private fun ColorGallery(p: StoreProduct, color: String?) {
                 repeat(images.size) { i ->
                     Box(
                         Modifier.size(8.dp).clip(CircleShape)
-                            .background(if (i == pager.currentPage) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f)),
+                            .background(if (i == pager.currentPage) Liquid.Gold else Color.White.copy(alpha = 0.7f)),
                     )
                 }
             }
@@ -283,7 +299,7 @@ private fun Promotion(p: StoreProduct) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Tag(badge, Gold)
         p.promotion?.let { promo ->
-            Text(promo.name, style = MaterialTheme.typography.labelLarge, color = Gold)
+            Text(promo.name, style = MaterialTheme.typography.labelLarge, color = Liquid.GoldDeep)
             promo.endsAt?.let { Text("حتى ${formatDate(it)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
@@ -296,7 +312,7 @@ private fun ColorDot(hex: String?, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         shape = CircleShape,
         color = color,
-        border = BorderStroke(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline),
+        border = BorderStroke(if (selected) 3.dp else 1.dp, if (selected) Liquid.Gold else MaterialTheme.colorScheme.outline),
         modifier = Modifier.size(36.dp),
     ) {}
 }

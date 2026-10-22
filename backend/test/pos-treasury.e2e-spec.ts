@@ -301,6 +301,58 @@ describe('POS, treasury & wallet (e2e)', () => {
     await assertBooksAgree();
   });
 
+  it('books an exchange gain or loss at the market rate, shows the box in its currency, and edits or cancels exchanges', async () => {
+    const sarSafe = (await http.get('/admin/cash-boxes?kind=VAULT&currency=SAR', admin).expect(200)).body[0];
+    const usdSafe = (await http.post('/admin/cash-boxes', { name: `خزنة دولار ${run}`, kind: 'VAULT', currency: 'USD', icon: '💵' }, admin).expect(201)).body;
+    expect(usdSafe.icon).toBe('💵');
+    const payer = await customerToken(app, 'عميل نقدي');
+    await http.post(`/admin/customers/${payer.customerId}/account/receipts`, { currency: 'SAR', amount: '1000', cashBoxId: sarSafe.id }, admin).expect(201);
+    await http.put('/admin/exchange-rates/USD', { rate: '0.25' }, admin).expect(200); // 1 USD = 4 SAR
+
+    // 410 SAR for 100 USD, worth 400 SAR: a 10 SAR loss right away.
+    const deal = (await http.post('/admin/cash-transfers', { fromBoxId: sarSafe.id, toBoxId: usdSafe.id, amount: '410', toAmount: '100' }, admin).expect(201)).body;
+    expect(Number(deal.fxDifference)).toBeCloseTo(-10, 2);
+    const dash = (await http.get('/admin/reports/dashboard', admin).expect(200)).body;
+    const row = dash.cashAndBank.find((r: { accountId: string }) => r.accountId === usdSafe.account.id);
+    expect(row).toMatchObject({ currency: 'USD', amount: '100', icon: '💵' });
+    expect(Number(row.balance)).toBeCloseTo(400, 2);
+
+    // Edit: it was 380 SAR, a 20 SAR gain.
+    const fixed = (await http.put(`/admin/cash-transfers/${deal.id}`, { fromBoxId: sarSafe.id, toBoxId: usdSafe.id, amount: '380', toAmount: '100' }, admin).expect(200)).body;
+    expect(Number(fixed.fxDifference)).toBeCloseTo(20, 2);
+    const old = await prisma.cashTransfer.findUniqueOrThrow({ where: { id: deal.id } });
+    expect(old.cancelledAt).not.toBeNull();
+    expect(old.replacedById).toBe(fixed.id);
+    await http.post(`/admin/cash-transfers/${deal.id}/cancel`, {}, admin).expect(422);
+
+    // Cancel: the dollars go back, nothing is left in the USD safe.
+    await http.post(`/admin/cash-transfers/${fixed.id}/cancel`, { reason: 'خطأ' }, admin).expect(200);
+    const usdNow = (await http.get('/admin/cash-boxes?kind=VAULT&currency=USD', admin).expect(200)).body.find((b: { id: string }) => b.id === usdSafe.id);
+    expect(usdNow.balance).toBe('0');
+    expect(Number(usdNow.bookValue)).toBe(0);
+    const fxLines = await prisma.journalLine.aggregate({
+      where: { account: { systemKey: 'FX_DIFFERENCE' }, journalEntry: { sourceId: { in: [deal.id, fixed.id] } } },
+      _sum: { debit: true, credit: true },
+    });
+    expect(Number(fxLines._sum.debit)).toBeCloseTo(Number(fxLines._sum.credit), 2);
+    await assertBooksAgree();
+  });
+
+  it('records opening balances of customers in their currency', async () => {
+    const c = await customerToken(app, 'عميل قديم');
+    await http.post(`/admin/customers/${c.customerId}/account/opening-balance`, { currency: 'YER', amount: '14000', direction: 'OWES' }, cashier).expect(403);
+    const owed = (await http.post(`/admin/customers/${c.customerId}/account/opening-balance`, { currency: 'YER', amount: '14000', direction: 'OWES', note: 'دفتر قديم' }, admin).expect(201)).body;
+    expect(owed.balances.find((b: { currency: string }) => b.currency === 'YER').balance).toBe('14000');
+    const credit = (await http.post(`/admin/customers/${c.customerId}/account/opening-balance`, { currency: 'SAR', amount: '50', direction: 'CREDIT' }, admin).expect(201)).body;
+    expect(credit.balances.find((b: { currency: string }) => b.currency === 'SAR')).toMatchObject({ balance: '-50', available: '50' });
+    const wallet = (await http.get('/store/me/wallet', c.token).expect(200)).body;
+    expect(wallet.entries.map((e: { note: string }) => e.note)).toContain('رصيد افتتاحي');
+    const equity = await prisma.journalLine.aggregate({ where: { account: { systemKey: 'OPENING_BALANCE' }, journalEntry: { sourceId: c.customerId } }, _sum: { debit: true, credit: true } });
+    expect(Number(equity._sum.credit)).toBeCloseTo(100, 2); // 14,000 YER at 140
+    expect(Number(equity._sum.debit)).toBeCloseTo(50, 2);
+    await assertBooksAgree();
+  });
+
   it('tops up a wallet from a bank deposit slip, then pays an order from the balance', async () => {
     const shopper = await customerToken(app, 'عميل المحفظة');
     const bank = await http

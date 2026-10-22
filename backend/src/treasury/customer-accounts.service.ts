@@ -102,6 +102,45 @@ export class CustomerAccountsService {
     return { entry, amount, booked };
   }
 
+  /**
+   * A balance the customer had before the system (taking over old books):
+   * OWES — the customer owes the store (Dr customer account / Cr opening balance equity);
+   * CREDIT — the store holds the customer's money (the reverse).
+   */
+  async openingBalance(
+    customerId: string,
+    dto: { currency: string; amount: string; direction: 'OWES' | 'CREDIT'; note?: string },
+    userId: string,
+  ) {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    const currency = dto.currency ?? BASE_CURRENCY;
+    const { rate } = await this.currencies.requireActive(currency);
+    const amount = inCurrency(dto.amount, currency);
+    if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
+    const sign = dto.direction === 'OWES' ? 1 : -1;
+    const sar = toBase(amount, currency, rate);
+    await this.prisma.$transaction(async (tx) => {
+      const lines = await this.treasury.moneyLines(tx, {
+        account: 'CUSTOMER_ACCOUNTS',
+        customerId,
+        currency,
+        amount: amount.mul(sign),
+        sar: sar.mul(sign),
+        description: dto.note,
+      });
+      const entry = await this.ledger.post(tx, {
+        description: `Opening balance of ${customer.name}: ${amount.toFixed()} ${currency} ${dto.direction === 'OWES' ? 'owed' : 'in credit'}${dto.note ? ` — ${dto.note}` : ''}`,
+        sourceType: 'OPENING_BALANCE',
+        sourceId: customerId,
+        userId,
+        lines: [...lines, sign > 0 ? { account: 'OPENING_BALANCE', credit: sar } : { account: 'OPENING_BALANCE', debit: sar }],
+      });
+      await this.audit.log({ userId, action: 'CREATE', entityType: 'CustomerOpeningBalance', entityId: entry.id, after: { customerId, ...dto } }, tx);
+    });
+    return { balances: await this.balances(customerId) };
+  }
+
   /** Staff take money from a customer at the till (debt repayment or a cash top-up). */
   async receipt(
     customerId: string,
@@ -130,6 +169,7 @@ export class CustomerAccountsService {
 }
 
 const WALLET_NOTES: Record<string, string> = {
+  OPENING_BALANCE: 'رصيد افتتاحي',
   WALLET_TOPUP: 'شحن رصيد',
   CUSTOMER_PAYMENT: 'دفعة / مشتريات',
   SALES_RETURN: 'مرتجع',

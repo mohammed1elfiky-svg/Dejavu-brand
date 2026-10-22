@@ -20,6 +20,8 @@ const boxSelect = {
   kind: true,
   currency: true,
   isActive: true,
+  icon: true,
+  imageUrl: true,
   createdAt: true,
   user: { select: { id: true, name: true } },
   account: { select: { id: true, code: true } },
@@ -148,15 +150,18 @@ export class TreasuryService {
     });
   }
 
-  async createBox(dto: { name: string; kind: CashBoxKind; currency: string }, userId: string) {
+  async createBox(dto: { name: string; kind: CashBoxKind; currency: string; icon?: string | null; imageUrl?: string | null }, userId: string) {
     if (dto.kind === CashBoxKind.CASHIER) throw new BadRequestException('Cashier drawers are opened automatically');
     await this.currencies.requireActive(dto.currency);
-    const box = await this.prisma.$transaction((tx) => this.openBox(tx, dto));
+    const box = await this.prisma.$transaction(async (tx) => {
+      const b = await this.openBox(tx, dto);
+      return dto.icon || dto.imageUrl ? tx.cashBox.update({ where: { id: b.id }, data: { icon: dto.icon, imageUrl: dto.imageUrl } }) : b;
+    });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'CashBox', entityId: box.id, after: dto });
     return (await this.listBoxes({ id: box.id }))[0];
   }
 
-  async updateBox(id: string, dto: { name?: string; isActive?: boolean }, userId: string) {
+  async updateBox(id: string, dto: { name?: string; isActive?: boolean; icon?: string | null; imageUrl?: string | null }, userId: string) {
     const box = await this.prisma.cashBox.update({ where: { id }, data: dto });
     await this.prisma.account.update({ where: { id: box.accountId }, data: { nameAr: box.name, nameEn: box.name } });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'CashBox', entityId: id, after: dto });
@@ -237,8 +242,17 @@ export class TreasuryService {
     dto: { fromBoxId: string; toBoxId: string; amount: string; toAmount?: string; note?: string },
     user: { id: string; permissions: string[] },
   ) {
+    const id = await this.prisma.$transaction((tx) => this.transferIn(tx, dto, user));
+    return this.getTransfer(id);
+  }
+
+  private async transferIn(
+    tx: Tx,
+    dto: { fromBoxId: string; toBoxId: string; amount: string; toAmount?: string; note?: string },
+    user: { id: string; permissions: string[] },
+  ): Promise<string> {
     if (dto.fromBoxId === dto.toBoxId) throw new BadRequestException('Pick two different boxes');
-    const id = await this.prisma.$transaction(async (tx) => {
+    {
       const [from, to] = await Promise.all([
         tx.cashBox.findUnique({ where: { id: dto.fromBoxId } }),
         tx.cashBox.findUnique({ where: { id: dto.toBoxId } }),
@@ -269,8 +283,9 @@ export class TreasuryService {
       const going = toBase(amount, from.currency, await this.currencies.rate(from.currency, tx));
       const out = await this.bookValue(tx, { boxId: from.id }, from.currency, amount.neg(), going.neg());
       const baseOut = out.neg();
-      // Bought currency is carried at what it cost; SAR received is worth its face value.
-      const baseIn = to.currency === BASE_CURRENCY ? money(toAmount) : baseOut;
+      // What came in is worth its market value (SAR at face): paying more or less than
+      // that for it is an exchange loss or gain, booked to profit and loss right away.
+      const baseIn = sameCurrency ? baseOut : toBase(toAmount, to.currency, await this.currencies.rate(to.currency, tx));
       const fx = money(baseIn.sub(baseOut));
 
       const number = await this.sequences.next(tx, 'TRF');
@@ -302,8 +317,49 @@ export class TreasuryService {
       });
       await this.audit.log({ userId: user.id, action: 'CREATE', entityType: 'CashTransfer', entityId: transfer.id, after: transfer }, tx);
       return transfer.id;
-    });
+    }
+  }
+
+  /**
+   * Cancels a transfer or exchange: its journal entry is reversed, so the money goes back
+   * to the source box and any exchange gain or loss is undone. The receiving box must
+   * still hold what it received.
+   */
+  async cancelTransfer(id: string, reason: string | undefined, user: { id: string; permissions: string[] }) {
+    await this.prisma.$transaction((tx) => this.cancelIn(tx, id, reason ?? 'Cancelled', user));
     return this.getTransfer(id);
+  }
+
+  /** Edits a transfer: cancels it and records the corrected one in the same step. */
+  async editTransfer(
+    id: string,
+    dto: { fromBoxId: string; toBoxId: string; amount: string; toAmount?: string; note?: string },
+    user: { id: string; permissions: string[] },
+  ) {
+    const newId = await this.prisma.$transaction(async (tx) => {
+      const old = await this.cancelIn(tx, id, 'Edited', user);
+      const created = await this.transferIn(tx, dto, user);
+      await tx.cashTransfer.update({ where: { id: old.id }, data: { replacedById: created } });
+      return created;
+    });
+    return this.getTransfer(newId);
+  }
+
+  private async cancelIn(tx: Tx, id: string, reason: string, user: { id: string; permissions: string[] }) {
+    await tx.$queryRaw`SELECT id FROM cash_transfers WHERE id = ${id}::uuid FOR UPDATE`;
+    const t = await tx.cashTransfer.findUnique({ where: { id }, include: { toBox: true } });
+    if (!t) throw new NotFoundException('Transfer not found');
+    if (t.cancelledAt) throw new UnprocessableEntityException('This transfer was already cancelled');
+    const held = await this.balanceOf(tx, { boxId: t.toBoxId });
+    if (held.amount.lt(t.toAmount)) {
+      throw new UnprocessableEntityException(`${t.toBox.name} no longer holds the ${dec(t.toAmount).toFixed()} ${t.toBox.currency} it received`);
+    }
+    const entry = await tx.journalEntry.findFirst({ where: { sourceType: 'CASH_TRANSFER', sourceId: id, status: 'POSTED' } });
+    if (!entry) throw new UnprocessableEntityException('The journal entry of this transfer is missing or already reversed');
+    await this.ledger.reverse(tx, entry.id, user.id, `${reason}: transfer ${t.number}`);
+    const cancelled = await tx.cashTransfer.update({ where: { id }, data: { cancelledAt: new Date(), cancelledById: user.id, cancelReason: reason } });
+    await this.audit.log({ userId: user.id, action: 'CANCEL', entityType: 'CashTransfer', entityId: id, after: { reason } }, tx);
+    return cancelled;
   }
 
   getTransfer(id: string) {

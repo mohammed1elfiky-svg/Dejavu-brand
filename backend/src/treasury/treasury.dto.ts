@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { CashBoxKind, TopUpStatus } from '../generated/prisma/client';
 import { IsAmount, IsCurrencyCode } from '../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -19,6 +19,22 @@ export class CreateCashBoxDto {
   @ApiProperty({ example: 'USD' })
   @IsCurrencyCode()
   currency: string;
+
+  @ApiPropertyOptional({ example: '💵', description: 'A symbol shown on the box (emoji); "" clears it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(16)
+  icon?: string | null;
+
+  @ApiPropertyOptional({ description: 'Uploaded picture or logo; "" clears it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string | null;
 }
 
 export class UpdateCashBoxDto {
@@ -33,6 +49,30 @@ export class UpdateCashBoxDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: '🏦' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(16)
+  icon?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string | null;
+}
+
+export class CancelTransferDto {
+  @ApiPropertyOptional({ example: 'خطأ في المبلغ' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  reason?: string;
 }
 
 export class CashBoxesQueryDto {
@@ -221,4 +261,24 @@ export class RejectTopUpDto {
   @MinLength(3)
   @MaxLength(255)
   reason: string;
+}
+
+export class OpeningBalanceDto {
+  @ApiProperty({ example: 'YER' })
+  @IsCurrencyCode()
+  currency: string;
+
+  @ApiProperty({ example: '50000' })
+  @IsAmount()
+  amount: string;
+
+  @ApiProperty({ enum: ['OWES', 'CREDIT'], description: 'OWES: the customer owes the store; CREDIT: the store holds money for the customer' })
+  @IsIn(['OWES', 'CREDIT'])
+  direction: 'OWES' | 'CREDIT';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
 }

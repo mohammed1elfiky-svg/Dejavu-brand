@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountType, NormalBalance, Prisma } from '../generated/prisma/client';
+import { inCurrency } from '../common/currency.service';
 import { businessDate, parseDateOnly } from '../common/utils/dates';
 import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { PrismaService } from '../prisma/prisma.service';
@@ -330,6 +331,10 @@ export class ReportsService {
     const key = (k: string) => (a: AccountTotal) => accounts.find((x) => x.id === a.id)?.systemKey === k;
     const cashAccounts = await this.prisma.account.findMany({ where: { isCashOrBank: true, isActive: true }, select: { id: true } });
     const isCash = new Set(cashAccounts.map((a) => a.id));
+    const boxes = await this.prisma.cashBox.findMany({ select: { id: true, accountId: true, currency: true, icon: true } });
+    const held_ = new Map(
+      (await this.prisma.cashBoxEntry.groupBy({ by: ['cashBoxId'], _sum: { amount: true } })).map((r) => [r.cashBoxId, r._sum.amount]),
+    );
     const mtd = this.profitAndLoss(await this.accountTotals(monthStart, today));
 
     return {
@@ -338,9 +343,23 @@ export class ReportsService {
       ordersByStatus: Object.fromEntries(byStatus.map((s) => [s.status, s._count])),
       pendingReturns,
       lowStockVariants: lowStock[0]?.n ?? 0,
+      // Cash boxes show what they hold in their own currency (e.g. 100 USD), with the SAR book value.
       cashAndBank: totals
         .filter((a) => isCash.has(a.id))
-        .map((a) => ({ accountId: a.id, code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, balance: money(a.debit.sub(a.credit)) })),
+        .map((a) => {
+          const box = boxes.find((b) => b.accountId === a.id);
+          const held = box ? held_.get(box.id) : undefined;
+          return {
+            accountId: a.id,
+            code: a.code,
+            nameAr: a.nameAr,
+            nameEn: a.nameEn,
+            balance: money(a.debit.sub(a.credit)),
+            currency: box?.currency ?? 'SAR',
+            amount: box ? inCurrency(dec(held), box.currency) : money(a.debit.sub(a.credit)),
+            icon: box?.icon ?? null,
+          };
+        }),
       receivables: {
         customers: balanceOf(key('AR')),
         couriersCod: balanceOf(key('COD_RECEIVABLE')),

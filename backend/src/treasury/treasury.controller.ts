@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public, RequirePermissions, StaffOnly } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -7,10 +7,12 @@ import {
   AccountStatementQueryDto,
   ApproveTopUpDto,
   BankAccountDto,
+  CancelTransferDto,
   CashBoxesQueryDto,
   CashTransferDto,
   CreateCashBoxDto,
   CustomerReceiptDto,
+  OpeningBalanceDto,
   RejectTopUpDto,
   TopUpRequestDto,
   TopUpsQueryDto,
@@ -75,6 +77,21 @@ export class AdminTreasuryController {
     return this.treasury.transfer(dto, u);
   }
 
+  /** Cancels a transfer or exchange (reversed in the books). */
+  @RequirePermissions('cashboxes.manage')
+  @Post('cash-transfers/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelTransfer(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelTransferDto, @CurrentUser() u: AuthPrincipal) {
+    return this.treasury.cancelTransfer(id, dto.reason, u);
+  }
+
+  /** Corrects a transfer or exchange: the old one is cancelled and the new one recorded. */
+  @RequirePermissions('cashboxes.manage')
+  @Put('cash-transfers/:id')
+  editTransfer(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CashTransferDto, @CurrentUser() u: AuthPrincipal) {
+    return this.treasury.editTransfer(id, dto, u);
+  }
+
   @RequirePermissions('cashboxes.manage')
   @Get('cash-transfers')
   transfers(@Query() q: TransfersQueryDto) {
@@ -95,6 +112,13 @@ export class AdminCustomerAccountController {
   }
 
   /** Money taken from the customer at the till: pays off debt, any excess becomes credit. */
+  /** A balance from before the system (debt owed, or money held for the customer). */
+  @RequirePermissions('customers.write', 'journal.write')
+  @Post('opening-balance')
+  openingBalance(@Param('id', ParseUUIDPipe) id: string, @Body() dto: OpeningBalanceDto, @CurrentUser() u: AuthPrincipal) {
+    return this.accounts.openingBalance(id, dto, u.id);
+  }
+
   @RequirePermissions('pos.sell')
   @Post('receipts')
   receipt(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CustomerReceiptDto, @CurrentUser() u: AuthPrincipal) {

@@ -663,6 +663,7 @@ private fun ArrangeGrid(order: List<PosProduct>, currency: Currency, rate: BigDe
                     inCart = 0,
                     onClick = {},
                     lifted = isDragging,
+                    tappable = false,
                     modifier = Modifier.longPressDraggableHandle(),
                 )
             }
@@ -692,6 +693,7 @@ private fun ProductTile(
     inCart: Int,
     onClick: () -> Unit,
     lifted: Boolean = false,
+    tappable: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val out = p.available <= 0
@@ -700,7 +702,7 @@ private fun ProductTile(
         elevation = if (lifted) 22.dp else 8.dp,
         contentPadding = 0.dp,
     ) {
-        Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(8.dp)) {
+        Column(Modifier.fillMaxWidth().then(if (tappable) Modifier.clickable(onClick = onClick) else Modifier).padding(8.dp)) {
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Lux.Champagne),
                 contentAlignment = Alignment.Center,

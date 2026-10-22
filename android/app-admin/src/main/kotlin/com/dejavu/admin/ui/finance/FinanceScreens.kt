@@ -17,11 +17,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -34,6 +36,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,11 +55,16 @@ import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.AccountPickerDialog
 import com.dejavu.admin.ui.ChipFilter
 import com.dejavu.admin.ui.InfoCard
+import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.pos.decimalInput
+import com.dejavu.admin.ui.pos.validAmount
+import com.dejavu.admin.ui.treasury.sourceLabel
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.AdminCustomerDetail
 import com.dejavu.core.admin.AdminCustomerSummary
 import com.dejavu.core.admin.BalanceSheet
+import com.dejavu.core.admin.CustomerAccount
 import com.dejavu.core.admin.DashboardRepository
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.IncomeStatement
@@ -67,6 +75,7 @@ import com.dejavu.core.admin.ReportSection
 import com.dejavu.core.admin.SalesReport
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.data.userMessage
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
@@ -77,6 +86,7 @@ import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDate
+import com.dejavu.core.ui.formatDateTime
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.toLoad
@@ -546,10 +556,42 @@ fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
 class CustomerDetailViewModel(private val id: String, private val repo: FinanceRepository) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<AdminCustomerDetail>>(Load.Loading)
     val state = _state.asStateFlow()
+    private val _account = MutableStateFlow<Load<CustomerAccount>>(Load.Loading)
+    val account = _account.asStateFlow()
+    private val _currencies = MutableStateFlow(listOf(Currency.SAR))
+    val currencies = _currencies.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.customer(id).toLoad() }
+        loadAccount()
+        viewModelScope.launch {
+            repo.activeCurrencies().onSuccess { cs ->
+                _currencies.value = (listOf(Currency.SAR) + cs.register().map { Currency.of(it.code) }).distinct()
+            }
+        }
+    }
+
+    fun loadAccount() {
+        if (_account.value !is Load.Ready) _account.value = Load.Loading
+        viewModelScope.launch { _account.value = repo.customerAccount(id).toLoad() }
+    }
+
+    /** Money taken from the customer at the till: settles their debt, any excess becomes wallet credit. */
+    fun collect(currency: Currency, amount: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            repo.customerReceipt(id, currency, amount).orSay()?.let {
+                say("تم تحصيل ${Money.plain(Money.parse(amount), currency)}")
+                done()
+                _account.value = repo.customerAccount(id).toLoad()
+                repo.customer(id).onSuccess { c -> _state.value = Load.Ready(c) }
+            }
+            _busy.value = false
+        }
     }
 }
 
@@ -557,12 +599,28 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
 fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> Unit) {
     val vm = adminViewModel(key = "customer:$id") { CustomerDetailViewModel(id, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
+    val currencies by vm.currencies.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val canCollect = adminContainer().session.can(Perm.POS_SELL)
+    val snackbar = remember { SnackbarHostState() }
+    var collecting by remember { mutableStateOf(false) }
+    CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
     }
+    if (collecting) {
+        CollectDialog(currencies, onDismiss = { collecting = false }) { currency, amount ->
+            vm.collect(currency, amount) { collecting = false }
+        }
+    }
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar((state as? Load.Ready)?.value?.name ?: "عميل", onBack) }) { padding ->
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar((state as? Load.Ready)?.value?.name ?: "عميل", onBack) },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { c ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
@@ -588,6 +646,7 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                         )
                     }
                 }
+                item { CustomerAccountCard(account, canCollect = canCollect && !busy, onRetry = vm::loadAccount, onCollect = { collecting = true }) }
                 item { Text("آخر الطلبات", style = MaterialTheme.typography.titleSmall) }
                 if (c.orders.isEmpty()) item { Text("لا توجد طلبات بعد", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 items(c.orders, key = { it.id }) { o ->
@@ -608,4 +667,94 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
             }
         }
     }
+}
+
+/** Balances per currency on the customer's account (+ they owe the store, − the store holds their money). */
+@Composable
+private fun CustomerAccountCard(state: Load<CustomerAccount>, canCollect: Boolean, onRetry: () -> Unit, onCollect: () -> Unit) {
+    InfoCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("حساب العميل", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (canCollect) {
+                Button(onClick = onCollect) { Text("تحصيل دفعة") }
+            }
+        }
+        when (state) {
+            Load.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+            is Load.Failed -> {
+                Text(state.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onRetry) { Text("إعادة المحاولة") }
+            }
+            is Load.Ready -> {
+                val acc = state.value
+                val balances = acc.balances.filter { Money.parse(it.balance).signum() != 0 }
+                if (balances.isEmpty()) {
+                    Text("لا يوجد رصيد مستحق أو دائن", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                balances.forEach { b ->
+                    val v = Money.parse(b.balance)
+                    SummaryRow(
+                        if (v.signum() > 0) "مدين على العميل (${b.currency.nameAr})" else "رصيد للعميل (${b.currency.nameAr})",
+                        Money.plain(v.abs(), b.currency),
+                        strong = true,
+                        valueColor = if (v.signum() > 0) MaterialTheme.colorScheme.error else Success,
+                    )
+                }
+                if (acc.entries.items.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    Text("آخر الحركات", style = MaterialTheme.typography.titleSmall)
+                    acc.entries.items.take(10).forEach { e ->
+                        val v = Money.parse(e.amount)
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(sourceLabel(e.sourceType, e.note), style = MaterialTheme.typography.bodyMedium)
+                                Text(formatDateTime(e.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(
+                                (if (v.signum() > 0) "+" else "−") + Money.plain(v.abs(), e.currency),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (v.signum() > 0) MaterialTheme.colorScheme.error else Success,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectDialog(currencies: List<Currency>, onDismiss: () -> Unit, onConfirm: (Currency, String) -> Unit) {
+    var currency by remember { mutableStateOf(currencies.firstOrNull() ?: Currency.SAR) }
+    var amount by rememberSaveable { mutableStateOf("") }
+    val value = validAmount(amount, currency)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تحصيل دفعة من العميل") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    currencies.forEach { c -> FilterChip(selected = c == currency, onClick = { currency = c }, label = { Text(c.nameAr) }) }
+                }
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = decimalInput(it) },
+                    label = { Text("المبلغ (${currency.symbol})") },
+                    isError = amount.isNotBlank() && value == null,
+                    supportingText = if (currency.decimals == 0) ({ Text("بدون كسور") }) else null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                Text(
+                    "يُسدَّد به دين العميل بهذه العملة، وأي زيادة تصبح رصيداً له. يُستلم المبلغ في درجك.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString()) }, enabled = value != null) { Text("تحصيل") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
 }

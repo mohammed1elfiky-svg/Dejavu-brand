@@ -248,6 +248,8 @@ model User {
   id           String     @id @default(uuid()) @db.Uuid
   name         String
   email        String     @unique
+  /// Optional short login name (staff can sign in with it instead of the email).
+  username     String?    @unique
   phone        String?    @unique
   passwordHash String     @map("password_hash")
   status       UserStatus @default(ACTIVE)
@@ -276,6 +278,7 @@ model User {
   posOrders             Order[]              @relation("OrderCashier")
   cashBoxes             CashBox[]
   topUpsReviewed        WalletTopUp[]
+  cashBoxAccess         CashBoxAccess[]
 
   @@map("users")
 }
@@ -330,22 +333,28 @@ model RolePermission {
 
 /// Shoppers using the customer Android app.
 model Customer {
-  id            String         @id @default(uuid()) @db.Uuid
-  code          String         @unique // CUS-000123
-  name          String
-  phone         String         @unique
-  email         String?        @unique
-  passwordHash  String?        @map("password_hash")
-  phoneVerified Boolean        @default(false) @map("phone_verified")
-  gender        Gender         @default(UNSPECIFIED)
-  birthDate     DateTime?      @map("birth_date") @db.Date
-  status        CustomerStatus @default(ACTIVE)
+  id               String         @id @default(uuid()) @db.Uuid
+  code             String         @unique // CUS-000123
+  name             String
+  phone            String         @unique
+  email            String?        @unique
+  passwordHash     String?        @map("password_hash")
+  phoneVerified    Boolean        @default(false) @map("phone_verified")
+  gender           Gender         @default(UNSPECIFIED)
+  birthDate        DateTime?      @map("birth_date") @db.Date
+  status           CustomerStatus @default(ACTIVE)
   /// Receivable sub-ledger account (optional; defaults to the global AR account).
-  accountId     String?        @map("account_id") @db.Uuid
-  loyaltyPoints Int            @default(0) @map("loyalty_points")
-  notes         String?
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  accountId        String?        @map("account_id") @db.Uuid
+  loyaltyPoints    Int            @default(0) @map("loyalty_points")
+  /// Wholesale buyer: gets wholesale prices and its own discount, and may buy on credit.
+  isMerchant       Boolean        @default(false) @map("is_merchant")
+  /// Extra percent off for this merchant, on top of the wholesale price.
+  merchantDiscount Decimal        @default(0) @map("merchant_discount") @db.Decimal(5, 2)
+  /// Most a merchant may owe, in SAR (null = no limit).
+  creditLimit      Decimal?       @map("credit_limit") @db.Decimal(14, 2)
+  notes            String?
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   account        Account?               @relation(fields: [accountId], references: [id])
   addresses      CustomerAddress[]
@@ -467,6 +476,8 @@ model Product {
   basePrice      Decimal       @map("base_price") @db.Decimal(14, 2)
   /// Strike-through price shown in the app.
   compareAtPrice Decimal?      @map("compare_at_price") @db.Decimal(14, 2)
+  /// Price for merchant (wholesale) customers.
+  wholesalePrice Decimal?      @map("wholesale_price") @db.Decimal(14, 2)
   taxRateId      String?       @map("tax_rate_id") @db.Uuid
   isFeatured     Boolean       @default(false) @map("is_featured")
   ratingAvg      Decimal       @default(0) @map("rating_avg") @db.Decimal(3, 2)
@@ -1375,13 +1386,14 @@ model CashBox {
   isActive  Boolean     @default(true) @map("is_active")
   createdAt DateTime    @default(now()) @map("created_at")
 
-  currencyInfo Currency       @relation(fields: [currency], references: [code])
-  user         User?          @relation(fields: [userId], references: [id])
-  account      Account        @relation(fields: [accountId], references: [id])
+  currencyInfo Currency        @relation(fields: [currency], references: [code])
+  user         User?           @relation(fields: [userId], references: [id])
+  account      Account         @relation(fields: [accountId], references: [id])
   entries      CashBoxEntry[]
-  transfersOut CashTransfer[] @relation("TransferFrom")
-  transfersIn  CashTransfer[] @relation("TransferTo")
+  transfersOut CashTransfer[]  @relation("TransferFrom")
+  transfersIn  CashTransfer[]  @relation("TransferTo")
   topUps       WalletTopUp[]
+  access       CashBoxAccess[]
 
   @@unique([userId, currency])
   @@map("cash_boxes")
@@ -1553,4 +1565,18 @@ model StoredFile {
   topUps WalletTopUp[]
 
   @@map("stored_files")
+}
+
+/// Boxes a staff member is allowed to use (on top of their own drawers). A staff member
+/// with any assignment sees and uses only those boxes (managers still see all of them).
+model CashBoxAccess {
+  userId    String @map("user_id") @db.Uuid
+  cashBoxId String @map("cash_box_id") @db.Uuid
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cashBox CashBox @relation(fields: [cashBoxId], references: [id], onDelete: Cascade)
+
+  @@id([userId, cashBoxId])
+  @@index([cashBoxId])
+  @@map("cash_box_access")
 }

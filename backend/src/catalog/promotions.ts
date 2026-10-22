@@ -33,3 +33,20 @@ export function promotedPrice(price: DecimalLike, promo: ActivePromotion | undef
   if (!promo) return money(price);
   return money(dec(price).mul(dec(100).sub(promo.percent)).div(100));
 }
+
+/** Who is buying, for prices: merchants pay the wholesale price minus their own discount. */
+export interface Buyer {
+  isMerchant: boolean;
+  merchantDiscount: DecimalLike;
+}
+
+/**
+ * The unit price a buyer pays. Merchants: the product's wholesale price (or the shelf price
+ * after promotions when it has none), less their merchant discount. Everyone else: the shelf
+ * price after a running promotion.
+ */
+export function buyerPrice(shelf: DecimalLike, wholesale: DecimalLike | null | undefined, promo: ActivePromotion | undefined, buyer?: Buyer | null): Decimal {
+  if (!buyer?.isMerchant) return promotedPrice(shelf, promo);
+  const base = wholesale != null ? dec(wholesale) : promotedPrice(shelf, promo);
+  return money(base.mul(dec(100).sub(dec(buyer.merchantDiscount))).div(100));
+}

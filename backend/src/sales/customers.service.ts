@@ -70,7 +70,19 @@ export class CustomersService {
     const [items, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,
-        select: { id: true, code: true, name: true, phone: true, email: true, status: true, createdAt: true, _count: { select: { orders: true } } },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          phone: true,
+          email: true,
+          status: true,
+          isMerchant: true,
+          merchantDiscount: true,
+          creditLimit: true,
+          createdAt: true,
+          _count: { select: { orders: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: q.skip,
         take: q.pageSize,
@@ -95,6 +107,22 @@ export class CustomersService {
     return customer;
   }
 
+  /** Marks a customer as a merchant (wholesale prices, own discount, may buy on credit). */
+  async updateMerchant(id: string, dto: { isMerchant?: boolean; merchantDiscount?: string; creditLimit?: string | null; notes?: string }, userId: string) {
+    const before = await this.prisma.customer.findUnique({ where: { id }, select: { isMerchant: true, merchantDiscount: true, creditLimit: true, code: true } });
+    if (!before) throw new NotFoundException('Customer not found');
+    if (before.code === 'CUS-WALKIN') throw new BadRequestException('The walk-in customer cannot be changed');
+    if (dto.merchantDiscount !== undefined && !(dec(dto.merchantDiscount).gte(0) && dec(dto.merchantDiscount).lt(100))) {
+      throw new BadRequestException('Merchant discount must be between 0 and 99.99%');
+    }
+    await this.prisma.customer.update({
+      where: { id },
+      data: { isMerchant: dto.isMerchant, merchantDiscount: dto.merchantDiscount, creditLimit: dto.creditLimit, notes: dto.notes },
+    });
+    await this.audit.log({ userId, action: 'UPDATE', entityType: 'CustomerMerchant', entityId: id, before, after: dto });
+    return this.getCustomer(id);
+  }
+
   async getCustomer(id: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },
@@ -108,6 +136,9 @@ export class CustomersService {
         gender: true,
         birthDate: true,
         loyaltyPoints: true,
+        isMerchant: true,
+        merchantDiscount: true,
+        creditLimit: true,
         notes: true,
         createdAt: true,
         addresses: true,

@@ -102,13 +102,13 @@ export class StoreCatalogController {
   }
 
   @Get('products')
-  products(@Query() q: StoreProductsQueryDto) {
-    return this.catalog.storeProducts(q);
+  products(@Query() q: StoreProductsQueryDto, @CurrentUser() u?: AuthPrincipal) {
+    return this.catalog.storeProducts(q, u?.type === 'customer' ? u.id : undefined);
   }
 
   @Get('products/:slug')
-  product(@Param('slug') slug: string) {
-    return this.catalog.storeProduct(slug);
+  product(@Param('slug') slug: string, @CurrentUser() u?: AuthPrincipal) {
+    return this.catalog.storeProduct(slug, u?.type === 'customer' ? u.id : undefined);
   }
 }
 

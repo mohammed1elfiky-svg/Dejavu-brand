@@ -11,15 +11,36 @@ const userSelect = {
   id: true,
   name: true,
   email: true,
+  username: true,
   phone: true,
   status: true,
   lastLoginAt: true,
   createdAt: true,
-  roles: { select: { role: { select: { id: true, name: true } } } },
+  roles: {
+    select: { role: { select: { id: true, name: true, isSystem: true, permissions: { select: { permission: { select: { key: true } } } } } } },
+  },
+  cashBoxAccess: { select: { cashBoxId: true } },
 } satisfies Prisma.UserSelect;
 
 type UserRow = Prisma.UserGetPayload<{ select: typeof userSelect }>;
-const presentUser = (u: UserRow) => ({ ...u, roles: u.roles.map((r) => r.role) });
+
+/** Each employee's own permissions live in a private role named after them. */
+const personalRoleName = (userId: string) => `user_${userId.replace(/-/g, '')}`;
+
+const presentUser = (u: UserRow) => {
+  const personal = u.roles.find((r) => r.role.name === personalRoleName(u.id));
+  const keys = (r: UserRow['roles'][number]) => r.role.permissions.map((p) => p.permission.key);
+  return {
+    ...u,
+    cashBoxAccess: undefined,
+    roles: u.roles.filter((r) => r !== personal).map((r) => ({ id: r.role.id, name: r.role.name })),
+    /** Permissions granted to this employee directly. */
+    customPermissions: personal ? keys(personal).sort() : [],
+    /** Everything the employee can do (roles + own permissions). */
+    permissions: [...new Set(u.roles.flatMap(keys))].sort(),
+    cashBoxIds: u.cashBoxAccess.map((a) => a.cashBoxId),
+  };
+};
 
 @Injectable()
 export class UsersService {
@@ -47,18 +68,77 @@ export class UsersService {
 
   async createUser(dto: CreateUserDto, actorId: string) {
     await this.assertRolesExist(dto.roleIds);
-    const user = await this.prisma.user.create({
-      data: {
-        name: dto.name.trim(),
-        email: dto.email.toLowerCase(),
-        phone: dto.phone,
-        passwordHash: await hashPassword(dto.password),
-        roles: { create: dto.roleIds.map((roleId) => ({ roleId })) },
-      },
-      select: userSelect,
+    if (!dto.roleIds.length && !dto.permissions?.length) throw new BadRequestException('Give the employee a role or some permissions');
+    await this.assertUsernameFree(dto.username);
+    const created = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: dto.name.trim(),
+          email: dto.email.toLowerCase(),
+          username: dto.username ?? null,
+          phone: dto.phone,
+          passwordHash: await hashPassword(dto.password),
+          roles: { create: dto.roleIds.map((roleId) => ({ roleId })) },
+        },
+        select: { id: true },
+      });
+      if (dto.permissions?.length) await this.writePermissions(tx, user.id, dto.name, dto.permissions);
+      if (dto.cashBoxIds?.length) await this.writeCashBoxes(tx, user.id, dto.cashBoxIds);
+      return user;
     });
+    const user = await this.getUser(created.id);
     await this.audit.log({ userId: actorId, action: 'CREATE', entityType: 'User', entityId: user.id, after: user });
-    return presentUser(user);
+    return user;
+  }
+
+  /** Replaces the employee's own permissions (their roles stay as they are). */
+  async setPermissions(id: string, permissions: string[], actorId: string) {
+    const before = await this.getUser(id);
+    await this.prisma.$transaction((tx) => this.writePermissions(tx, id, before.name, permissions));
+    await this.tokens.revokeAll({ type: 'staff', id });
+    const after = await this.getUser(id);
+    await this.audit.log({ userId: actorId, action: 'UPDATE', entityType: 'UserPermissions', entityId: id, before: before.customPermissions, after: permissions });
+    return after;
+  }
+
+  /** Limits the employee to these boxes (empty = back to their own drawers only). */
+  async setCashBoxes(id: string, cashBoxIds: string[], actorId: string) {
+    const before = await this.getUser(id);
+    await this.prisma.$transaction((tx) => this.writeCashBoxes(tx, id, cashBoxIds));
+    const after = await this.getUser(id);
+    await this.audit.log({ userId: actorId, action: 'UPDATE', entityType: 'UserCashBoxes', entityId: id, before: before.cashBoxIds, after: cashBoxIds });
+    return after;
+  }
+
+  private async writePermissions(tx: Prisma.TransactionClient, userId: string, name: string, keys: string[]) {
+    const perms = await tx.permission.findMany({ where: { key: { in: keys } }, select: { id: true, key: true } });
+    const unknown = keys.filter((k) => !perms.some((p) => p.key === k));
+    if (unknown.length) throw new BadRequestException(`Unknown permissions: ${unknown.join(', ')}`);
+    const roleName = personalRoleName(userId);
+    const role = await tx.role.upsert({
+      where: { name: roleName },
+      update: { description: `صلاحيات خاصة: ${name}` },
+      create: { name: roleName, description: `صلاحيات خاصة: ${name}` },
+    });
+    await tx.rolePermission.deleteMany({ where: { roleId: role.id } });
+    if (keys.length) await tx.rolePermission.createMany({ data: perms.map((p) => ({ roleId: role.id, permissionId: p.id })) });
+    await tx.userRole.upsert({
+      where: { userId_roleId: { userId, roleId: role.id } },
+      update: {},
+      create: { userId, roleId: role.id },
+    });
+  }
+
+  private async writeCashBoxes(tx: Prisma.TransactionClient, userId: string, boxIds: string[]) {
+    if ((await tx.cashBox.count({ where: { id: { in: boxIds } } })) !== boxIds.length) throw new BadRequestException('Some cash boxes do not exist');
+    await tx.cashBoxAccess.deleteMany({ where: { userId } });
+    if (boxIds.length) await tx.cashBoxAccess.createMany({ data: boxIds.map((cashBoxId) => ({ userId, cashBoxId })) });
+  }
+
+  private async assertUsernameFree(username: string | null | undefined, exceptId?: string) {
+    if (!username) return;
+    const taken = await this.prisma.user.findFirst({ where: { OR: [{ username }, { email: username }], id: exceptId ? { not: exceptId } : undefined } });
+    if (taken) throw new ConflictException('This username is already used');
   }
 
   async updateUser(id: string, dto: UpdateUserDto, actorId: string) {
@@ -67,6 +147,7 @@ export class UsersService {
       throw new BadRequestException('You cannot deactivate your own account');
     }
     if (dto.roleIds) await this.assertRolesExist(dto.roleIds);
+    await this.assertUsernameFree(dto.username, id);
 
     const user = await this.prisma.$transaction(async (tx) => {
       const losesAdmin =
@@ -80,13 +161,15 @@ export class UsersService {
         if (others === 0) throw new BadRequestException('At least one active admin must remain');
       }
       if (dto.roleIds) {
-        await tx.userRole.deleteMany({ where: { userId: id } });
-        await tx.userRole.createMany({ data: dto.roleIds.map((roleId) => ({ userId: id, roleId })) });
+        // The employee's own-permissions role is kept.
+        await tx.userRole.deleteMany({ where: { userId: id, role: { name: { not: personalRoleName(id) } } } });
+        await tx.userRole.createMany({ data: dto.roleIds.map((roleId) => ({ userId: id, roleId })), skipDuplicates: true });
       }
       return tx.user.update({
         where: { id },
         data: {
           name: dto.name?.trim(),
+          username: dto.username === undefined ? undefined : dto.username,
           phone: dto.phone,
           status: dto.status,
           passwordHash: dto.password ? await hashPassword(dto.password) : undefined,
@@ -123,7 +206,7 @@ export class UsersService {
         _count: { select: { users: true } },
       },
     });
-    return roles.map(({ permissions, _count, ...r }) => ({
+    return roles.filter((r) => !r.name.startsWith('user_')).map(({ permissions, _count, ...r }) => ({
       ...r,
       userCount: _count.users,
       permissions: permissions.map((p) => p.permission.key).sort(),

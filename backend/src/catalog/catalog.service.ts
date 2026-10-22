@@ -5,7 +5,7 @@ import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
-import { activePromotions, promotedPrice } from './promotions';
+import { activePromotions, Buyer, buyerPrice, promotedPrice } from './promotions';
 import {
   AdminProductsQueryDto,
   CreateCategoryDto,
@@ -39,6 +39,7 @@ const storeProductSelect = {
   descriptionEn: true,
   basePrice: true,
   compareAtPrice: true,
+  wholesalePrice: true,
   isFeatured: true,
   ratingAvg: true,
   ratingCount: true,
@@ -63,23 +64,28 @@ const storeProductSelect = {
 type StoreProductRow = Prisma.ProductGetPayload<{ select: typeof storeProductSelect }>;
 
 /** Shopper view of a product: running promotion applied, original price shown struck through. */
-const presentStoreProduct = ({ variants, ...p }: StoreProductRow, promos: Awaited<ReturnType<typeof activePromotions>>) => {
+const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow, promos: Awaited<ReturnType<typeof activePromotions>>, buyer?: Buyer | null) => {
   const promo = promos.get(p.id);
+  const merchant = !!buyer?.isMerchant;
   const shaped = variants.map(({ stockLevels, price, ...v }) => {
     const available = stockLevels.reduce((n, s) => n + s.onHand - s.reserved, 0);
     const shelf = price ?? p.basePrice;
+    const paid = buyerPrice(shelf, wholesalePrice, promo, buyer);
     return {
       ...v,
-      price: promotedPrice(shelf, promo),
-      compareAtPrice: promo ? shelf : null,
+      price: paid,
+      compareAtPrice: promo || (merchant && paid.lt(shelf)) ? shelf : null,
       availableQty: available,
       inStock: available > 0,
     };
   });
+  const base = buyerPrice(p.basePrice, wholesalePrice, promo, buyer);
   return {
     ...p,
-    basePrice: promotedPrice(p.basePrice, promo),
-    compareAtPrice: promo ? p.basePrice : p.compareAtPrice,
+    basePrice: base,
+    compareAtPrice: promo || (merchant && base.lt(p.basePrice)) ? p.basePrice : p.compareAtPrice,
+    /** Shown as "سعر التاجر" in the app. */
+    merchantPrice: merchant,
     promotion: promo ? { name: promo.name, percent: promo.percent, endsAt: promo.endsAt } : null,
     inStock: shaped.some((v) => v.inStock),
     variants: shaped,
@@ -326,7 +332,13 @@ export class CatalogService {
 
   // -------------------------------------------------------- store catalog ---
 
-  async storeProducts(q: StoreProductsQueryDto) {
+  /** Merchant pricing applies to signed-in merchant customers. */
+  private buyer(customerId?: string): Promise<Buyer | null> {
+    if (!customerId) return Promise.resolve(null);
+    return this.prisma.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true } });
+  }
+
+  async storeProducts(q: StoreProductsQueryDto, customerId?: string) {
     let categoryIds: string[] | undefined;
     if (q.category) {
       const cat = await this.prisma.category.findUnique({ where: { slug: q.category } });
@@ -348,20 +360,21 @@ export class CatalogService {
       this.prisma.product.count({ where }),
     ]);
     const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
+    const buyer = await this.buyer(customerId);
     return paginated(
-      rows.map((r) => presentStoreProduct(r, promos)),
+      rows.map((r) => presentStoreProduct(r, promos, buyer)),
       total,
       q,
     );
   }
 
-  async storeProduct(slug: string) {
+  async storeProduct(slug: string, customerId?: string) {
     const row = await this.prisma.product.findFirst({
       where: { slug, status: ProductStatus.ACTIVE, category: { isActive: true } },
       select: storeProductSelect,
     });
     if (!row) throw new NotFoundException('Product not found');
-    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]));
+    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]), await this.buyer(customerId));
   }
 }
 

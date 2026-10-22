@@ -4,7 +4,7 @@ import { dec } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { AddCartItemDto } from './dto/sales.dto';
 import { priceOrder, PricingResult } from './pricing';
-import { activePromotions, promotedPrice } from '../catalog/promotions';
+import { activePromotions, buyerPrice } from '../catalog/promotions';
 import { getSetting } from './settings';
 
 const MAX_LINE_QTY = 20;
@@ -30,6 +30,7 @@ const cartInclude = {
               nameAr: true,
               nameEn: true,
               basePrice: true,
+              wholesalePrice: true,
               status: true,
               taxRate: { select: { rate: true, isActive: true } },
               images: { orderBy: { sortOrder: 'asc' }, select: { url: true, color: true } },
@@ -163,10 +164,11 @@ export class CartService {
 
     const pricesIncludeTax = await getSetting(tx, 'tax.pricesIncludeTax', true);
     const promos = await activePromotions(tx, items.map((i) => i.variant.product.id));
+    const buyer = await tx.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true } });
     const pricingLines = items.map((item) => ({
       variantId: item.variant.id,
       quantity: item.quantity,
-      unitPrice: promotedPrice(item.variant.price ?? item.variant.product.basePrice, promos.get(item.variant.product.id)),
+      unitPrice: buyerPrice(item.variant.price ?? item.variant.product.basePrice, item.variant.product.wholesalePrice, promos.get(item.variant.product.id), buyer),
       taxRate: item.variant.product.taxRate?.isActive ? item.variant.product.taxRate.rate : 0,
     }));
 

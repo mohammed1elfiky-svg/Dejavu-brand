@@ -11,7 +11,7 @@ import {
   TransactionStatus,
 } from '../generated/prisma/client';
 import { LedgerService, PostingLine } from '../accounting/ledger.service';
-import { activePromotions, promotedPrice } from '../catalog/promotions';
+import { activePromotions, buyerPrice, promotedPrice } from '../catalog/promotions';
 import { AuditService } from '../common/audit.service';
 import { BASE_CURRENCY, CurrencyService, inCurrency, toBase, toCurrency } from '../common/currency.service';
 import { SequenceService } from '../common/sequence.service';
@@ -32,6 +32,7 @@ const posProductSelect = {
   nameEn: true,
   skuNumber: true,
   basePrice: true,
+  wholesalePrice: true,
   posSortOrder: true,
   category: { select: { id: true, nameAr: true } },
   images: { orderBy: { sortOrder: 'asc' }, select: { url: true, color: true } },
@@ -149,20 +150,24 @@ export class PosService {
       for (const i of dto.items) quantities.set(i.variantId, (quantities.get(i.variantId) ?? 0) + i.quantity);
       const variants = await tx.productVariant.findMany({
         where: { id: { in: [...quantities.keys()] } },
-        include: { product: { select: { id: true, nameAr: true, basePrice: true, status: true, taxRate: { select: { rate: true, isActive: true } } } } },
+        include: {
+          product: { select: { id: true, nameAr: true, basePrice: true, wholesalePrice: true, status: true, taxRate: { select: { rate: true, isActive: true } } } },
+        },
         orderBy: { id: 'asc' },
       });
       if (variants.length !== quantities.size) throw new NotFoundException('Some items were not found');
       const inactive = variants.find((v) => !v.isActive || v.product.status !== ProductStatus.ACTIVE);
       if (inactive) throw new UnprocessableEntityException(`${inactive.sku} is not for sale`);
       const promos = await activePromotions(tx, variants.map((v) => v.product.id));
+      // Merchants pay wholesale prices less their own discount.
+      const buyer = await tx.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true } });
       const rate = invoiceCurrency.rate;
       const discount = this.discountOf(dto, invoiceCurrency.code, rate);
       const pricing = priceOrder({
         lines: variants.map((v) => ({
           variantId: v.id,
           quantity: quantities.get(v.id)!,
-          unitPrice: promotedPrice(v.price ?? v.product.basePrice, promos.get(v.product.id)),
+          unitPrice: buyerPrice(v.price ?? v.product.basePrice, v.product.wholesalePrice, promos.get(v.product.id), buyer),
           taxRate: v.product.taxRate?.isActive ? v.product.taxRate.rate : 0,
         })),
         coupon: discount,
@@ -365,7 +370,7 @@ export class PosService {
       count: sales.length,
       total: money(sum(sales.map((s) => s.grandTotal))),
       sales: sales.map((s) => ({ ...s, grandTotalInCurrency: toCurrency(s.grandTotal, s.currency, s.exchangeRate) })),
-      boxes: await this.treasury.listBoxes({ userId: cashierId }),
+      boxes: await this.treasury.listBoxes(this.treasury.mineWhere(cashierId)),
     };
   }
 
@@ -397,7 +402,7 @@ export class PosService {
         method === PaymentMethod.BANK_TRANSFER
           ? p.bankBoxId
             ? await this.bankBox(tx, p.bankBoxId, p.currency)
-            : await this.treasury.defaultBox(tx, p.currency, { kind: 'BANK' })
+            : await this.treasury.defaultBox(tx, p.currency, { kind: 'BANK', userId: cashierId })
           : await this.treasury.defaultBox(tx, p.currency, { userId: cashierId });
       tenders.push({ currency: p.currency, amount, rate: cur.rate, sar, boxAccountId: box.accountId, method });
     }

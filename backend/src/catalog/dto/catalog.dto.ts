@@ -217,6 +217,12 @@ export class CreateProductDto {
   @IsAmount()
   basePrice: string;
 
+  @ApiPropertyOptional({ example: '900.00', nullable: true, description: 'Price for merchant (wholesale) customers, SAR' })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsAmount()
+  wholesalePrice?: string | null;
+
   @ApiPropertyOptional({ example: '450.00', description: 'Cost per piece in SAR, shared by all sizes and colors' })
   @IsOptional()
   @IsAmount()

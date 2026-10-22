@@ -130,7 +130,22 @@ export class TreasuryService {
         this.openBox(tx, { name: `صندوق ${user.name} - ${c.nameAr}`, kind: CashBoxKind.CASHIER, currency: c.code, userId }),
       );
     }
-    return this.listBoxes({ userId });
+    return this.listBoxes(this.mineWhere(userId));
+  }
+
+  /** The staff member's own drawers plus the boxes they were assigned. */
+  mineWhere(userId: string): Prisma.CashBoxWhereInput {
+    return { OR: [{ userId }, { access: { some: { userId } } }] };
+  }
+
+  /** Safes and banks a staff member may hand money to: their assigned ones, or all when none are assigned. */
+  async safesFor(userId: string) {
+    const assigned = await this.prisma.cashBoxAccess.count({ where: { userId, cashBox: { kind: { not: CashBoxKind.CASHIER } } } });
+    return this.listBoxes({
+      kind: { not: CashBoxKind.CASHIER },
+      isActive: true,
+      ...(assigned ? { access: { some: { userId } } } : {}),
+    });
   }
 
   async createBox(dto: { name: string; kind: CashBoxKind; currency: string }, userId: string) {
@@ -192,10 +207,14 @@ export class TreasuryService {
   async visibleBox(id: string, user: { id: string; permissions: string[] }) {
     const box = await this.prisma.cashBox.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('Cash box not found');
-    if (box.userId !== user.id && !user.permissions.includes('cashboxes.manage')) {
+    if (box.userId !== user.id && !user.permissions.includes('cashboxes.manage') && !(await this.isAssigned(user.id, id))) {
       throw new ForbiddenException('You can only see your own cash box');
     }
     return box;
+  }
+
+  private async isAssigned(userId: string, boxId: string) {
+    return (await this.prisma.cashBoxAccess.count({ where: { userId, cashBoxId: boxId } })) > 0;
   }
 
   async boxEntries(id: string, q: PaginationQueryDto) {
@@ -227,8 +246,10 @@ export class TreasuryService {
       if (!from || !to) throw new NotFoundException('Cash box not found');
       if (!from.isActive || !to.isActive) throw new UnprocessableEntityException('Both boxes must be active');
       const manager = user.permissions.includes('cashboxes.manage');
-      if (!manager && (from.userId !== user.id || to.kind === CashBoxKind.CASHIER)) {
-        throw new ForbiddenException('You can only hand over money from your own drawer to a safe');
+      if (!manager) {
+        const mayTake = from.userId === user.id || (await this.isAssigned(user.id, from.id));
+        const mayGive = to.kind !== CashBoxKind.CASHIER && (await this.safesFor(user.id)).some((b) => b.id === to.id);
+        if (!mayTake || !mayGive) throw new ForbiddenException('You can only hand over money from your own boxes to a safe you may use');
       }
 
       const amount = inCurrency(dto.amount, from.currency);
@@ -313,9 +334,23 @@ export class TreasuryService {
 
   /** Where money a staff member takes in [currency] goes: their drawer, else the safe of that currency. */
   async defaultBox(tx: Tx, currency: string, opts: { userId?: string; kind?: CashBoxKind } = {}) {
+    const bank = opts.kind === CashBoxKind.BANK;
     if (opts.userId) {
-      const own = await tx.cashBox.findFirst({ where: { userId: opts.userId, currency, isActive: true } });
-      if (own) return own;
+      // A box the staff member was assigned wins; then their own drawer (cash only).
+      const assigned = await tx.cashBox.findFirst({
+        where: {
+          currency,
+          isActive: true,
+          access: { some: { userId: opts.userId } },
+          kind: bank ? CashBoxKind.BANK : { not: CashBoxKind.BANK },
+        },
+        orderBy: [{ kind: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (assigned) return assigned;
+      if (!bank) {
+        const own = await tx.cashBox.findFirst({ where: { userId: opts.userId, currency, isActive: true } });
+        if (own) return own;
+      }
     }
     const box = await tx.cashBox.findFirst({
       where: { kind: opts.kind ?? CashBoxKind.VAULT, currency, isActive: true },

@@ -18,6 +18,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { CouponType, OrderChannel, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
@@ -494,4 +495,28 @@ export class CourierSettlementDto {
   @IsString()
   @MaxLength(100)
   reference?: string;
+}
+
+export class UpdateCustomerDto {
+  @ApiPropertyOptional({ description: 'Merchant (wholesale) customer' })
+  @IsOptional()
+  @IsBoolean()
+  isMerchant?: boolean;
+
+  @ApiPropertyOptional({ example: '5', description: 'Extra percent off on top of wholesale prices' })
+  @IsOptional()
+  @IsAmount()
+  merchantDiscount?: string;
+
+  @ApiPropertyOptional({ example: '5000', nullable: true, description: 'Most the merchant may owe, SAR; null = no limit' })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsAmount()
+  creditLimit?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
 }

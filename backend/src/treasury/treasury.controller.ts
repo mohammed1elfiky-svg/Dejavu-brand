@@ -43,8 +43,10 @@ export class AdminTreasuryController {
   /** Safes and bank accounts any staff member may hand money over to. */
   @StaffOnly()
   @Get('cash-boxes/safes')
-  safes() {
-    return this.treasury.listBoxes({ kind: { not: 'CASHIER' }, isActive: true });
+  safes(@CurrentUser() u: AuthPrincipal) {
+    return u.permissions.includes('cashboxes.manage')
+      ? this.treasury.listBoxes({ kind: { not: 'CASHIER' }, isActive: true })
+      : this.treasury.safesFor(u.id);
   }
 
   @RequirePermissions('cashboxes.manage')

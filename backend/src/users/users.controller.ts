@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
-import { CreateRoleDto, CreateUserDto, UpdateRoleDto, UpdateUserDto } from './dto/users.dto';
+import { CreateRoleDto, CreateUserDto, UpdateRoleDto, UpdateUserDto, UserCashBoxesDto, UserPermissionsDto } from './dto/users.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Admin · Users & Roles')
@@ -34,13 +34,25 @@ export class UsersController {
     return this.users.updateUser(id, dto, actor.id);
   }
 
-  @RequirePermissions('roles.manage')
+  @RequirePermissions('users.manage')
+  @Put('users/:id/permissions')
+  setPermissions(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UserPermissionsDto, @CurrentUser() actor: AuthPrincipal) {
+    return this.users.setPermissions(id, dto.permissions, actor.id);
+  }
+
+  @RequirePermissions('users.manage')
+  @Put('users/:id/cash-boxes')
+  setCashBoxes(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UserCashBoxesDto, @CurrentUser() actor: AuthPrincipal) {
+    return this.users.setCashBoxes(id, dto.cashBoxIds, actor.id);
+  }
+
+  @RequirePermissions('users.manage')
   @Get('permissions')
   listPermissions() {
     return this.users.listPermissions();
   }
 
-  @RequirePermissions('roles.manage')
+  @RequirePermissions('users.manage')
   @Get('roles')
   listRoles() {
     return this.users.listRoles();

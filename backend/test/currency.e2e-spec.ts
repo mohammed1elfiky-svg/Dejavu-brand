@@ -88,7 +88,9 @@ describe('Currencies & exchange rates (e2e)', () => {
     ]);
     // The books stay in SAR; the riyals themselves sit in the YER safe.
     const ids = rest.body.payments.map((p: { id: string }) => p.id);
-    const safe = await prisma.cashBox.findFirstOrThrow({ where: { kind: 'VAULT', currency: 'YER' }, include: { account: true } });
+    // The admin's own YER drawer if they have one, else the YER safe.
+    const accountId = rest.body.payments[0].accountId;
+    const safe = await prisma.cashBox.findFirstOrThrow({ where: { accountId, currency: 'YER' }, include: { account: true } });
     expect(await ledgerBalances(prisma, ids)).toEqual({ [safe.account.code]: 120, CUSTOMER_ADVANCES: -120 });
     const held = await prisma.cashBoxEntry.findMany({ where: { cashBoxId: safe.id, sourceId: { in: ids } } });
     expect(held.map((e) => e.amount.toString()).sort()).toEqual(['11000', '7000']);

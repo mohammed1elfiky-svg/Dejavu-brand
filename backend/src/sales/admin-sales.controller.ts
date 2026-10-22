@@ -22,6 +22,7 @@ import {
   ReturnsQueryDto,
   ShippingZoneDto,
   UpdateCouponDto,
+  UpdateCustomerDto,
 } from './dto/sales.dto';
 import { OrdersService } from './orders.service';
 import { ReturnsService } from './returns.service';
@@ -139,6 +140,12 @@ export class AdminCustomersController {
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.customers.getCustomer(id);
+  }
+
+  @RequirePermissions('customers.write')
+  @Patch(':id')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto, @CurrentUser() u: AuthPrincipal) {
+    return this.customers.updateMerchant(id, dto, u.id);
   }
 
   @RequirePermissions('customers.read', 'journal.read')

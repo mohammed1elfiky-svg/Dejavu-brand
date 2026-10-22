@@ -22,7 +22,8 @@ export class AuthService {
   // ---------------------------------------------------------------- staff ---
 
   async staffLogin(dto: StaffLoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
+    const login = dto.email.trim().toLowerCase();
+    const user = await this.prisma.user.findFirst({ where: { OR: [{ email: login }, { username: login }] } });
     const ok = await verifyPassword(dto.password, user?.passwordHash);
     if (!user || !ok) throw new UnauthorizedException(INVALID_CREDENTIALS);
     if (user.status !== UserStatus.ACTIVE) throw new UnauthorizedException('Account is not active');
@@ -46,7 +47,7 @@ export class AuthService {
     });
     return {
       ...user,
-      roles: user.roles.map((r) => r.role),
+      roles: user.roles.map((r) => r.role).filter((r) => !r.name.startsWith('user_')),
       permissions: await this.permissionsOf(userId),
     };
   }
@@ -114,6 +115,9 @@ export class AuthService {
         gender: true,
         birthDate: true,
         loyaltyPoints: true,
+        isMerchant: true,
+        merchantDiscount: true,
+        creditLimit: true,
         phoneVerified: true,
       },
     });

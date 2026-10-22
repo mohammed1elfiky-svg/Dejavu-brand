@@ -187,12 +187,20 @@ export class OrdersService {
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
       if (dto.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT) {
-        // Paid straight from the wallet balance in the order's currency.
+        // Paid from the wallet balance in the order's currency; merchants may also buy on credit.
+        const buyer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { isMerchant: true, creditLimit: true } });
+        if (buyer.isMerchant && buyer.creditLimit !== null) {
+          const owed = await tx.customerAccountEntry.aggregate({ where: { customerId }, _sum: { baseAmount: true } });
+          if (dec(owed._sum.baseAmount).add(order.grandTotal).gt(buyer.creditLimit)) {
+            throw new UnprocessableEntityException('This order exceeds your credit limit');
+          }
+        }
         const { order: paid } = await this.payments.receive(
           tx,
           order,
           { method: PaymentMethod.CUSTOMER_ACCOUNT, currency, amount: toCurrency(order.grandTotal, currency, exchangeRate) },
           null,
+          { allowCredit: buyer.isMerchant },
         );
         await this.autoConfirm(tx, paid, null);
       }

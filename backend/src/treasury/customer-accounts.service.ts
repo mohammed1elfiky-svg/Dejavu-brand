@@ -54,7 +54,7 @@ export class CustomerAccountsService {
 
   /** Customer's wallet: spendable balances and recent movements. */
   async wallet(customerId: string) {
-    const [balances, recent] = await Promise.all([
+    const [balances, recent, buyer] = await Promise.all([
       this.balances(customerId),
       this.prisma.customerAccountEntry.findMany({
         where: { customerId },
@@ -62,8 +62,11 @@ export class CustomerAccountsService {
         take: 30,
         select: { id: true, currency: true, amount: true, sourceType: true, note: true, createdAt: true },
       }),
+      this.prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true, creditLimit: true } }),
     ]);
     return {
+      /** Merchants may pay orders "on account" (credit) up to their limit. */
+      merchant: buyer.isMerchant ? { discount: buyer.merchantDiscount, creditLimit: buyer.creditLimit } : null,
       balances: balances.map((b) => ({ currency: b.currency, balance: b.balance.neg(), owed: b.balance.gt(0) ? b.balance : dec(0) })),
       // Shown from the customer's side: + money in, - money out.
       entries: recent.map((e) => ({ ...e, amount: dec(e.amount).neg(), note: walletNote(e.sourceType) })),

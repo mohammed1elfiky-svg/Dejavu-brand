@@ -217,6 +217,16 @@ export class PurchasingService {
         throw new UnprocessableEntityException('The supplier was already paid for this order; settle that first');
       }
       await tx.purchaseOrder.update({ where: { id }, data: { status: PurchaseOrderStatus.CANCELLED } });
+      // The order leaves the supplier's account, and items made just for it are archived.
+      await tx.supplierAccountEntry.deleteMany({ where: { sourceId: id } });
+      const drafts = items.filter((i) => i.createdProduct).map((i) => i.variantId);
+      if (drafts.length) {
+        const products = await tx.productVariant.findMany({ where: { id: { in: drafts } }, select: { productId: true } });
+        await tx.product.updateMany({
+          where: { id: { in: products.map((p) => p.productId) }, status: ProductStatus.DRAFT },
+          data: { status: ProductStatus.ARCHIVED },
+        });
+      }
       await this.audit.log({ userId, action: 'CANCEL', entityType: 'PurchaseOrder', entityId: id }, tx);
     });
     return this.getOrder(id);
@@ -291,13 +301,12 @@ export class PurchasingService {
           userId,
         });
         await tx.purchaseOrderItem.update({ where: { id: item.id }, data: { receivedQty: { increment: qty } } });
+        // The product's cost follows the latest purchase; first-time items go on sale now.
+        const v = await tx.productVariant.findUniqueOrThrow({ where: { id: item.variantId }, select: { productId: true } });
+        const costPrice = landedUnitCost(item.unitCost, po.subtotal, po.shippingCost);
+        await tx.product.update({ where: { id: v.productId }, data: { costPrice } });
         if (item.createdProduct) {
-          // Bought for the first time: on sale now, at what it cost.
-          const v = await tx.productVariant.findUniqueOrThrow({ where: { id: item.variantId }, select: { productId: true } });
-          await tx.product.updateMany({
-            where: { id: v.productId, status: ProductStatus.DRAFT },
-            data: { status: ProductStatus.ACTIVE, costPrice: landedUnitCost(item.unitCost, po.subtotal, po.shippingCost) },
-          });
+          await tx.product.updateMany({ where: { id: v.productId, status: ProductStatus.DRAFT }, data: { status: ProductStatus.ACTIVE } });
         }
       }
 

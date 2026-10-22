@@ -37,6 +37,7 @@ describe('Import procurement (e2e)', () => {
           {
             supplierId: supplier.id,
             foreignPerUsd: '7.2',
+            commissionPercent: '5',
             sarPerUsd: '3.75',
             domesticShipping: '360',
             items: [{ variantId: oldVariant, quantity: 100, unitPriceForeign: '10' }],
@@ -130,7 +131,7 @@ describe('Import procurement (e2e)', () => {
     await http.post('/admin/purchase-orders', { supplierId: supplier.id, items: [] }, admin).expect(400);
   });
 
-  it('takes the commission from the supplier and the USD rate from the settings', async () => {
+  it('charges no per-order commission (it is billed in dollars per period) and takes the USD rate from the settings', async () => {
     const supplier = (await http.post('/admin/suppliers', { name: `وكيل ${run}`, commissionPercent: 3 }, admin).expect(201)).body;
     const p = (await http.post('/admin/products', { categoryId, nameAr: `حقيبة ${run}`, basePrice: '60', variants: [{}] }, admin).expect(201)).body;
     const usd = await prisma.exchangeRate.findFirst({ where: { currency: 'USD' }, orderBy: { effectiveAt: 'desc' } });
@@ -140,7 +141,7 @@ describe('Import procurement (e2e)', () => {
       return;
     }
     expect(res.status).toBe(201);
-    expect(res.body.commissionPercent).toBe('3');
+    expect(res.body.commissionPercent).toBe('0');
     expect(Number(res.body.sarPerUsd)).toBeCloseTo(1 / Number(usd.rate), 4);
     await http.post('/admin/purchase-orders/import', { supplierId: supplier.id, foreignPerUsd: '7' }, admin).expect(400);
   });

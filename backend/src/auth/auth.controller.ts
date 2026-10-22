@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/commo
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthPrincipal, CurrentUser, Public } from '../common/decorators/auth.decorators';
+import { GOVERNORATES } from '../common/yemen';
 import { AuthService } from './auth.service';
 import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, RefreshTokenDto, StaffLoginDto } from './dto/auth.dto';
 
@@ -11,6 +12,13 @@ const authLimit = () => Throttle({ default: { limit: Number(process.env.AUTH_RAT
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  /** Governorates for the sign-up form (Taiz has areas), with the rial each uses. */
+  @Public()
+  @Get('governorates')
+  governorates() {
+    return GOVERNORATES;
+  }
 
   @Public()
   @authLimit()

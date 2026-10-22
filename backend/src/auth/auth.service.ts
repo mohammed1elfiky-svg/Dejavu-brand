@@ -1,4 +1,6 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { SmsService } from '../sms/sms.service';
+import { currencyOfRegion } from '../common/yemen';
 import { CustomerStatus, UserStatus } from '../generated/prisma/client';
 import { AuditService } from '../common/audit.service';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
@@ -17,6 +19,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly sms: SmsService,
   ) {}
 
   // ---------------------------------------------------------------- staff ---
@@ -84,18 +87,24 @@ export class AuthService {
       throw new ConflictException(clash.phone === phone ? 'Phone number already registered' : 'Email already registered');
     }
 
+    if (dto.governorate === 'تعز' && !dto.area) throw new BadRequestException('Choose الحوبان or المدينة for Taiz');
+    const otpRequired = await this.sms.otpRequired();
     const passwordHash = await hashPassword(dto.password);
-    const customer = await this.prisma.$transaction(async (tx) =>
-      tx.customer.create({
+    const customer = await this.prisma.$transaction(async (tx) => {
+      if (otpRequired) await this.sms.verifyOtp(tx, phone, dto.otp);
+      return tx.customer.create({
         data: {
           code: await this.sequences.next(tx, 'CUS', { year: 0 }),
           name: dto.name.trim(),
           phone,
           email,
           passwordHash,
+          phoneVerified: otpRequired,
+          governorate: dto.governorate,
+          area: dto.governorate === 'تعز' ? dto.area : null,
         },
-      }),
-    );
+      });
+    });
     return this.customerSession(customer.id);
   }
 
@@ -107,8 +116,8 @@ export class AuthService {
     return this.customerSession(customer.id);
   }
 
-  customerProfile(customerId: string) {
-    return this.prisma.customer.findUniqueOrThrow({
+  async customerProfile(customerId: string) {
+    const c = await this.prisma.customer.findUniqueOrThrow({
       where: { id: customerId },
       select: {
         id: true,
@@ -123,8 +132,12 @@ export class AuthService {
         merchantDiscount: true,
         creditLimit: true,
         phoneVerified: true,
+        governorate: true,
+        area: true,
       },
     });
+    /** The rial the customer's region uses (old notes YER or new notes YEQ). */
+    return { ...c, preferredCurrency: currencyOfRegion(c.governorate, c.area) };
   }
 
   private async customerSession(customerId: string) {

@@ -34,7 +34,8 @@ export type SystemAccount =
   | 'SHIPPING_EXPENSE'
   | 'GATEWAY_FEES'
   | 'CUSTOMER_ACCOUNTS'
-  | 'FX_DIFFERENCE';
+  | 'FX_DIFFERENCE'
+  | 'SUPPLIER_COMMISSION';
 
 export interface PostingLine {
   /** Either a system key or a concrete account id. */

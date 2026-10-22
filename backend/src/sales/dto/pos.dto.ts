@@ -187,6 +187,11 @@ export class PosReturnDto {
   @IsCurrencyCode()
   refundCurrency?: string;
 
+  @ApiPropertyOptional({ description: 'Box (drawer, safe or bank account) the refund is paid from; defaults to the cashier\'s drawer' })
+  @IsOptional()
+  @IsUUID()
+  refundBoxId?: string;
+
   @ApiPropertyOptional({ type: [PosItemDto], description: 'Exchange: the pieces taken instead' })
   @IsOptional()
   @ValidateNested({ each: true })
@@ -274,6 +279,11 @@ export class PosFreeReturnDto {
   @IsOptional()
   @IsCurrencyCode()
   refundCurrency?: string;
+
+  @ApiPropertyOptional({ description: 'Box (drawer, safe or bank account) the refund is paid from; defaults to the cashier\'s drawer' })
+  @IsOptional()
+  @IsUUID()
+  refundBoxId?: string;
 
   @ApiPropertyOptional({ type: [PosItemDto], description: 'Exchange: the pieces taken instead' })
   @IsOptional()

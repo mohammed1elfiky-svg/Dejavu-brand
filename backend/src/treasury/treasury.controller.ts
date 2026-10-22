@@ -12,6 +12,7 @@ import {
   CashTransferDto,
   CreateCashBoxDto,
   CustomerReceiptDto,
+  CustomerExchangeDto,
   OpeningBalanceDto,
   RejectTopUpDto,
   TopUpRequestDto,
@@ -113,6 +114,13 @@ export class AdminCustomerAccountController {
   }
 
   /** Money taken from the customer at the till: pays off debt, any excess becomes credit. */
+  /** Converts part of the customer's balance into another currency. */
+  @RequirePermissions('customers.write', 'payments.record')
+  @Post('exchange')
+  exchange(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CustomerExchangeDto, @CurrentUser() u: AuthPrincipal) {
+    return this.accounts.exchange(id, dto, u.id);
+  }
+
   /** A balance from before the system (debt owed, or money held for the customer). */
   @RequirePermissions('customers.write', 'journal.write')
   @Post('opening-balance')

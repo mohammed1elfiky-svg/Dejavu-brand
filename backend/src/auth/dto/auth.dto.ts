@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { GOVERNORATE_NAMES } from '../../common/yemen';
 
 /** Egyptian mobile numbers in local (01xxxxxxxxx) or international (+201xxxxxxxxx) form. */
 /** Mobile numbers of Yemen (7xxxxxxxx), Saudi Arabia (05xxxxxxxx) and Egypt (01xxxxxxxxx). */
@@ -47,6 +48,21 @@ export class CustomerRegisterDto {
   @MinLength(8)
   @MaxLength(128)
   password: string;
+
+  @ApiPropertyOptional({ enum: GOVERNORATE_NAMES, description: 'Decides the rial the customer uses (old or new notes)' })
+  @IsOptional()
+  @IsIn(GOVERNORATE_NAMES)
+  governorate?: string;
+
+  @ApiPropertyOptional({ example: 'الحوبان', description: 'Taiz only: الحوبان or المدينة' })
+  @IsOptional()
+  @IsIn(['الحوبان', 'المدينة'])
+  area?: string;
+
+  @ApiPropertyOptional({ example: '123456', description: 'Code texted by POST auth/customer/otp, when sign-up requires it' })
+  @IsOptional()
+  @Matches(/^\d{6}$/, { message: 'otp must be 6 digits' })
+  otp?: string;
 }
 
 export class CustomerLoginDto {

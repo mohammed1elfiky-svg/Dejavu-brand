@@ -429,11 +429,10 @@ export class PosService {
         : await this.returns.refundIn(
             tx,
             returnId,
-            {
-              method: PaymentMethod.CASH,
-              currency: refundCurrency,
-              accountId: (await this.treasury.defaultBox(tx, refundCurrency, { userId: cashierId })).accountId,
-            },
+            await (async () => {
+              const box = await this.refundBox(tx, dto.refundBoxId, refundCurrency, cashierId);
+              return { method: box.kind === 'BANK' ? PaymentMethod.BANK_TRANSFER : PaymentMethod.CASH, currency: refundCurrency, accountId: box.accountId };
+            })(),
             cashierId,
             { allowNothing: true },
           );
@@ -460,7 +459,7 @@ export class PosService {
         const used = await tx.payment.aggregate({ where: { orderId: saleId, method: PaymentMethod.CUSTOMER_ACCOUNT }, _sum: { currencyAmount: true } });
         leftover = refunded.currencyAmount.sub(dec(used._sum.currencyAmount));
         // What the new pieces did not use is handed back, unless the customer keeps it as credit.
-        if (leftover.gt(0) && dto.refundTo !== 'ACCOUNT' && order.paymentMethod !== PaymentMethod.CUSTOMER_ACCOUNT) await this.payOutCredit(tx, order.customerId, order.currency, leftover, refundCurrency, cashierId, order.number);
+        if (leftover.gt(0) && dto.refundTo !== 'ACCOUNT' && order.paymentMethod !== PaymentMethod.CUSTOMER_ACCOUNT) await this.payOutCredit(tx, order.customerId, order.currency, leftover, refundCurrency, cashierId, order.number, dto.refundBoxId);
       }
       return { returnId, saleId, refunded, leftover };
     });
@@ -560,7 +559,7 @@ export class PosService {
         leftover = value.sub(dec(used._sum.currencyAmount));
       }
       if (leftover.gt(0) && dto.refundTo !== 'ACCOUNT') {
-        await this.payOutCredit(tx, customerId, cur.code, leftover, dto.refundCurrency ?? cur.code, cashierId, number);
+        await this.payOutCredit(tx, customerId, cur.code, leftover, dto.refundCurrency ?? cur.code, cashierId, number, dto.refundBoxId);
       }
       await this.audit.log({ userId: cashierId, action: 'CREATE', entityType: 'PosFreeReturn', entityId: customerId, after: { number, ...dto } }, tx);
       return { number, value, valueSar, saleId, leftover };
@@ -575,13 +574,22 @@ export class PosService {
     };
   }
 
-  /** Hands credit held on the customer's account back as cash from the cashier's drawer. */
-  private async payOutCredit(tx: Tx, customerId: string, currency: string, amount: Decimal, cashCurrency: string, cashierId: string, ref: string) {
+  /** The box a refund is paid from: the one picked (same currency), else the cashier's drawer. */
+  private async refundBox(tx: Tx, boxId: string | undefined, currency: string, cashierId: string) {
+    if (!boxId) return this.treasury.defaultBox(tx, currency, { userId: cashierId });
+    const box = await tx.cashBox.findUnique({ where: { id: boxId } });
+    if (!box || !box.isActive) throw new NotFoundException('Cash box not found');
+    if (box.currency !== currency) throw new UnprocessableEntityException(`${box.name} holds ${box.currency}, not ${currency}`);
+    return box;
+  }
+
+  /** Hands credit held on the customer's account back as cash (or a bank transfer) from a box. */
+  private async payOutCredit(tx: Tx, customerId: string, currency: string, amount: Decimal, cashCurrency: string, cashierId: string, ref: string, boxId?: string) {
     const rate = await this.currencies.rate(currency, tx);
     const sar = toBase(amount, currency, rate);
     const cashRate = cashCurrency === currency ? rate : await this.currencies.rate(cashCurrency, tx);
     const cash = toCurrency(sar, cashCurrency, cashRate);
-    const box = await this.treasury.defaultBox(tx, cashCurrency, { userId: cashierId });
+    const box = await this.refundBox(tx, boxId, cashCurrency, cashierId);
     const acc = await tx.account.findUniqueOrThrow({ where: { systemKey: 'CUSTOMER_ACCOUNTS' }, select: { id: true } });
     await this.ledger.post(tx, {
       description: `Exchange difference paid back for ${ref}`,

@@ -7,6 +7,7 @@ import {
   IsDateString,
   IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -346,6 +347,12 @@ export class ImportItemDto {
   @ApiProperty({ example: '35.50', description: 'Supplier price per piece in the order currency (e.g. CNY)' })
   @IsDecimalText(4)
   unitPriceForeign: string;
+
+  @ApiPropertyOptional({ example: 'مصنع قوانغتشو', description: 'e.g. the factory; shown on the supplier statement' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  note?: string;
 }
 
 export class ImportNewVariantDto {
@@ -409,6 +416,12 @@ export class ImportNewProductDto {
   @Type(() => ImportNewVariantDto)
   @ArrayMinSize(1)
   variants: ImportNewVariantDto[];
+
+  @ApiPropertyOptional({ example: 'مصنع قوانغتشو' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  note?: string;
 }
 
 export class ImportOrderDto {
@@ -427,9 +440,10 @@ export class ImportOrderDto {
   @Matches(/^[A-Z]{3}$/)
   foreignCurrency?: string;
 
-  @ApiProperty({ example: '7.2', description: 'Order currency units per 1 USD' })
+  @ApiPropertyOptional({ example: '7.2', description: 'Order currency per 1 USD, for the estimate only; the rate comes from the payment vouchers' })
+  @IsOptional()
   @IsDecimalText(6)
-  foreignPerUsd: string;
+  foreignPerUsd?: string;
 
   @ApiPropertyOptional({ example: '3.75', description: 'SAR per 1 USD; defaults to the current USD rate' })
   @IsOptional()
@@ -528,6 +542,99 @@ export class ImportReceiveDto {
   @IsOptional()
   @IsDecimalText(2)
   domesticShipping?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+/** Payment voucher (سند صرف): dollars paid to the supplier at a yuan rate. */
+export class SupplierPaymentVoucherDto {
+  @ApiProperty()
+  @IsUUID()
+  supplierId: string;
+
+  @ApiProperty({ example: '1000', description: 'Dollars paid' })
+  @IsAmount()
+  usdAmount: string;
+
+  @ApiProperty({ description: 'The USD box (safe, bank or drawer) the dollars leave' })
+  @IsUUID()
+  cashBoxId: string;
+
+  @ApiPropertyOptional({ example: '7.2', description: "Supplier currency per 1 USD; required when paying for goods" })
+  @IsOptional()
+  @IsDecimalText(6)
+  foreignPerUsd?: string;
+
+  @ApiPropertyOptional({ example: 'CNY', default: 'CNY' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @Matches(/^[A-Z]{3}$/)
+  foreignCurrency?: string;
+
+  @ApiPropertyOptional({ enum: ['GOODS', 'COMMISSION'], default: 'GOODS', description: 'GOODS: credited in the supplier currency at the rate; COMMISSION: pays the USD commission owed' })
+  @IsOptional()
+  @IsIn(['GOODS', 'COMMISSION'])
+  applyTo?: 'GOODS' | 'COMMISSION';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+/** The agent's commission for a period, in USD (added when reconciling). */
+export class SupplierCommissionDto {
+  @ApiProperty()
+  @IsUUID()
+  supplierId: string;
+
+  @ApiProperty({ example: '150' })
+  @IsAmount()
+  usdAmount: string;
+
+  @ApiProperty({ example: '2026-10-01' })
+  @IsDateString()
+  periodFrom: string;
+
+  @ApiProperty({ example: '2026-10-31' })
+  @IsDateString()
+  periodTo: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+/** Changes to an import order not received yet. */
+export class UpdateImportOrderDto {
+  @ApiProperty({ type: [ImportItemDto], description: 'All lines of existing sizes/colours (replaces them)' })
+  @ValidateNested({ each: true })
+  @Type(() => ImportItemDto)
+  items: ImportItemDto[];
+
+  @ApiPropertyOptional({ type: [ImportNewProductDto], description: 'More brand-new items to add' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ImportNewProductDto)
+  newProducts?: ImportNewProductDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDecimalText(2)
+  domesticShipping?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  supplierInvoiceNo?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

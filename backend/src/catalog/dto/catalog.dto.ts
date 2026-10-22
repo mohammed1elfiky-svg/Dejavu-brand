@@ -254,6 +254,21 @@ export class CreateProductDto {
   @IsUrl({ require_tld: false })
   videoUrl?: string | null;
 
+  @ApiPropertyOptional({ example: '30 × 20 × 10', description: 'Bag size in cm, as shown to shoppers; "" clears it' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(60)
+  bagSize?: string | null;
+
+  @ApiPropertyOptional({ example: '7.5', description: 'Heel height in cm; "" clears it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : typeof value === 'number' ? String(value) : value))
+  @ValidateIf((_, v) => v !== null)
+  @Matches(/^\d{1,2}(\.\d)?$/, { message: 'heelHeightCm must be a number of cm with at most one decimal' })
+  heelHeightCm?: string | null;
+
   @ApiPropertyOptional({ example: 'https://www.instagram.com/p/XXXX/' })
   @IsOptional()
   @Transform(({ value }) => (value === '' ? null : value))

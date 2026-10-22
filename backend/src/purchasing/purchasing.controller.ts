@@ -10,13 +10,17 @@ import {
   QuickPurchaseDto,
   ReceivePurchaseDto,
   StatementQueryDto,
+  SupplierCommissionDto,
+  SupplierPaymentVoucherDto,
   SupplierPaymentDto,
   SupplierPaymentsQueryDto,
   SuppliersQueryDto,
+  UpdateImportOrderDto,
   UpdateSupplierDto,
 } from './dto/purchasing.dto';
 import { ImportService } from './import.service';
 import { PurchasingService } from './purchasing.service';
+import { SupplierLedgerService } from './supplier-ledger.service';
 
 @ApiTags('Admin · Purchasing')
 @Controller('admin')
@@ -24,6 +28,7 @@ export class PurchasingController {
   constructor(
     private readonly purchasing: PurchasingService,
     private readonly imports: ImportService,
+    private readonly supplierLedger: SupplierLedgerService,
   ) {}
 
   // suppliers
@@ -89,6 +94,13 @@ export class PurchasingController {
   @Post('purchase-orders/import')
   createImport(@Body() dto: ImportOrderDto, @CurrentUser() u: AuthPrincipal) {
     return this.imports.createOrder(dto, u.id);
+  }
+
+  /** Changes an import order that hasn't arrived yet. */
+  @RequirePermissions('purchases.write', 'products.write')
+  @Put('purchase-orders/:id/import')
+  updateImport(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateImportOrderDto, @CurrentUser() u: AuthPrincipal) {
+    return this.imports.updateOrder(id, dto, u.id);
   }
 
   /** Landed cost per piece for the counted quantities and CBM, without saving. */
@@ -158,5 +170,45 @@ export class PurchasingController {
   @Get('supplier-payments')
   listPayments(@Query() q: SupplierPaymentsQueryDto) {
     return this.purchasing.listPayments(q);
+  }
+
+  // supplier account (in the supplier's currencies) and its vouchers
+  @RequirePermissions('purchases.read')
+  @Get('suppliers/:id/account')
+  supplierAccount(@Param('id', ParseUUIDPipe) id: string) {
+    return this.supplierLedger.account(id);
+  }
+
+  /** Payment voucher: dollars out of a USD box at the day's yuan rate. */
+  @RequirePermissions('supplier_payments.record')
+  @Post('supplier-vouchers/payment')
+  payVoucher(@Body() dto: SupplierPaymentVoucherDto, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.pay(dto, u);
+  }
+
+  /** The agent's commission in dollars for a period, added when matching accounts. */
+  @RequirePermissions('supplier_payments.record')
+  @Post('supplier-vouchers/commission')
+  commissionVoucher(@Body() dto: SupplierCommissionDto, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.commission(dto, u);
+  }
+
+  @RequirePermissions('supplier_payments.record')
+  @Put('supplier-vouchers/:id/payment')
+  editPayment(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SupplierPaymentVoucherDto, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.edit(id, dto, u);
+  }
+
+  @RequirePermissions('supplier_payments.record')
+  @Put('supplier-vouchers/:id/commission')
+  editCommission(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SupplierCommissionDto, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.edit(id, dto, u);
+  }
+
+  @RequirePermissions('supplier_payments.record')
+  @Post('supplier-vouchers/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelVoucher(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.cancel(id, u);
   }
 }

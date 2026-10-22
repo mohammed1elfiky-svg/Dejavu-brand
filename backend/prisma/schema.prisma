@@ -363,6 +363,9 @@ model Customer {
   /// Receivable sub-ledger account (optional; defaults to the global AR account).
   accountId        String?        @map("account_id") @db.Uuid
   loyaltyPoints    Int            @default(0) @map("loyalty_points")
+  /// Yemeni governorate (and for Taiz: الحوبان / المدينة); decides which rial the customer uses.
+  governorate      String?
+  area             String?
   /// Wholesale buyer: gets wholesale prices and its own discount, and may buy on credit.
   isMerchant       Boolean        @default(false) @map("is_merchant")
   /// Extra percent off for this merchant, on top of the wholesale price.
@@ -515,6 +518,10 @@ model Product {
   /// Uploaded product video (stored file URL).
   videoUrl       String?           @map("video_url")
   instagramUrl   String?           @map("instagram_url")
+  /// Bag size in cm as typed (e.g. "30 × 20 × 10"); shown to shoppers when set.
+  bagSize        String?           @map("bag_size")
+  /// Heel height in cm; shown to shoppers when set.
+  heelHeightCm   Decimal?          @map("heel_height_cm") @db.Decimal(5, 1)
   visibility     ProductVisibility @default(ALL)
   taxRateId      String?           @map("tax_rate_id") @db.Uuid
   isFeatured     Boolean           @default(false) @map("is_featured")
@@ -1057,6 +1064,8 @@ model Supplier {
   account        Account?          @relation(fields: [accountId], references: [id])
   purchaseOrders PurchaseOrder[]
   payments       SupplierPayment[]
+  accountEntries SupplierAccountEntry[]
+  vouchers       SupplierVoucher[]
 
   @@map("suppliers")
 }
@@ -1127,6 +1136,8 @@ model PurchaseOrderItem {
   landedUnitCost  Decimal? @map("landed_unit_cost") @db.Decimal(14, 4)
   /// The product was created with this order; it stays a draft (not sold) until received.
   createdProduct  Boolean  @default(false) @map("created_product")
+  /// Free note, e.g. the factory the piece comes from (shown on the supplier statement).
+  note            String?
 
   purchaseOrder PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   variant       ProductVariant @relation(fields: [variantId], references: [id])
@@ -1656,4 +1667,103 @@ model CashBoxAccess {
   @@id([userId, cashBoxId])
   @@index([cashBoxId])
   @@map("cash_box_access")
+}
+
+// ------------------------------------------------------------ suppliers ---
+
+enum SupplierVoucherKind {
+  PAYMENT // money paid to the supplier (e.g. USD, converted at a yuan rate)
+  COMMISSION // the agent's commission for a period, in USD
+}
+
+/// A supplier's running account per currency (+ = the store owes the supplier).
+/// Import orders add what was ordered (in the supplier's currency), payments and
+/// commissions move it; this is what is matched against the supplier's own statement.
+model SupplierAccountEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  supplierId  String   @map("supplier_id") @db.Uuid
+  currency    String
+  amount      Decimal  @db.Decimal(18, 2)
+  /// PURCHASE_ORDER, SHORTAGE, VOUCHER
+  sourceType  String   @map("source_type")
+  sourceId    String?  @map("source_id") @db.Uuid
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId, createdAt])
+  @@index([sourceId])
+  @@map("supplier_account_entries")
+}
+
+/// Payment voucher (سند صرف) or commission charge for a supplier.
+model SupplierVoucher {
+  id             String              @id @default(uuid()) @db.Uuid
+  number         String              @unique // SV-2026-000123
+  supplierId     String              @map("supplier_id") @db.Uuid
+  kind           SupplierVoucherKind
+  /// Amount in USD (what left the box, or the commission).
+  usdAmount      Decimal             @map("usd_amount") @db.Decimal(14, 2)
+  /// Payments: supplier currency per 1 USD (e.g. 7.2 yuan) and the amount credited in it.
+  foreignCurrency String?            @map("foreign_currency")
+  foreignPerUsd  Decimal?            @map("foreign_per_usd") @db.Decimal(14, 6)
+  foreignAmount  Decimal?            @map("foreign_amount") @db.Decimal(18, 2)
+  /// Payments: the box the dollars left.
+  cashBoxId      String?             @map("cash_box_id") @db.Uuid
+  /// Commissions: the period they cover.
+  periodFrom     DateTime?           @map("period_from") @db.Date
+  periodTo       DateTime?           @map("period_to") @db.Date
+  note           String?
+  journalEntryId String?             @map("journal_entry_id") @db.Uuid
+  cancelledAt    DateTime?           @map("cancelled_at")
+  createdById    String              @map("created_by_id") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+
+  @@index([supplierId, createdAt])
+  @@map("supplier_vouchers")
+}
+
+// ------------------------------------------------------------------ SMS ---
+
+enum SmsStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+/// Text messages sent from the store's own phone: the admin app on that phone acts as
+/// the SMS gateway, takes pending messages and sends them with its SIM.
+model OutgoingSms {
+  id        String    @id @default(uuid()) @db.Uuid
+  phone     String
+  body      String
+  /// OTP, RECEIPT, EXCHANGE, OTHER
+  purpose   String
+  status    SmsStatus @default(PENDING)
+  attempts  Int       @default(0)
+  claimedAt DateTime? @map("claimed_at")
+  sentAt    DateTime? @map("sent_at")
+  error     String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@map("outgoing_sms")
+}
+
+/// One-time codes texted to a phone number to prove it belongs to whoever signs up.
+model PhoneOtp {
+  id         String    @id @default(uuid()) @db.Uuid
+  phone      String
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at")
+  attempts   Int       @default(0)
+  verifiedAt DateTime? @map("verified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([phone, createdAt])
+  @@map("phone_otps")
 }

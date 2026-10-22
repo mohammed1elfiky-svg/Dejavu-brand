@@ -47,6 +47,8 @@ const storeProductSelect = {
   basePrice: true,
   compareAtPrice: true,
   wholesalePrice: true,
+  bagSize: true,
+  heelHeightCm: true,
   isFeatured: true,
   ratingAvg: true,
   ratingCount: true,

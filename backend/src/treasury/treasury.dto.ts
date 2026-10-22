@@ -149,6 +149,41 @@ export class CustomerReceiptDto {
   @IsString()
   @MaxLength(255)
   note?: string;
+
+  @ApiPropertyOptional({ description: 'Text the customer the amount received and the balance (sent from the store phone)' })
+  @IsOptional()
+  @IsBoolean()
+  sendSms?: boolean;
+}
+
+/** Converts part of a customer's balance from one currency to another. */
+export class CustomerExchangeDto {
+  @ApiProperty({ example: 'SAR', description: 'Currency taken from the customer\'s account' })
+  @IsCurrencyCode()
+  fromCurrency: string;
+
+  @ApiProperty({ example: '100' })
+  @IsAmount()
+  amount: string;
+
+  @ApiProperty({ example: 'YER', description: 'Currency credited to the account' })
+  @IsCurrencyCode()
+  toCurrency: string;
+
+  @ApiProperty({ example: '14000', description: 'Amount credited in the other currency (the agreed rate)' })
+  @IsAmount()
+  toAmount: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
+
+  @ApiPropertyOptional({ description: 'Text the customer the exchange and the new balances' })
+  @IsOptional()
+  @IsBoolean()
+  sendSms?: boolean;
 }
 
 export class AccountStatementQueryDto extends PaginationQueryDto {

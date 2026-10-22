@@ -78,6 +78,7 @@ const ACCOUNTS: AccountSeed[] = [
   { code: "5206", ar: "عمولات بوابات الدفع", en: "Payment Gateway Fees", parent: "52", key: "GATEWAY_FEES" },
   { code: "5207", ar: "التغليف", en: "Packaging", parent: "52" },
   { code: "5208", ar: "مصروفات الإهلاك", en: "Depreciation Expense", parent: "52" },
+  { code: "5209", ar: "عمولات وكلاء الشراء", en: "Purchasing Agent Commissions", parent: "52", key: "SUPPLIER_COMMISSION" },
   { code: "5299", ar: "مصروفات متنوعة", en: "Miscellaneous", parent: "52" },
 ];
 

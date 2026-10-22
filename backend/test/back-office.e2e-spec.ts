@@ -378,7 +378,9 @@ describe('Back office: purchasing, expenses, returns, settlements, reports (e2e)
       const res = await http.get('/admin/reports/dashboard', admin).expect(200);
       expect(res.body.today.orders).toBeGreaterThanOrEqual(1);
       expect(res.body.cashAndBank.map((a: { code: string }) => a.code)).toEqual(expect.arrayContaining(['1101', '1102']));
-      expect(res.body.payables.suppliers).toBe('3100'); // 5800 + 300 − 3000
+      // Everything still owed to suppliers (this suite leaves 5800 + 300 − 3000; others may add theirs).
+      expect(Number(res.body.payables.suppliers)).toBeCloseTo(-((await ledgerBalances(prisma)).AP ?? 0), 2);
+      expect(Number(res.body.payables.suppliers)).toBeGreaterThanOrEqual(3100);
     });
   });
 

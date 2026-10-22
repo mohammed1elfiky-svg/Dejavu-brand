@@ -17,9 +17,9 @@ const BUSINESS_TABLES = [
   'payments', 'coupon_usages', 'coupons', 'order_status_history', 'order_items', 'orders',
   'product_reviews', 'wishlist_items', 'cart_items', 'carts',
   'promotion_products', 'promotions', 'product_images', 'product_variants', 'products', 'brands', 'categories',
-  'purchase_order_items', 'supplier_payments', 'purchase_orders', 'suppliers',
+  'purchase_order_items', 'supplier_payments', 'supplier_account_entries', 'supplier_vouchers', 'purchase_orders', 'suppliers',
   'expenses', 'wallet_top_ups', 'stored_files', 'notifications', 'audit_logs', 'customer_addresses',
-  'document_sequences',
+  'outgoing_sms', 'phone_otps', 'document_sequences',
 ];
 
 /** People and their numbering stay when only operations are wiped. */

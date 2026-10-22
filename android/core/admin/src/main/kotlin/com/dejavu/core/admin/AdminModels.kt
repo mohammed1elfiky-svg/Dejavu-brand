@@ -350,6 +350,15 @@ data class AdminVariant(
 @Serializable
 enum class ProductStatus { DRAFT, ACTIVE, ARCHIVED }
 
+/** Where a product can be sold. */
+@Serializable
+enum class ProductVisibility(val label: String) {
+    ALL("الكاشير وتطبيق العملاء"),
+    POS_ONLY("الكاشير فقط"),
+    MERCHANTS("الكاشير وتطبيق العملاء (التجار فقط)"),
+    HIDDEN("مخفي تماماً"),
+}
+
 @Serializable
 data class CategoryName(val id: String, val nameAr: String)
 
@@ -375,6 +384,10 @@ data class AdminProduct(
     val variants: List<AdminVariant> = emptyList(),
     /** Numeric product SKU (100…); variants are "<skuNumber>-<n>". */
     val skuNumber: Int? = null,
+    val brand: String? = null,
+    val videoUrl: String? = null,
+    val instagramUrl: String? = null,
+    val visibility: ProductVisibility = ProductVisibility.ALL,
     /** Cost per piece in SAR, shared by all variants. */
     val costPrice: String = "0",
 )
@@ -382,6 +395,12 @@ data class AdminProduct(
 @Serializable
 data class UpdateProductRequest(
     val status: ProductStatus? = null,
+    val brand: String? = null,
+    /** "" clears it. */
+    val videoUrl: String? = null,
+    /** "" clears it. */
+    val instagramUrl: String? = null,
+    val visibility: ProductVisibility? = null,
     val basePrice: String? = null,
     val wholesalePrice: String? = null,
     val costPrice: String? = null,
@@ -435,8 +454,10 @@ data class ImageRequest(val url: String, val color: String? = null)
 data class CreateProductRequest(
     val categoryId: String,
     val nameAr: String,
-    val nameEn: String,
-    val slug: String,
+    /** Defaults to the Arabic name on the server. */
+    val nameEn: String? = null,
+    /** Generated from the name and SKU number on the server when null. */
+    val slug: String? = null,
     val basePrice: String,
     val variants: List<NewVariantRequest>,
     val costPrice: String? = null,
@@ -446,6 +467,10 @@ data class CreateProductRequest(
     val status: ProductStatus? = null,
     val isFeatured: Boolean? = null,
     val images: List<ImageRequest>? = null,
+    val brand: String? = null,
+    val videoUrl: String? = null,
+    val instagramUrl: String? = null,
+    val visibility: ProductVisibility? = null,
 )
 
 @Serializable

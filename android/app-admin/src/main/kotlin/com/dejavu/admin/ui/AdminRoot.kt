@@ -81,6 +81,7 @@ import com.dejavu.admin.ui.orders.OrdersScreen
 import com.dejavu.admin.ui.orders.ReturnDetailScreen
 import com.dejavu.admin.ui.orders.ReturnsScreen
 import com.dejavu.admin.ui.purchasing.PurchaseOrderScreen
+import com.dejavu.admin.ui.purchasing.NewPurchaseScreen
 import com.dejavu.admin.ui.purchasing.PurchasingScreen
 import com.dejavu.admin.ui.pos.PosReturnScreen
 import com.dejavu.admin.ui.pos.PosScreen
@@ -135,6 +136,7 @@ object R {
     const val BANK_ACCOUNTS = "bank-accounts"
     const val STAFF = "staff"
     const val POS_RETURNS = "pos-returns"
+    const val PURCHASE_NEW = "purchase-new"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -170,7 +172,10 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
+    // Till staff (cashier / clerk without the dashboard) see only the till and the orders.
+    val tillOnly = session.can(Perm.POS_SELL) && !session.can(Perm.DASHBOARD) && !session.can(Perm.USERS_MANAGE)
     val visibleTabs = tabs.filter { it.permission == null || session.can(it.permission) }
+        .filter { !tillOnly || it.route == R.POS || it.route == R.ORDERS }
     val open = { pattern: String, id: String -> nav.navigate(R.of(pattern, id)) }
     val back: () -> Unit = { nav.popBackStack() }
     val container = adminContainer()
@@ -231,7 +236,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.PRODUCT_EDIT) { e ->
                 ProductFormScreen(e.arguments?.getString("id").orEmpty(), back, saved = { nav.popBackStack() })
             }
-            composable(R.PURCHASING) { PurchasingScreen(back, openOrder = { open(R.PURCHASE, it) }) }
+            composable(R.PURCHASING) { PurchasingScreen(back, openOrder = { open(R.PURCHASE, it) }, newPurchase = { nav.navigate(R.PURCHASE_NEW) }) }
+            composable(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
             composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }
             composable(R.EXPENSE) { e -> ExpenseDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
@@ -243,7 +249,14 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             composable(R.SERVER) { ServerScreen(back) }
             composable(R.CURRENCY) { CurrencyScreen(session, back) }
-            composable(R.POS) { PosScreen(session, openBoxes = { nav.navigate(R.CASH_BOXES) }, openReturns = { nav.navigate(R.POS_RETURNS) }) }
+            composable(R.POS) {
+                PosScreen(
+                    session,
+                    openBoxes = { nav.navigate(R.CASH_BOXES) },
+                    openReturns = { nav.navigate(R.POS_RETURNS) },
+                    onLogout = if (tillOnly) ({ container.appScope.launch { container.logout() } }) else null,
+                )
+            }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })

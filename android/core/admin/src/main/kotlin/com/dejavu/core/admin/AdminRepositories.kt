@@ -203,6 +203,14 @@ class InventoryRepository(private val api: AdminApi) {
     /** Replaces the product's images with [images] (at most 10), in order. */
     suspend fun setImages(id: String, images: List<ImageRequest>) = apiCall { api.replaceImages(id, ImagesRequest(images)) }
 
+    /** Uploads a product video and returns its public URL. */
+    suspend fun uploadVideo(bytes: ByteArray, mimeType: String = "video/mp4") = apiCall {
+        api.uploadVideo(MultipartBody.Part.createFormData("file", "video.mp4", bytes.toRequestBody(mimeType.toMediaType())))
+    }
+
+    /** Stock value at cost and at selling price, per category and overall. */
+    suspend fun valuation() = apiCall { api.inventoryValuation() }
+
     /** Uploads a photo (JPEG bytes) and returns its public URL. */
     suspend fun uploadImage(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
         api.uploadImage(MultipartBody.Part.createFormData("file", "photo.jpg", bytes.toRequestBody(mimeType.toMediaType())))
@@ -214,6 +222,10 @@ class InventoryRepository(private val api: AdminApi) {
 
 class PurchasingRepository(private val api: AdminApi) {
     suspend fun suppliers(query: String? = null) = apiCall { api.suppliers(query?.trim()?.ifBlank { null }) }
+    suspend fun createSupplier(name: String, phone: String? = null) = apiCall { api.createSupplier(CreateSupplierRequest(name.trim(), phone?.trim()?.ifBlank { null })) }
+
+    /** Buys, receives and (optionally) pays in one step — the till-style purchase screen. */
+    suspend fun quickPurchase(request: QuickPurchaseRequest) = apiCall { api.quickPurchase(request) }
     suspend fun orders(status: PurchaseOrderStatus? = null, page: Int = 1) = apiCall { api.purchaseOrders(status?.name, page) }
     suspend fun order(id: String) = apiCall { api.purchaseOrder(id) }
 

@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Edit
@@ -104,6 +105,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
+import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
@@ -609,7 +611,8 @@ class PosViewModel(
 
 /** The till: product grid, cart and multi-currency checkout. */
 @Composable
-fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit) {
+fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit, onLogout: (() -> Unit)? = null) {
+    var confirmLogout by remember { mutableStateOf(false) }
     val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury) }
     val snackbar = remember { SnackbarHostState() }
     val canArrange = session.can(Perm.PRODUCTS_WRITE)
@@ -651,6 +654,11 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
                     IconButton(onClick = openReturns, enabled = !arranging) { Icon(Icons.Filled.Refresh, contentDescription = "مرتجع / استبدال") }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
                     IconButton(onClick = openBoxes) { Icon(Icons.Filled.Lock, contentDescription = "الصناديق") }
+                    if (onLogout != null) {
+                        IconButton(onClick = { confirmLogout = true }) {
+                            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "تسجيل الخروج", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 },
             )
         },
@@ -738,6 +746,10 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(),
             )
         }
+    }
+
+    if (confirmLogout && onLogout != null) {
+        ConfirmDialog("تسجيل الخروج", "هل تريد الخروج من حسابك على هذا الجهاز؟", "خروج", onDismiss = { confirmLogout = false }, onConfirm = onLogout)
     }
 
     if (newCustomer) {

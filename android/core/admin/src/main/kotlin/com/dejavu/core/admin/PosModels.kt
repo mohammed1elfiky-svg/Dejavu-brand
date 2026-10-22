@@ -507,3 +507,48 @@ data class PosReturnResult(
     /** Exchange: returned value not used by the new pieces (sale currency). */
     val leftover: String = "0",
 )
+
+// ------------------------------------------------------ inventory value ---
+
+@Serializable
+data class CategoryValue(
+    val categoryId: String,
+    val nameAr: String,
+    val products: Int,
+    val pieces: Int,
+    /** At purchase cost, SAR. */
+    val costValue: String,
+    /** At selling price, SAR. */
+    val saleValue: String,
+    val expectedProfit: String,
+)
+
+@Serializable
+data class ValuationTotals(val products: Int, val pieces: Int, val costValue: String, val saleValue: String, val expectedProfit: String)
+
+@Serializable
+data class InventoryValuation(val categories: List<CategoryValue> = emptyList(), val totals: ValuationTotals)
+
+// ------------------------------------------------------------- purchases ---
+
+@Serializable
+data class QuickPurchaseItem(val variantId: String, val quantity: Int, val unitCost: String)
+
+@Serializable
+data class QuickPurchaseRequest(
+    val supplierId: String,
+    val items: List<QuickPurchaseItem>,
+    val supplierInvoiceNo: String? = null,
+    val shippingCost: String? = null,
+    val note: String? = null,
+    /** Receive all pieces into stock now (default true on the server). */
+    val receiveNow: Boolean? = null,
+    /** CASH or BANK_TRANSFER to pay now; null = on account. */
+    val payMethod: String? = null,
+    /** SAR paid now; the whole invoice when null. */
+    val payAmount: String? = null,
+    val payAccountId: String? = null,
+)
+
+@Serializable
+data class CreateSupplierRequest(val name: String, val phone: String? = null)

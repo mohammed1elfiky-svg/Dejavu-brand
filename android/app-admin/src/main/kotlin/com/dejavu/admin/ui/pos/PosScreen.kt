@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
@@ -608,7 +609,7 @@ class PosViewModel(
 
 /** The till: product grid, cart and multi-currency checkout. */
 @Composable
-fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
+fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit) {
     val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury) }
     val snackbar = remember { SnackbarHostState() }
     val canArrange = session.can(Perm.PRODUCTS_WRITE)
@@ -647,6 +648,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
                             Icon(Icons.Filled.Edit, contentDescription = "تعديل سعر الصرف")
                         }
                     }
+                    IconButton(onClick = openReturns, enabled = !arranging) { Icon(Icons.Filled.Refresh, contentDescription = "مرتجع / استبدال") }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
                     IconButton(onClick = openBoxes) { Icon(Icons.Filled.Lock, contentDescription = "الصناديق") }
                 },

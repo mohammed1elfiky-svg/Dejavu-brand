@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package com.dejavu.admin.ui.inventory
 
@@ -77,11 +77,9 @@ import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.core.admin.AdjustmentReason
 import com.dejavu.core.admin.AdminProduct
 import com.dejavu.core.admin.InventoryRepository
-import com.dejavu.core.admin.LowStockRow
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.ProductStatus
 import com.dejavu.core.admin.StaffSession
-import com.dejavu.core.admin.StockLevel
 import com.dejavu.core.admin.UpdateProductRequest
 import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
@@ -99,6 +97,32 @@ import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.text.style.TextOverflow
+import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.core.admin.AdminCategory
+import com.dejavu.core.admin.Warehouse
+import com.dejavu.core.model.Page
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 val AdjustmentReason.label: String
     get() = when (this) {
@@ -124,31 +148,116 @@ val ProductStatus.label: String
 
 // -------------------------------------------------------------------- stock ---
 
+private const val STOCK_PAGE_SIZE = 100
+
+/** Products loaded so far for the stock tab (paged, 100 at a time). */
+data class StockPage(
+    val products: List<AdminProduct> = emptyList(),
+    val total: Int = 0,
+    val page: Int = 0,
+    val hasMore: Boolean = false,
+    val loadingMore: Boolean = false,
+)
+
+private enum class StockFlag { OK, LOW, OUT }
+
+private fun AdminVariant.flag(): StockFlag = when {
+    available <= 0 -> StockFlag.OUT
+    available <= lowStockThreshold -> StockFlag.LOW
+    else -> StockFlag.OK
+}
+
+private val AdminVariant.reserved: Int get() = stockLevels.sumOf { it.reserved }
+
+/** Out when nothing sellable is left; low when any (active) variant is at or under its threshold. */
+private fun AdminProduct.flag(): StockFlag {
+    val active = variants.filter { it.isActive }.ifEmpty { variants }
+    if (active.isEmpty() || active.all { it.flag() == StockFlag.OUT }) return StockFlag.OUT
+    return if (active.any { it.flag() != StockFlag.OK }) StockFlag.LOW else StockFlag.OK
+}
+
 class StockViewModel(private val repo: InventoryRepository) : BaseViewModel() {
-    private val _levels = MutableStateFlow<Load<List<StockLevel>>>(Load.Loading)
-    val levels = _levels.asStateFlow()
-    private val _low = MutableStateFlow<List<LowStockRow>>(emptyList())
-    val low = _low.asStateFlow()
+    private val _state = MutableStateFlow<Load<StockPage>>(Load.Loading)
+    val state = _state.asStateFlow()
+    private val _categories = MutableStateFlow<List<Pair<AdminCategory, Int>>>(emptyList())
+    val categories = _categories.asStateFlow()
+    private val _warehouses = MutableStateFlow<List<Warehouse>>(emptyList())
+    val warehouses = _warehouses.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
     var query = ""
         private set
+    var categoryId: String? = null
+        private set
+    private var job: Job? = null
 
     fun search(q: String) {
         query = q
         load(reset = true)
     }
 
-    fun load(reset: Boolean = false) {
-        if (reset || _levels.value !is Load.Ready) _levels.value = Load.Loading
-        viewModelScope.launch { _levels.value = repo.levels(query).map { it.items }.toLoad() }
-        viewModelScope.launch { repo.lowStock().getOrNull()?.let { _low.value = it } }
+    fun selectCategory(id: String?) {
+        if (id == categoryId) return
+        categoryId = id
+        load(reset = true)
     }
 
-    fun adjust(level: StockLevel, reason: AdjustmentReason, quantity: Int, note: String) {
+    /** First load (or [reset]) shows a spinner; otherwise re-fetches the pages already shown in place. */
+    fun load(reset: Boolean = false) {
+        if (_categories.value.isEmpty()) viewModelScope.launch { repo.categories().getOrNull()?.let { _categories.value = it } }
+        if (_warehouses.value.isEmpty()) viewModelScope.launch { repo.warehouses().getOrNull()?.let { list -> _warehouses.value = list.filter { it.isActive } } }
+        val current = (_state.value as? Load.Ready)?.value
+        if (reset || current == null) {
+            _state.value = Load.Loading
+            job?.cancel()
+            job = viewModelScope.launch {
+                _state.value = repo.products(query, page = 1, categoryId = categoryId, pageSize = STOCK_PAGE_SIZE)
+                    .map { StockPage(it.items, it.total, it.page, it.hasMore) }
+                    .toLoad()
+            }
+        } else {
+            refresh(current.page)
+        }
+    }
+
+    private fun refresh(pages: Int) {
+        job?.cancel()
+        job = viewModelScope.launch {
+            val items = mutableListOf<AdminProduct>()
+            var last: Page<AdminProduct>? = null
+            for (p in 1..pages.coerceAtLeast(1)) {
+                val page = repo.products(query, page = p, categoryId = categoryId, pageSize = STOCK_PAGE_SIZE).getOrElse {
+                    // Keep what is on screen; only a first load surfaces the error.
+                    val shown = (_state.value as? Load.Ready)?.value
+                    _state.value = if (shown != null) Load.Ready(shown.copy(loadingMore = false)) else Result.failure<StockPage>(it).toLoad()
+                    return@launch
+                }
+                items += page.items
+                last = page
+                if (!page.hasMore) break
+            }
+            last?.let { lp -> _state.value = Load.Ready(StockPage(items.distinctBy { it.id }, lp.total, lp.page, lp.hasMore)) }
+        }
+    }
+
+    fun loadMore() {
+        val current = (_state.value as? Load.Ready)?.value ?: return
+        if (!current.hasMore || current.loadingMore || job?.isActive == true) return
+        _state.value = Load.Ready(current.copy(loadingMore = true))
+        job = viewModelScope.launch {
+            val next = repo.products(query, page = current.page + 1, categoryId = categoryId, pageSize = STOCK_PAGE_SIZE).orSay()
+            val now = (_state.value as? Load.Ready)?.value ?: current
+            _state.value = Load.Ready(
+                if (next == null) now.copy(loadingMore = false)
+                else StockPage((now.products + next.items).distinctBy { it.id }, next.total, next.page, next.hasMore),
+            )
+        }
+    }
+
+    fun adjust(variantId: String, warehouseId: String, reason: AdjustmentReason, quantity: Int, note: String) {
         _busy.value = true
         viewModelScope.launch {
-            repo.adjust(level.warehouseId, reason, level.variantId, quantity, note).orSay()?.let {
+            repo.adjust(warehouseId, reason, variantId, quantity, note).orSay()?.let {
                 say("تم ${it.number}: ${Money.format(it.totalValue)}")
                 load()
             }
@@ -157,16 +266,24 @@ class StockViewModel(private val repo: InventoryRepository) : BaseViewModel() {
     }
 }
 
+/**
+ * The "المخزون" tab: products grouped by category, one row per product with its total stock;
+ * a row expands to its variants (size/color) with per-variant quantities and stock adjustment.
+ * [openProduct], when given, adds a "تفاصيل الصنف" button that opens the product page.
+ */
 @Composable
-fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit) {
+fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit, openProduct: ((String) -> Unit)? = null) {
     val vm = adminViewModel { StockViewModel(it.inventory) }
-    val levels by vm.levels.collectAsStateWithLifecycle()
-    val low by vm.low.collectAsStateWithLifecycle()
+    val state by vm.state.collectAsStateWithLifecycle()
+    val categories by vm.categories.collectAsStateWithLifecycle()
+    val warehouses by vm.warehouses.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var query by rememberSaveable { mutableStateOf(vm.query) }
     var onlyLow by rememberSaveable { mutableStateOf(false) }
-    var adjusting by remember { mutableStateOf<StockLevel?>(null) }
+    var adjusting by remember { mutableStateOf<Pair<AdminProduct, AdminVariant>?>(null) }
+    val canAdjust = session.can(Perm.STOCK_ADJUST)
+    val canProducts = session.can(Perm.PRODUCTS_READ)
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -178,7 +295,10 @@ fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit) {
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("المخزون") },
-                actions = { if (session.can(Perm.PRODUCTS_READ)) TextButton(onClick = openProducts) { Text("المنتجات") } },
+                navigationIcon = {
+                    IconButton(onClick = { vm.load() }) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
+                },
+                actions = { if (canProducts) TextButton(onClick = openProducts) { Text("المنتجات") } },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -188,65 +308,354 @@ fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("SKU أو اسم المنتج") },
+                placeholder = { Text("اسم المنتج أو SKU أو الباركود") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { vm.search(query) }),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
             )
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !onlyLow, onClick = { onlyLow = false }, label = { Text("الكل") })
-                FilterChip(selected = onlyLow, onClick = { onlyLow = true }, label = { Text("نواقص (${low.size})") })
-            }
-            LoadContent(levels, onRetry = { vm.load() }) { list ->
-                val lowIds = low.map { it.variantId }.toSet()
-                val shown = if (onlyLow) list.filter { it.variantId in lowIds } else list
-                if (shown.isEmpty()) {
-                    EmptyState(Icons.Filled.ShoppingCart, if (onlyLow) "لا توجد نواقص" else "لا توجد أصناف")
-                } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(shown, key = { "${it.variantId}:${it.warehouseId}" }) { l ->
-                            Card(
-                                onClick = { if (session.can(Perm.STOCK_ADJUST)) adjusting = l },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            ) {
-                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(l.variant.product.nameAr, style = MaterialTheme.typography.titleSmall)
-                                        Text("${l.variant.sku} · ${listOfNotNull(l.variant.size, l.variant.color).joinToString(" / ")}", style = MaterialTheme.typography.bodySmall)
-                                        Text("${l.warehouse.name} · القيمة ${Money.format(l.stockValue)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        val isLow = l.variantId in lowIds
-                                        Text("${l.available}", style = MaterialTheme.typography.headlineSmall, color = if (isLow) MaterialTheme.colorScheme.error else Success)
-                                        Text("متاح من ${l.onHand}", style = MaterialTheme.typography.labelSmall)
-                                        if (l.reserved > 0) Text("محجوز ${l.reserved}", style = MaterialTheme.typography.labelSmall, color = Warning)
-                                    }
-                                }
-                            }
-                        }
-                    }
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "low") {
+                    FilterChip(
+                        selected = onlyLow,
+                        onClick = { onlyLow = !onlyLow },
+                        label = { Text("نواقص") },
+                        leadingIcon = { Icon(Icons.Filled.Warning, contentDescription = null, Modifier.size(18.dp)) },
+                    )
                 }
+                item(key = "all") {
+                    FilterChip(selected = vm.categoryId == null, onClick = { vm.selectCategory(null) }, label = { Text("الكل") })
+                }
+                items(categories, key = { "c:${it.first.id}" }) { (c, _) ->
+                    FilterChip(selected = vm.categoryId == c.id, onClick = { vm.selectCategory(c.id) }, label = { Text(c.nameAr) })
+                }
+            }
+            LoadContent(state, onRetry = { vm.load(reset = true) }) { page ->
+                StockList(
+                    page = page,
+                    categories = categories,
+                    onlyLow = onlyLow,
+                    canAdjust = canAdjust,
+                    onAdjust = { p, v -> adjusting = p to v },
+                    openProduct = openProduct?.takeIf { canProducts },
+                    openProducts = openProducts.takeIf { canProducts },
+                    loadMore = vm::loadMore,
+                )
             }
         }
     }
 
-    adjusting?.let { level -> AdjustDialog(level, onDismiss = { adjusting = null }) { reason, qty, note -> vm.adjust(level, reason, qty, note) } }
+    adjusting?.let { (p, v) ->
+        AdjustDialog(p, v, warehouses, onDismiss = { adjusting = null }) { warehouseId, reason, qty, note ->
+            vm.adjust(v.id, warehouseId, reason, qty, note)
+        }
+    }
 }
 
 @Composable
-private fun AdjustDialog(level: StockLevel, onDismiss: () -> Unit, onConfirm: (AdjustmentReason, Int, String) -> Unit) {
+private fun StockList(
+    page: StockPage,
+    categories: List<Pair<AdminCategory, Int>>,
+    onlyLow: Boolean,
+    canAdjust: Boolean,
+    onAdjust: (AdminProduct, AdminVariant) -> Unit,
+    openProduct: ((String) -> Unit)?,
+    openProducts: (() -> Unit)?,
+    loadMore: () -> Unit,
+) {
+    val shown = remember(page.products, onlyLow) {
+        if (onlyLow) page.products.filter { it.flag() != StockFlag.OK } else page.products
+    }
+    val groups = remember(shown, categories) {
+        val order = categories.withIndex().associate { (i, c) -> c.first.id to i }
+        shown.groupBy { it.category.id }.entries.sortedBy { order[it.key] ?: Int.MAX_VALUE }.map { it.value }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            (info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 3) to info.totalItemsCount
+        }
+            .distinctUntilChanged()
+            .collect { (nearEnd, _) -> if (nearEnd) loadMore() }
+    }
+
+    LazyColumn(
+        state = listState,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        item(key = "summary") { StockSummary(page) }
+        if (shown.isEmpty()) {
+            item(key = "empty") {
+                if (page.hasMore) {
+                    Text(
+                        "لا نواقص في ما حُمّل حتى الآن…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                } else {
+                    EmptyState(Icons.Filled.ShoppingCart, if (onlyLow) "لا توجد نواقص" else "لا توجد أصناف", modifier = Modifier.height(280.dp))
+                }
+            }
+        }
+        groups.forEach { group ->
+            val category = group.first().category
+            stickyHeader(key = "h:${category.id}", contentType = "header") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Lux.Pearl.copy(alpha = 0.96f))
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Lux.GoldDeep, modifier = Modifier.size(18.dp))
+                    Text(category.nameAr, style = MaterialTheme.typography.titleSmall, color = Lux.Ink, modifier = Modifier.weight(1f))
+                    Text(
+                        "${group.size} صنف · ${group.sumOf { p -> p.variants.sumOf { it.onHand } }} قطعة",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Lux.InkSoft,
+                    )
+                }
+            }
+            items(group, key = { it.id }, contentType = { "product" }) { p ->
+                ProductStockCard(p, canAdjust, onAdjust, openProduct, openProducts)
+            }
+        }
+        if (page.hasMore || page.loadingMore) {
+            item(key = "more") {
+                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                    if (page.loadingMore) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                    else TextButton(onClick = loadMore) { Text("تحميل المزيد") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockSummary(page: StockPage) {
+    val pieces = page.products.sumOf { p -> p.variants.sumOf { it.onHand } }
+    val available = page.products.sumOf { p -> p.variants.sumOf { it.available } }
+    val low = page.products.count { it.flag() == StockFlag.LOW }
+    val out = page.products.count { it.flag() == StockFlag.OUT }
+    val plus = if (page.hasMore) "+" else ""
+    GlassCard(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            SummaryStat("المنتجات", "${page.total}")
+            SummaryStat("القطع", "$pieces$plus")
+            SummaryStat("المتاح", "$available$plus")
+            GoldPill {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("$low$plus", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("نواقص", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        if (out > 0 || page.hasMore) {
+            Text(
+                listOfNotNull(
+                    "نفد مخزون $out صنف".takeIf { out > 0 },
+                    "الأرقام لأول ${page.products.size} من ${page.total} — مرّر للمزيد".takeIf { page.hasMore },
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = Lux.InkSoft,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleLarge, color = Lux.Ink)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+    }
+}
+
+@Composable
+private fun ProductStockCard(
+    p: AdminProduct,
+    canAdjust: Boolean,
+    onAdjust: (AdminProduct, AdminVariant) -> Unit,
+    openProduct: ((String) -> Unit)?,
+    openProducts: (() -> Unit)?,
+) {
+    var expanded by rememberSaveable(p.id) { mutableStateOf(false) }
+    val onHand = p.variants.sumOf { it.onHand }
+    val available = p.variants.sumOf { it.available }
+    val flag = p.flag()
+    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ProductImage(p.images.firstOrNull()?.url, Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(p.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "SKU ${p.skuNumber ?: "—"} · ${p.variants.size} متغير",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                when (flag) {
+                    StockFlag.OUT -> StatusChip("نفد المخزون", MaterialTheme.colorScheme.error)
+                    StockFlag.LOW -> StatusChip("مخزون منخفض", Warning)
+                    StockFlag.OK -> Unit
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "$onHand",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = when (flag) {
+                        StockFlag.OUT -> MaterialTheme.colorScheme.error
+                        StockFlag.LOW -> Warning
+                        StockFlag.OK -> Success
+                    },
+                )
+                Text("متاح $available", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+            }
+            Icon(
+                if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "إخفاء المقاسات" else "عرض المقاسات",
+                tint = Lux.GoldDeep,
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                HorizontalDivider(color = Lux.Hairline)
+                if (p.variants.isEmpty()) {
+                    Text("لا توجد مقاسات أو ألوان", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                }
+                p.variants.forEach { v -> VariantStockRow(v, onAdjust = if (canAdjust) ({ onAdjust(p, v) }) else null) }
+                if (openProduct != null) {
+                    OutlinedButton(onClick = { openProduct(p.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Info, contentDescription = null, Modifier.size(18.dp))
+                        Text("تفاصيل الصنف", Modifier.padding(start = 8.dp))
+                    }
+                } else if (openProducts != null) {
+                    TextButton(onClick = openProducts, modifier = Modifier.fillMaxWidth()) { Text("إدارة المنتجات") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VariantStockRow(v: AdminVariant, onAdjust: (() -> Unit)?) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Lux.Champagne.copy(alpha = 0.6f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ColorDot(v.colorHex)
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${v.title}${if (!v.isActive) " · موقوف" else ""}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (v.isActive) Lux.Ink else Lux.InkSoft,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "SKU ${v.sku}${v.barcode?.takeIf { it.isNotBlank() }?.let { " · باركود $it" } ?: ""}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Lux.InkSoft,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "${v.available}",
+                style = MaterialTheme.typography.titleMedium,
+                color = when (v.flag()) {
+                    StockFlag.OUT -> MaterialTheme.colorScheme.error
+                    StockFlag.LOW -> Warning
+                    StockFlag.OK -> Success
+                },
+            )
+            Text(
+                "الكل ${v.onHand}${if (v.reserved > 0) " · محجوز ${v.reserved}" else ""}",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (v.reserved > 0) Warning else Lux.InkSoft,
+            )
+        }
+        if (onAdjust != null) {
+            IconButton(onClick = onAdjust, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Filled.Edit, contentDescription = "تسوية مخزون", tint = Lux.GoldDeep, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorDot(hex: String?) {
+    val color = hex?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
+    if (color == null) {
+        Box(Modifier.size(14.dp))
+    } else {
+        Box(Modifier.size(14.dp).background(color, CircleShape).border(1.dp, Lux.Hairline, CircleShape))
+    }
+}
+
+@Composable
+private fun AdjustDialog(
+    product: AdminProduct,
+    variant: AdminVariant,
+    warehouses: List<Warehouse>,
+    onDismiss: () -> Unit,
+    onConfirm: (warehouseId: String, AdjustmentReason, Int, String) -> Unit,
+) {
+    // Warehouses this variant can be adjusted in: the known active ones, else the ones it has stock rows in.
+    val choices = remember(warehouses, variant) {
+        warehouses.map { it.id to it.name }.ifEmpty { variant.stockLevels.map { it.warehouseId to "مستودع" } }
+    }
+    val initial = remember(choices, variant) {
+        variant.stockLevels.filter { l -> choices.any { it.first == l.warehouseId } }.maxByOrNull { it.onHand }?.warehouseId
+            ?: warehouses.firstOrNull { it.isDefault }?.id
+            ?: choices.firstOrNull()?.first
+    }
+    var warehouseId by rememberSaveable(initial) { mutableStateOf(initial) }
     var reason by rememberSaveable { mutableStateOf(AdjustmentReason.DAMAGE) }
     var qty by rememberSaveable { mutableStateOf("1") }
     var note by rememberSaveable { mutableStateOf("") }
     val quantity = qty.toIntOrNull()?.takeIf { it > 0 }
+    val level = variant.stockLevels.firstOrNull { it.warehouseId == warehouseId }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("تسوية مخزون") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("${level.variant.product.nameAr} · ${level.variant.sku} (متاح ${level.available})", style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "${product.nameAr} · ${variant.title} · ${variant.sku} (متاح ${level?.let { it.onHand - it.reserved } ?: 0})",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (choices.size > 1) {
+                    Text("المستودع", style = MaterialTheme.typography.labelMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(choices, key = { it.first }) { (id, name) ->
+                            FilterChip(selected = warehouseId == id, onClick = { warehouseId = id }, label = { Text(name) })
+                        }
+                    }
+                } else if (choices.isEmpty()) {
+                    Text("تعذّر تحميل المستودعات", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
                 ADJUSTMENT_REASONS.forEach { r ->
                     Row(Modifier.fillMaxWidth().clickable { reason = r }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = r == reason, onClick = { reason = r })
@@ -261,7 +670,12 @@ private fun AdjustDialog(level: StockLevel, onDismiss: () -> Unit, onConfirm: (A
                 Text("يُسجَّل قيد محاسبي تلقائياً بمتوسط التكلفة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { TextButton(onClick = { onDismiss(); onConfirm(reason, quantity!!, note.trim()) }, enabled = quantity != null) { Text("تسجيل") } },
+        confirmButton = {
+            TextButton(
+                onClick = { onDismiss(); onConfirm(warehouseId!!, reason, quantity!!, note.trim()) },
+                enabled = quantity != null && warehouseId != null,
+            ) { Text("تسجيل") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
 }

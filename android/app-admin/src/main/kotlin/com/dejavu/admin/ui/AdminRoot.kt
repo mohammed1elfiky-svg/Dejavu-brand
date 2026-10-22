@@ -75,6 +75,10 @@ import com.dejavu.admin.ui.inventory.ProductsScreen
 import com.dejavu.admin.ui.brands.BrandsScreen
 import com.dejavu.admin.ui.system.WipeDataScreen
 import com.dejavu.admin.ui.printers.PrinterSettingsScreen
+import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
+import com.dejavu.admin.ui.purchasing.NewImportScreen
+import com.dejavu.admin.ui.purchasing.SupplierScreen
+import com.dejavu.admin.ui.purchasing.SuppliersScreen
 import com.dejavu.admin.ui.inventory.StockScreen
 import com.dejavu.admin.ui.products.ProductFormScreen
 import com.dejavu.admin.ui.more.CurrencyScreen
@@ -145,6 +149,10 @@ object R {
     const val BRAND_PRODUCTS = "brand-products/{id}"
     const val WIPE = "wipe-test-data"
     const val PRINTERS = "printers"
+    const val SUPPLIERS = "suppliers"
+    const val SUPPLIER = "supplier/{id}"
+    const val IMPORT_NEW = "import-new/{id}"
+    const val IMPORT_RECEIVE = "import-receive/{id}"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -264,9 +272,32 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.PRODUCT_EDIT) { e ->
                 ProductFormScreen(e.arguments?.getString("id").orEmpty(), back, saved = { nav.popBackStack() })
             }
-            composable(R.PURCHASING) { PurchasingScreen(back, openOrder = { open(R.PURCHASE, it) }, newPurchase = { nav.navigate(R.PURCHASE_NEW) }) }
+            composable(R.PURCHASING) {
+                PurchasingScreen(
+                    back,
+                    openOrder = { open(R.PURCHASE, it) },
+                    newPurchase = { nav.navigate(R.PURCHASE_NEW) },
+                    openSuppliers = { nav.navigate(R.SUPPLIERS) },
+                    newImport = if (session.can(Perm.PRODUCTS_WRITE)) ({ open(R.IMPORT_NEW, "-") }) else null,
+                )
+            }
+            composable(R.SUPPLIERS) { SuppliersScreen(session.can("suppliers.manage"), back, openSupplier = { open(R.SUPPLIER, it) }) }
+            composable(R.SUPPLIER) { e ->
+                SupplierScreen(
+                    e.arguments?.getString("id").orEmpty(),
+                    canManage = session.can("suppliers.manage"),
+                    canOrder = session.can(Perm.PRODUCTS_WRITE) && session.can("purchases.write"),
+                    onBack = back,
+                    openOrder = { open(R.PURCHASE, it) },
+                    newImport = { open(R.IMPORT_NEW, it) },
+                )
+            }
+            composable(R.IMPORT_NEW) { e ->
+                NewImportScreen(e.arguments?.getString("id")?.takeIf { it != "-" }, back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.IMPORT_NEW) { inclusive = true } } })
+            }
+            composable(R.IMPORT_RECEIVE) { e -> ImportReceiveScreen(e.arguments?.getString("id").orEmpty(), back, done = back) }
             composable(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
-            composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }) }
             composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }
             composable(R.EXPENSE) { e -> ExpenseDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.NEW_EXPENSE) { NewExpenseScreen(back, created = { id -> nav.navigate(R.of(R.EXPENSE, id)) { popUpTo(R.EXPENSES) } }) }

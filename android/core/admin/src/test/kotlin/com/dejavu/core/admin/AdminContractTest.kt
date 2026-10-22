@@ -6,6 +6,7 @@ import com.dejavu.core.data.CatalogRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.model.AddressRequest
+import com.dejavu.core.model.Money
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.PaymentStatus
@@ -222,6 +223,39 @@ class AdminContractTest {
         val redNow = reloaded.variants.first { it.id == red.id }
         assertEquals(2, redNow.onHand)
         assertTrue(!redNow.isActive)
+    }
+
+    @Test
+    fun `import order holds goods with the supplier until the shipment is counted`() = runBlocking {
+        assumeTrue("Set DEJAVU_API_URL to run contract tests", url.isNotBlank())
+        val (session, api) = staff()
+        session.login("admin@dejavu.local", "ChangeMe!2026").getOrThrow()
+        val repo = PurchasingRepository(api)
+        val inventory = InventoryRepository(api)
+        val run = System.currentTimeMillis().toString(36)
+        val category = inventory.createCategory("استيراد $run", "Import $run").getOrThrow()
+        val supplier = repo.createSupplier("مورد $run", commissionPercent = "5").getOrThrow()
+        assertEquals("5", supplier.commissionPercent)
+
+        val po = repo.createImport(
+            ImportOrderRequest(
+                supplierId = supplier.id,
+                foreignPerUsd = "7.2",
+                sarPerUsd = "3.75",
+                domesticShipping = "100",
+                newProducts = listOf(ImportNewProduct(category.id, "فستان $run", "250", "20", listOf(ImportNewVariant(size = "M", quantity = 10), ImportNewVariant(size = "L", quantity = 5)))),
+            ),
+        ).getOrThrow()
+        assertTrue(po.isImport && po.items.all { it.createdProduct })
+        assertEquals(15, repo.pendingItems(supplier.id).getOrThrow().totalPieces)
+
+        val counted = ImportReceiveRequest(po.items.map { ImportReceiveRequest.Line(it.id, it.quantity) }, cbmRateUsd = "150", totalCbm = "0.8")
+        val costs = repo.importCosts(po.id, counted).getOrThrow()
+        assertTrue(costs.lines.all { Money.parse(it.unitCost).signum() > 0 })
+        val received = repo.importReceive(po.id, counted).getOrThrow()
+        assertEquals(PurchaseOrderStatus.RECEIVED, received.status)
+        assertEquals(costs.totals.freight, received.freightCost)
+        assertEquals(0, repo.pendingItems(supplier.id).getOrThrow().totalPieces)
     }
 
     @Test

@@ -555,4 +555,4 @@ data class QuickPurchaseRequest(
 )
 
 @Serializable
-data class CreateSupplierRequest(val name: String, val phone: String? = null)
+data class CreateSupplierRequest(val name: String, val phone: String? = null, val commissionPercent: String? = null)

@@ -603,7 +603,41 @@ data class Supplier(
     val contactName: String? = null,
     val isActive: Boolean = true,
     val balance: String = "0",
+    /** Agent / supplier commission, percent of the goods value (import costs). */
+    val commissionPercent: String = "0",
+    val email: String? = null,
+    val address: String? = null,
 )
+
+/** GET admin/suppliers/{id}: the supplier with its latest orders. */
+@Serializable
+data class SupplierDetail(
+    val id: String,
+    val code: String,
+    val name: String,
+    val phone: String? = null,
+    val contactName: String? = null,
+    val isActive: Boolean = true,
+    val balance: String = "0",
+    val commissionPercent: String = "0",
+    val purchaseOrders: List<SupplierOrder> = emptyList(),
+) {
+    @Serializable
+    data class SupplierOrder(val id: String, val number: String, val status: PurchaseOrderStatus, val orderDate: String, val grandTotal: String, val amountPaid: String)
+}
+
+@Serializable
+data class UpdateSupplierRequest(
+    val name: String? = null,
+    val phone: String? = null,
+    val contactName: String? = null,
+    val commissionPercent: String? = null,
+    val isActive: Boolean? = null,
+)
+
+/** LOCAL: bought in SAR. IMPORT: bought abroad; landed cost set when the shipment arrives. */
+@Serializable
+enum class PurchaseKind { LOCAL, IMPORT }
 
 @Serializable
 enum class PurchaseOrderStatus { DRAFT, ORDERED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED }
@@ -617,6 +651,7 @@ data class PurchaseOrderSummary(
     val grandTotal: String,
     val amountPaid: String,
     val supplier: NameRef,
+    val kind: PurchaseKind = PurchaseKind.LOCAL,
 )
 
 @Serializable
@@ -629,11 +664,20 @@ data class PurchaseItem(
     val taxRate: String,
     val lineTotal: String,
     val variant: Variant,
+    /** Import orders: supplier price per piece in the order currency. */
+    val unitPriceForeign: String? = null,
+    val cbm: String? = null,
+    /** Import orders: final cost per piece (SAR) once received. */
+    val landedUnitCost: String? = null,
+    /** A new product created with this order (a draft until received). */
+    val createdProduct: Boolean = false,
 ) {
     @Serializable data class Variant(val sku: String, val size: String? = null, val color: String? = null, val product: Name) {
-        @Serializable data class Name(val nameAr: String)
+        @Serializable
+        data class Name(val nameAr: String, val id: String? = null, val skuNumber: Int? = null, val images: List<ImageUrl> = emptyList())
     }
     val remaining: Int get() = quantity - receivedQty
+    val option: String get() = listOfNotNull(variant.size, variant.color).joinToString(" · ")
 }
 
 @Serializable
@@ -657,9 +701,125 @@ data class PurchaseOrderDetail(
     val items: List<PurchaseItem>,
     val payments: List<SupplierPaymentView> = emptyList(),
     val journalEntries: List<JournalEntryView> = emptyList(),
+    val kind: PurchaseKind = PurchaseKind.LOCAL,
+    val foreignCurrency: String? = null,
+    val foreignPerUsd: String? = null,
+    val sarPerUsd: String? = null,
+    val commissionPercent: String = "0",
+    val domesticShipping: String = "0",
+    val totalCbm: String? = null,
+    val cbmRateUsd: String? = null,
+    val freightCost: String = "0",
+    val receivedAt: String? = null,
+    val expectedDate: String? = null,
 ) {
     val canReceive: Boolean get() = status == PurchaseOrderStatus.ORDERED || status == PurchaseOrderStatus.PARTIALLY_RECEIVED
+    val isImport: Boolean get() = kind == PurchaseKind.IMPORT
 }
+
+// ------------------------------------------------------------- imports ---
+
+@Serializable
+data class ImportItemRequest(val variantId: String, val quantity: Int, val unitPriceForeign: String)
+
+@Serializable
+data class ImportNewVariant(val size: String? = null, val color: String? = null, val colorHex: String? = null, val quantity: Int)
+
+/** A product that does not exist yet: created as a draft and sold only once received. */
+@Serializable
+data class ImportNewProduct(
+    val categoryId: String,
+    val nameAr: String,
+    val basePrice: String,
+    val unitPriceForeign: String,
+    val variants: List<ImportNewVariant>,
+    val imageUrl: String? = null,
+    val brandId: String? = null,
+)
+
+@Serializable
+data class ImportOrderRequest(
+    val supplierId: String,
+    val foreignPerUsd: String,
+    val foreignCurrency: String? = null,
+    /** Null = the current USD rate from the currency settings. */
+    val sarPerUsd: String? = null,
+    /** Null = the supplier's commission. */
+    val commissionPercent: String? = null,
+    val domesticShipping: String? = null,
+    val supplierInvoiceNo: String? = null,
+    val note: String? = null,
+    val items: List<ImportItemRequest> = emptyList(),
+    val newProducts: List<ImportNewProduct> = emptyList(),
+)
+
+/** Counted pieces and the costs known on arrival (preview and "receive & confirm"). */
+@Serializable
+data class ImportReceiveRequest(
+    val items: List<Line>,
+    val cbmRateUsd: String,
+    val totalCbm: String? = null,
+    val foreignPerUsd: String? = null,
+    val sarPerUsd: String? = null,
+    val commissionPercent: String? = null,
+    val domesticShipping: String? = null,
+    val note: String? = null,
+) {
+    @Serializable data class Line(val itemId: String, val quantity: Int, val cbm: String? = null)
+}
+
+@Serializable
+data class ImportCostLine(
+    val itemId: String,
+    val ordered: Int,
+    val quantity: Int,
+    val goods: String,
+    val domestic: String,
+    val commission: String,
+    val freight: String,
+    val total: String,
+    val cbm: String,
+    val unitCost: String,
+)
+
+@Serializable
+data class ImportCostTotals(val goods: String, val domestic: String, val commission: String, val freight: String, val total: String, val cbm: String)
+
+@Serializable
+data class ImportCosts(
+    val foreignPerUsd: String,
+    val sarPerUsd: String,
+    val commissionPercent: String,
+    val lines: List<ImportCostLine>,
+    val totals: ImportCostTotals,
+)
+
+/** Ordered from a supplier, not received yet. */
+@Serializable
+data class PendingItem(
+    val id: String,
+    val quantity: Int,
+    val receivedQty: Int,
+    val pendingQty: Int,
+    val unitPriceForeign: String? = null,
+    val unitCost: String = "0",
+    val createdProduct: Boolean = false,
+    val purchaseOrder: Order,
+    val variant: VariantRef,
+    val product: ProductRef,
+) {
+    @Serializable
+    data class Order(val id: String, val number: String, val orderDate: String, val expectedDate: String? = null, val kind: PurchaseKind = PurchaseKind.LOCAL, val foreignCurrency: String? = null)
+
+    @Serializable data class VariantRef(val id: String, val sku: String, val size: String? = null, val color: String? = null)
+
+    @Serializable data class ProductRef(val id: String, val nameAr: String, val imageUrl: String? = null)
+
+    val option: String get() = listOfNotNull(variant.size, variant.color).joinToString(" · ")
+}
+
+@Serializable
+data class PendingItems(val items: List<PendingItem> = emptyList(), val totalPieces: Int = 0)
 
 @Serializable
 data class ReceiveRequest(val items: List<Line>, val note: String? = null) {

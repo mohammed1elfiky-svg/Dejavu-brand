@@ -99,6 +99,12 @@ interface AdminApi {
     // purchasing
     @GET("admin/suppliers") suspend fun suppliers(@Query("q") query: String? = null, @Query("pageSize") pageSize: Int = 50): Page<Supplier>
     @POST("admin/suppliers") suspend fun createSupplier(@Body body: CreateSupplierRequest): Supplier
+    @GET("admin/suppliers/{id}") suspend fun supplier(@Path("id") id: String): SupplierDetail
+    @PATCH("admin/suppliers/{id}") suspend fun updateSupplier(@Path("id") id: String, @Body body: UpdateSupplierRequest): Supplier
+    @GET("admin/suppliers/{id}/pending-items") suspend fun pendingItems(@Path("id") id: String): PendingItems
+    @POST("admin/purchase-orders/import") suspend fun createImport(@Body body: ImportOrderRequest): PurchaseOrderDetail
+    @POST("admin/purchase-orders/{id}/import-costs") suspend fun importCosts(@Path("id") id: String, @Body body: ImportReceiveRequest): ImportCosts
+    @POST("admin/purchase-orders/{id}/import-receive") suspend fun importReceive(@Path("id") id: String, @Body body: ImportReceiveRequest): PurchaseOrderDetail
     @POST("admin/purchase-orders/quick") suspend fun quickPurchase(@Body body: QuickPurchaseRequest): PurchaseOrderDetail
     @GET("admin/reports/inventory-valuation") suspend fun inventoryValuation(): InventoryValuation
     @Multipart @POST("admin/files/video") suspend fun uploadVideo(@Part file: MultipartBody.Part): UploadedFile

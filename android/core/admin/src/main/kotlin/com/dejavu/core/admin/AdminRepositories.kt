@@ -238,7 +238,22 @@ class InventoryRepository(private val api: AdminApi) {
 
 class PurchasingRepository(private val api: AdminApi) {
     suspend fun suppliers(query: String? = null) = apiCall { api.suppliers(query?.trim()?.ifBlank { null }) }
-    suspend fun createSupplier(name: String, phone: String? = null) = apiCall { api.createSupplier(CreateSupplierRequest(name.trim(), phone?.trim()?.ifBlank { null })) }
+    suspend fun createSupplier(name: String, phone: String? = null, commissionPercent: String? = null) =
+        apiCall { api.createSupplier(CreateSupplierRequest(name.trim(), phone?.trim()?.ifBlank { null }, commissionPercent?.trim()?.ifBlank { null })) }
+    suspend fun supplier(id: String) = apiCall { api.supplier(id) }
+    suspend fun updateSupplier(id: String, request: UpdateSupplierRequest) = apiCall { api.updateSupplier(id, request) }
+
+    /** Pieces ordered from the supplier and not received yet. */
+    suspend fun pendingItems(supplierId: String) = apiCall { api.pendingItems(supplierId) }
+
+    /** Import order priced in the supplier's currency (new items become drafts held for it). */
+    suspend fun createImport(request: ImportOrderRequest) = apiCall { api.createImport(request) }
+
+    /** Landed cost per piece for the counted quantities and CBM, without saving. */
+    suspend fun importCosts(id: String, request: ImportReceiveRequest) = apiCall { api.importCosts(id, request) }
+
+    /** "Receive and confirm matching": stock in at the landed cost. */
+    suspend fun importReceive(id: String, request: ImportReceiveRequest) = apiCall { api.importReceive(id, request) }
 
     /** Buys, receives and (optionally) pays in one step — the till-style purchase screen. */
     suspend fun quickPurchase(request: QuickPurchaseRequest) = apiCall { api.quickPurchase(request) }

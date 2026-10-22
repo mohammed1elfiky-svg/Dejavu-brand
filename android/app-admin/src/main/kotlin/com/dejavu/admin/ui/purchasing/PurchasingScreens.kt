@@ -2,6 +2,9 @@
 
 package com.dejavu.admin.ui.purchasing
 
+import com.dejavu.core.admin.PurchaseKind
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -100,7 +103,7 @@ class PurchasingViewModel(private val repo: PurchasingRepository) : BaseViewMode
 }
 
 @Composable
-fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchase: () -> Unit) {
+fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchase: () -> Unit, openSuppliers: () -> Unit = {}, newImport: (() -> Unit)? = null) {
     val vm = adminViewModel { PurchasingViewModel(it.purchasing) }
     val canWrite = adminContainer().session.can(PURCHASES_WRITE)
     val orders by vm.orders.collectAsStateWithLifecycle()
@@ -125,6 +128,12 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 88.dp)) {
+            item {
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = openSuppliers, modifier = Modifier.weight(1f)) { Text("الموردون والبضائع المعلقة") }
+                    if (canWrite && newImport != null) OutlinedButton(onClick = newImport, modifier = Modifier.weight(1f)) { Text("طلبية استيراد") }
+                }
+            }
             if (suppliers.isNotEmpty()) {
                 item {
                     Column(Modifier.padding(16.dp)) {
@@ -152,7 +161,7 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
                                     Text(po.number, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                                     StatusChip(po.status.label, po.status.tint())
                                 }
-                                Text("${po.supplier.name} · ${formatDate(po.orderDate)}", style = MaterialTheme.typography.bodySmall)
+                                Text("${po.supplier.name} · ${formatDate(po.orderDate)}${if (po.kind == PurchaseKind.IMPORT) " · استيراد" else ""}", style = MaterialTheme.typography.bodySmall)
                                 SummaryRow("الإجمالي / المدفوع", "${Money.format(po.grandTotal)} / ${Money.format(po.amountPaid)}")
                             }
                         }
@@ -202,13 +211,16 @@ class PurchaseOrderViewModel(private val id: String, private val repo: Purchasin
 }
 
 @Composable
-fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) {
+fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, openImportReceive: (String) -> Unit = {}) {
     val vm = adminViewModel(key = "po:$id") { PurchaseOrderViewModel(id, it.purchasing) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val receiving = remember { mutableStateMapOf<String, Int>() }
     var paying by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -217,7 +229,7 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar((state as? Load.Ready)?.value?.number ?: "أمر شراء", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { po ->
-            val canReceive = po.canReceive && session.can(Perm.PURCHASES_RECEIVE)
+            val canReceive = po.canReceive && session.can(Perm.PURCHASES_RECEIVE) && !po.isImport
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
@@ -235,11 +247,46 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         SummaryRow("المتبقي للمورد", Money.format(po.balanceDue), strong = true)
                     }
                 }
+                if (po.isImport) {
+                    item {
+                        InfoCard {
+                            Text("طلبية استيراد · ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                            po.foreignPerUsd?.let { SummaryRow("سعر الدولار", "$it ${po.foreignCurrency ?: ""} · ${po.sarPerUsd ?: "—"} ر.س") }
+                            SummaryRow("عمولة المورد", "${po.commissionPercent}%")
+                            if (!Money.isZero(po.domesticShipping)) SummaryRow("الشحن الداخلي", "${po.domesticShipping} ${po.foreignCurrency ?: ""}")
+                            po.totalCbm?.let { SummaryRow("الحجم / سعر CBM", "$it م³ · ${po.cbmRateUsd ?: "—"} \$") }
+                            if (!Money.isZero(po.freightCost)) SummaryRow("الشحن الخارجي والجمارك", Money.format(po.freightCost))
+                            if (po.canReceive && session.can(Perm.PURCHASES_RECEIVE)) {
+                                Button(onClick = { openImportReceive(po.id) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("استلام ومطابقة الشحنة") }
+                            } else if (po.canReceive) {
+                                Text("البضاعة لدى المورد بانتظار الشحن", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                            }
+                        }
+                    }
+                }
+                item {
+                    OutlinedButton(
+                        enabled = !exporting,
+                        onClick = {
+                            exporting = true
+                            scope.launch {
+                                runCatching {
+                                    val rows = po.items.map { ChecklistRow(it.variant.product.nameAr, it.option, it.variant.sku, it.quantity, it.variant.product.images.firstOrNull()?.url) }
+                                    sharePdf(context, checklistPdf(context, "قائمة مطابقة ${po.number}", "${po.supplier.name} · ${formatDate(po.orderDate)}", rows), "مطابقة ${po.number}")
+                                }
+                                exporting = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (exporting) "جارٍ تجهيز الملف…" else "ملف PDF للمطابقة (مع الصور)") }
+                }
                 item { Text(if (canReceive) "حدد الكميات التي وصلت الآن" else "البنود", style = MaterialTheme.typography.titleSmall) }
                 items(po.items, key = { it.id }) { line ->
                     InfoCard {
                         Text(line.variant.product.nameAr, style = MaterialTheme.typography.titleSmall)
-                        Text("${line.variant.sku} · ${Money.format(line.unitCost)} للقطعة", style = MaterialTheme.typography.bodySmall)
+                        Text("${line.option.ifBlank { "" }}${if (line.option.isNotBlank()) " · " else ""}${line.variant.sku} · ${Money.format(line.unitCost)} للقطعة", style = MaterialTheme.typography.bodySmall)
+                        line.unitPriceForeign?.let { Text("سعر المورد: $it ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
+                        line.landedUnitCost?.let { Text("التكلفة الفعلية للقطعة: ${Money.format(it)}", style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("مستلم ${line.receivedQty} من ${line.quantity}", Modifier.weight(1f))
                             if (canReceive && line.remaining > 0) {

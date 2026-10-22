@@ -229,7 +229,6 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         po.supplierInvoiceNo?.let { Text("فاتورة المورد: $it", style = MaterialTheme.typography.bodySmall) }
                         Text(formatDate(po.orderDate), style = MaterialTheme.typography.bodySmall)
                         SummaryRow("البضاعة", Money.format(po.subtotal))
-                        SummaryRow("الضريبة", Money.format(po.taxTotal))
                         SummaryRow("الشحن", Money.format(po.shippingCost))
                         SummaryRow("الإجمالي", Money.format(po.grandTotal), strong = true)
                         SummaryRow("المدفوع", Money.format(po.amountPaid))

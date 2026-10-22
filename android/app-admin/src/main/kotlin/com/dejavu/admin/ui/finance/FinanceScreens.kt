@@ -6,7 +6,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,7 +37,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,6 +69,7 @@ import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.pos.decimalInput
 import com.dejavu.admin.ui.pos.validAmount
 import com.dejavu.admin.ui.treasury.sourceLabel
+import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.admin.ui.tint
@@ -72,6 +80,8 @@ import com.dejavu.core.admin.CustomerAccount
 import com.dejavu.core.admin.DashboardRepository
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.IncomeStatement
+import com.dejavu.core.admin.InventoryRepository
+import com.dejavu.core.admin.InventoryValuation
 import com.dejavu.core.admin.LedgerAccount
 import com.dejavu.core.admin.PendingCod
 import com.dejavu.core.admin.Perm
@@ -101,6 +111,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 
 // ------------------------------------------------------------ settlements ---
@@ -268,7 +279,9 @@ internal enum class SalesGroup(val key: String, val label: String) {
     DAY("day", "حسب اليوم"),
 }
 
-class ReportsViewModel(private val repo: DashboardRepository) : BaseViewModel() {
+class ReportsViewModel(private val repo: DashboardRepository, private val inventory: InventoryRepository) : BaseViewModel() {
+    private val _valuation = MutableStateFlow<Load<InventoryValuation>>(Load.Loading)
+    val valuation = _valuation.asStateFlow()
     private val _income = MutableStateFlow<Load<IncomeStatement>>(Load.Loading)
     val income = _income.asStateFlow()
     private val _balance = MutableStateFlow<Load<BalanceSheet>>(Load.Loading)
@@ -305,17 +318,22 @@ class ReportsViewModel(private val repo: DashboardRepository) : BaseViewModel() 
         val (from, to) = period.range()
         viewModelScope.launch { _sales.value = repo.sales(group.key, from, to).toLoad() }
     }
+
+    fun loadValuation() {
+        viewModelScope.launch { _valuation.value = inventory.valuation().toLoad() }
+    }
 }
 
 @Composable
 fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel { ReportsViewModel(it.dashboard) }
+    val vm = adminViewModel { ReportsViewModel(it.dashboard, it.inventory) }
     val tabs = buildList {
         if (session.can(Perm.REPORTS_FINANCIAL)) {
             add("الأرباح والخسائر")
             add("المركز المالي")
         }
         if (session.can(Perm.REPORTS_SALES)) add("المبيعات")
+        if (session.can(REPORTS_INVENTORY) || session.can(Perm.REPORTS_FINANCIAL)) add(INVENTORY_TAB)
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var period by remember { mutableStateOf(vm.period) }
@@ -327,10 +345,10 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                 return@Column
             }
             val current = tabs[tab.coerceIn(tabs.indices)]
-            PrimaryTabRow(selectedTabIndex = tab.coerceIn(tabs.indices)) {
+            PrimaryScrollableTabRow(selectedTabIndex = tab.coerceIn(tabs.indices), edgePadding = 8.dp) {
                 tabs.forEachIndexed { i, t -> Tab(selected = i == tab, onClick = { tab = i }, text = { Text(t) }) }
             }
-            if (current != "المركز المالي") {
+            if (current != "المركز المالي" && current != INVENTORY_TAB) {
                 ChipFilter(Period.entries, period, { it?.label.orEmpty() }) { p ->
                     if (p != null) {
                         vm.setPeriod(p)
@@ -341,6 +359,7 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             when (current) {
                 "الأرباح والخسائر" -> IncomeTab(vm, period)
                 "المركز المالي" -> BalanceTab(vm)
+                INVENTORY_TAB -> InventoryValueTab(vm)
                 else -> SalesTab(vm, period)
             }
         }
@@ -438,6 +457,57 @@ private fun SalesTab(vm: ReportsViewModel, period: Period) {
                         SummaryRow("صافي المبيعات", Money.format(g.netSales))
                         SummaryRow("مجمل الربح", Money.format(g.grossProfit), valueColor = signColor(g.grossProfit))
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Permission for inventory reports (not in [Perm]). */
+internal const val REPORTS_INVENTORY = "reports.inventory"
+
+private const val INVENTORY_TAB = "قيمة المخزون"
+
+@Composable
+private fun InventoryValueTab(vm: ReportsViewModel) {
+    val state by vm.valuation.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.loadValuation() }
+    LoadContent(state, onRetry = vm::loadValuation) { v ->
+        val totalCost = Money.parse(v.totals.costValue)
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item {
+                GlassCard(Modifier.fillMaxWidth()) {
+                    Text("تقرير قيمة المخزون", style = MaterialTheme.typography.titleMedium)
+                    Text("حتى ${formatDate(LocalDate.now().toString())} · بالريال السعودي", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Lux.Hairline)
+                    SummaryRow("عدد الأصناف", "${v.totals.products}")
+                    SummaryRow("عدد القطع", "${v.totals.pieces}")
+                    SummaryRow("إجمالي التكلفة", Money.formatBase(v.totals.costValue), strong = true)
+                    SummaryRow("إجمالي سعر البيع المتوقع", Money.formatBase(v.totals.saleValue))
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("الربح المتوقع", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        GoldPill { Text(Money.formatBase(v.totals.expectedProfit), color = Color.White, style = MaterialTheme.typography.titleSmall) }
+                    }
+                }
+            }
+            if (v.categories.isEmpty()) item { EmptyState(Icons.Filled.Search, "لا يوجد مخزون حالياً") }
+            items(v.categories, key = { it.categoryId }) { c ->
+                val cost = Money.parse(c.costValue)
+                val share = if (totalCost.signum() > 0) cost.divide(totalCost, 4, RoundingMode.HALF_UP).toFloat().coerceIn(0f, 1f) else 0f
+                GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 14.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(c.nameAr, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Text("${(share * 100).toInt()}٪ من التكلفة", style = MaterialTheme.typography.labelSmall, color = Lux.GoldDeep, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text("${c.products} صنف · ${c.pieces} قطعة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    Box(
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp).height(4.dp).clip(RoundedCornerShape(50)).background(Lux.Champagne),
+                    ) {
+                        Box(Modifier.fillMaxWidth(share).fillMaxHeight().clip(RoundedCornerShape(50)).background(Lux.GoldBrush))
+                    }
+                    SummaryRow("التكلفة", Money.formatBase(c.costValue))
+                    SummaryRow("قيمة البيع", Money.formatBase(c.saleValue))
+                    SummaryRow("الربح المتوقع", Money.formatBase(c.expectedProfit), valueColor = signColor(c.expectedProfit))
                 }
             }
         }

@@ -18,9 +18,11 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.ui.graphics.Color
+import com.dejavu.core.ui.theme.FloatingGlassBar
+import com.dejavu.core.ui.theme.GlassNavItem
+import com.dejavu.core.ui.theme.LiquidTransitions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -134,26 +136,33 @@ fun DejavuNavHost() {
 
     Scaffold(
         // Screens draw their own top bars; here only the bottom inset is handled.
-        contentWindowInsets = WindowInsets.navigationBars,
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             if (tabs.any { it.route == route }) {
-                NavigationBar {
+                FloatingGlassBar {
                     tabs.forEach { tab ->
-                        NavigationBarItem(
+                        GlassNavItem(
                             selected = route == tab.route,
                             onClick = { nav.switchTab(tab.route) },
-                            label = { Text(tab.label) },
-                            icon = {
-                                val count = if (tab.route == Routes.CART) cart?.itemCount ?: 0 else 0
-                                BadgedBox(badge = { if (count > 0) Badge { Text("$count") } }) { Icon(tab.icon, contentDescription = tab.label) }
-                            },
+                            icon = tab.icon,
+                            label = tab.label,
+                            badge = if (tab.route == Routes.CART) cart?.itemCount ?: 0 else 0,
                         )
                     }
                 }
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = Routes.HOME, modifier = Modifier.padding(padding)) {
+        NavHost(
+            nav,
+            startDestination = Routes.HOME,
+            modifier = Modifier.padding(padding),
+            enterTransition = LiquidTransitions.enter,
+            exitTransition = LiquidTransitions.exit,
+            popEnterTransition = LiquidTransitions.popEnter,
+            popExitTransition = LiquidTransitions.popExit,
+        ) {
             composable(Routes.HOME) {
                 HomeScreen(
                     openProduct = { nav.navigate(Routes.product(it)) },

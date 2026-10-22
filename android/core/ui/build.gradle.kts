@@ -30,6 +30,7 @@ dependencies {
     api(libs.androidx.lifecycle.runtime.compose)
     api(libs.coil.compose)
     api(libs.coil.network.okhttp)
+    api(libs.androidx.navigation.compose)
 
     // Push notifications (optional at run time: only active when Firebase is configured).
     api(platform(libs.firebase.bom))

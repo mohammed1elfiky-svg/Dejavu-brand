@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,7 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -571,7 +571,6 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
             enabled = valid && !busy,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Lux.GoldDeep, contentColor = Color.White),
         ) { Text(if (isNew) "إضافة الموظف" else "حفظ", fontWeight = FontWeight.Bold) }
         Spacer(Modifier.height(24.dp))
     }

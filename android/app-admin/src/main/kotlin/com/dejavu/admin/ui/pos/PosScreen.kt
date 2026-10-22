@@ -2,6 +2,10 @@
 
 package com.dejavu.admin.ui.pos
 
+import com.dejavu.core.ui.theme.GlassTopBar
+import com.dejavu.core.ui.theme.GoldBadge
+import com.dejavu.core.ui.theme.LiquidGoldButton
+import com.dejavu.core.ui.theme.liquidClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,7 +58,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -69,8 +73,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Scaffold
@@ -634,7 +638,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            TopAppBar(
+            GlassTopBar(
                 title = { Text(if (arranging) "ترتيب المنتجات" else "نقطة البيع") },
                 actions = {
                     TextButton(onClick = scan, enabled = !arranging) { Text("باركود") }
@@ -843,11 +847,11 @@ private fun ProductTile(
 ) {
     val out = p.available <= 0
     GlassCard(
-        modifier.fillMaxWidth().alpha(if (out) 0.55f else 1f),
+        modifier.fillMaxWidth().alpha(if (out) 0.55f else 1f).then(if (tappable) Modifier.liquidClickable(onClick = onClick) else Modifier),
         elevation = if (lifted) 22.dp else 8.dp,
         contentPadding = 0.dp,
     ) {
-        Column(Modifier.fillMaxWidth().then(if (tappable) Modifier.clickable(onClick = onClick) else Modifier).padding(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(8.dp)) {
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Lux.Champagne),
                 contentAlignment = Alignment.Center,
@@ -881,15 +885,10 @@ private fun ProductTile(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text(p.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(p.nameAr, style = MaterialTheme.typography.titleSmall, color = Lux.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             p.skuNumber?.let { Text("#$it", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    Money.format(Money.parse(p.price), currency, rate),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Lux.GoldDeep,
-                    fontWeight = FontWeight.Bold,
-                )
+                GoldBadge(Money.format(Money.parse(p.price), currency, rate))
                 if (Money.parse(p.price) < Money.parse(p.basePrice)) {
                     Text(
                         Money.format(Money.parse(p.basePrice), currency, rate),
@@ -1574,7 +1573,6 @@ private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit) {
         confirmButton = {
             Button(
                 onClick = onNewSale,
-                colors = ButtonDefaults.buttonColors(containerColor = Lux.GoldDeep, contentColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
             ) { Text("بيع جديد") }
         },
@@ -1633,12 +1631,5 @@ private fun ShiftDialog(state: Load<PosShift>, onRetry: () -> Unit, onDismiss: (
 
 /** Gold primary button of the white & gold admin theme. */
 @Composable
-internal fun LuxButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.height(52.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Lux.GoldDeep, contentColor = Color.White),
-    ) { Text(text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-}
+internal fun LuxButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) =
+    LiquidGoldButton(text, onClick, modifier, enabled = enabled, height = 52.dp)

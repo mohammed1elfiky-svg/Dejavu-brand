@@ -38,7 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,7 +50,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -1104,7 +1104,6 @@ private fun ReturnResultDialog(r: PosReturnResult, vm: PosReturnViewModel, onNew
         confirmButton = {
             Button(
                 onClick = onNew,
-                colors = ButtonDefaults.buttonColors(containerColor = Lux.GoldDeep, contentColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
             ) { Text("عملية جديدة") }
         },

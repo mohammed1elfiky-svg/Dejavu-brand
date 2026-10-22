@@ -2,6 +2,7 @@
 
 package com.dejavu.customer.ui.account
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +34,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -45,8 +46,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -121,7 +122,7 @@ fun AccountScreen(
     val session by container.session.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { CenterAlignedTopAppBar(title = { Text("حسابي") }) }) { padding ->
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("حسابي") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
             when (val s = session) {
                 is SessionState.LoggedIn -> {

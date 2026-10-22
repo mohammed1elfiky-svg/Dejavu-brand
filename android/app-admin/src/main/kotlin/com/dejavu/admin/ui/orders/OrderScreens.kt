@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.orders
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -20,7 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,8 +32,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -131,7 +132,7 @@ fun OrdersScreen(openOrder: (String) -> Unit) {
         onPauseOrDispose {}
     }
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { CenterAlignedTopAppBar(title = { Text("الطلبات") }) }) { padding ->
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("الطلبات") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             OutlinedTextField(
                 value = query,
@@ -591,7 +592,7 @@ fun ReturnDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () ->
                                 }
                                 ReturnStatus.RECEIVED ->
                                     if (session.can(Perm.PAYMENTS_RECORD) && !Money.isZero(r.refundDue)) {
-                                        Button(onClick = { refund = true }, enabled = !busy, colors = ButtonDefaults.buttonColors()) { Text("رد ${Money.format(r.refundDue)}") }
+                                        Button(onClick = { refund = true }, enabled = !busy) { Text("رد ${Money.format(r.refundDue)}") }
                                     }
                                 else -> {}
                             }

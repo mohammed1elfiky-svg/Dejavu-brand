@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.inventory
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -9,7 +10,7 @@ import androidx.compose.material3.IconButton
 import com.dejavu.admin.ui.products.AddVariantDialog
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedButton
 import androidx.compose.ui.graphics.Color
 import com.dejavu.admin.ui.barcode.StickerData
 import com.dejavu.admin.ui.products.StickerDialog
@@ -42,7 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -51,7 +52,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -296,7 +297,7 @@ fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit, openPr
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            CenterAlignedTopAppBar(
+            GlassTopBar(
                 title = { Text("المخزون") },
                 navigationIcon = {
                     IconButton(onClick = { vm.load() }) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }

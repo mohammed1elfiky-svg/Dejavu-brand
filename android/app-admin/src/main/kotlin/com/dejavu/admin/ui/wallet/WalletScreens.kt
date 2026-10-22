@@ -32,7 +32,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,8 +43,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -239,7 +239,7 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
 
 @Composable
 private fun TopUpRow(t: AdminTopUp, onClick: () -> Unit) {
-    GlassCard(Modifier.fillMaxWidth().clickable(onClick = onClick), elevation = 6.dp, contentPadding = 14.dp) {
+    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 14.dp, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(t.number, style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
@@ -690,7 +690,7 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
 @Composable
 private fun BankAccountCard(a: StoreBankAccount, canEdit: Boolean, busy: Boolean, onEdit: () -> Unit, onActive: (Boolean) -> Unit) {
     val cur = a.currency.fresh
-    GlassCard(Modifier.fillMaxWidth().clickable(enabled = canEdit, onClick = onEdit)) {
+    GlassCard(Modifier.fillMaxWidth(), onClick = if (canEdit) onEdit else null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(a.bankName, style = MaterialTheme.typography.titleMedium)

@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.dashboard
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -69,7 +70,7 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            CenterAlignedTopAppBar(
+            GlassTopBar(
                 title = { Text("لوحة التحكم") },
                 actions = { IconButton(onClick = vm::load) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") } },
             )

@@ -2,6 +2,7 @@
 
 package com.dejavu.customer.ui.catalog
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,7 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,7 +87,7 @@ class CategoriesViewModel(private val catalog: CatalogRepository) : BaseViewMode
 fun CategoriesScreen(openCategory: (title: String, slug: String) -> Unit) {
     val vm = appViewModel { CategoriesViewModel(it.catalog) }
     val state by vm.state.collectAsStateWithLifecycle()
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { CenterAlignedTopAppBar(title = { Text("الأقسام") }) }) { padding ->
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("الأقسام") }) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { categories ->
             LazyColumn(Modifier.padding(padding)) {
                 categories.forEach { parent ->

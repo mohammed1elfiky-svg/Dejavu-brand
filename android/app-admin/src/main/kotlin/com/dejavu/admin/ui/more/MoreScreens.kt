@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.more
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -50,13 +51,13 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -123,7 +124,7 @@ fun MoreScreen(session: StaffSession.LoggedIn, navigate: (String) -> Unit) {
     var confirmLogout by remember { mutableStateOf(false) }
     val entries = menu.filter { e -> e.permissions.any(session::can) }
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { CenterAlignedTopAppBar(title = { Text("المزيد") }) }) { padding ->
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("المزيد") }) }) { padding ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(110.dp),
             modifier = Modifier.padding(padding).fillMaxSize(),
@@ -204,9 +205,9 @@ private fun SectionTitle(title: String) {
 @Composable
 private fun MenuTile(title: String, icon: ImageVector, caption: String? = null, danger: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
-    GlassCard(Modifier.fillMaxWidth().height(124.dp), shape = shape, elevation = 6.dp, contentPadding = 0.dp) {
+    GlassCard(Modifier.fillMaxWidth().height(124.dp), shape = shape, elevation = 10.dp, contentPadding = 0.dp, onClick = onClick) {
         Column(
-            Modifier.fillMaxSize().clip(shape).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 12.dp),
+            Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {

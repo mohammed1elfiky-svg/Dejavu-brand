@@ -2,6 +2,7 @@
 
 package com.dejavu.customer.ui.cart
 
+import com.dejavu.core.ui.theme.GlassTopBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,7 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -29,8 +30,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -120,7 +121,7 @@ fun CartScreen(openProduct: (String) -> Unit, checkout: () -> Unit, login: () ->
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { CenterAlignedTopAppBar(title = { Text("السلة") }) },
+        topBar = { GlassTopBar(title = { Text("السلة") }) },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             val c = cart

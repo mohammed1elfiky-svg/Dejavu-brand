@@ -2,6 +2,8 @@
 
 package com.dejavu.customer.ui.components
 
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.Liquid
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,12 +37,7 @@ import java.math.RoundingMode
 
 @Composable
 fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Card(
-        onClick = onClick,
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
+    GlassCard(modifier, elevation = 10.dp, contentPadding = 0.dp, onClick = onClick) {
         Box {
             ProductImage(
                 product.images.firstOrNull()?.url,
@@ -57,7 +54,7 @@ fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier =
             Text(product.nameAr, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             val cheapest = product.variants.minByOrNull { Money.parse(it.price) }
-            if (product.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Gold)
+            if (product.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Liquid.GoldDeep)
             PriceText(cheapest?.price ?: product.basePrice, cheapest?.compareAtPrice ?: product.compareAtPrice)
         }
     }

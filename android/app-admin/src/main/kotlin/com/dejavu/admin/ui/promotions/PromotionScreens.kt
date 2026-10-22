@@ -25,7 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -37,8 +37,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -282,7 +282,7 @@ private fun PromotionCard(
     onDelete: () -> Unit,
 ) {
     val st = p.state()
-    GlassCard(Modifier.fillMaxWidth().clickable(enabled = canManage, onClick = onOpen)) {
+    GlassCard(Modifier.fillMaxWidth(), onClick = if (canManage) onOpen else null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             GoldPill { Text("خصم ${Money.parse(p.percent).plainPercent()}٪", color = Color.White, style = MaterialTheme.typography.titleMedium) }
             Column(Modifier.weight(1f)) {

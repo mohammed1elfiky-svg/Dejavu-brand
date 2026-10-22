@@ -26,16 +26,17 @@ import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.Button
+import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import com.dejavu.core.ui.theme.FloatingGlassBar
+import com.dejavu.core.ui.theme.GlassNavItem
+import com.dejavu.core.ui.theme.LiquidTransitions
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -189,23 +190,26 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
 
     Scaffold(
         containerColor = Color.Transparent,
-        contentWindowInsets = WindowInsets.navigationBars,
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             if (visibleTabs.any { it.route == route }) {
-                NavigationBar {
+                FloatingGlassBar {
                     visibleTabs.forEach { tab ->
-                        NavigationBarItem(
-                            selected = route == tab.route,
-                            onClick = { nav.switchTab(tab.route) },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                            label = { Text(tab.label) },
-                        )
+                        GlassNavItem(selected = route == tab.route, onClick = { nav.switchTab(tab.route) }, icon = tab.icon, label = tab.label)
                     }
                 }
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = visibleTabs.first().route, modifier = Modifier.padding(padding)) {
+        NavHost(
+            nav,
+            startDestination = visibleTabs.first().route,
+            modifier = Modifier.padding(padding),
+            enterTransition = LiquidTransitions.enter,
+            exitTransition = LiquidTransitions.exit,
+            popEnterTransition = LiquidTransitions.popEnter,
+            popExitTransition = LiquidTransitions.popExit,
+        ) {
             composable(R.DASHBOARD) {
                 DashboardScreen(
                     openOrders = { nav.switchTab(R.ORDERS) },

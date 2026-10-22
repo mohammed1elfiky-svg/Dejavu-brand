@@ -38,6 +38,7 @@ val PaymentMethod.label: String
         PaymentMethod.INSTAPAY -> "إنستاباي"
         PaymentMethod.BANK_TRANSFER -> "تحويل بنكي"
         PaymentMethod.CASH -> "نقداً"
+        PaymentMethod.CUSTOMER_ACCOUNT -> "من رصيد المحفظة"
     }
 
 val ReturnStatus.label: String

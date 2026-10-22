@@ -29,7 +29,15 @@ import com.dejavu.core.model.SalesReturn
 import com.dejavu.core.model.ShippingZone
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.core.model.UnreadCount
+import com.dejavu.core.model.StoreBankAccount
+import com.dejavu.core.model.TopUp
+import com.dejavu.core.model.TopUpRequest
+import com.dejavu.core.model.UploadedFile
+import com.dejavu.core.model.Wallet
+import okhttp3.MultipartBody
 import retrofit2.Response
+import retrofit2.http.Multipart
+import retrofit2.http.Part
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -136,6 +144,24 @@ interface DejavuApi {
 
     @POST("store/orders/{number}/pay")
     suspend fun payByCard(@Path("number") number: String): CardCheckout
+
+    // wallet
+    @GET("store/me/wallet")
+    suspend fun wallet(): Wallet
+
+    @GET("store/bank-accounts")
+    suspend fun bankAccounts(): List<StoreBankAccount>
+
+    @GET("store/me/wallet/top-ups")
+    suspend fun topUps(): List<TopUp>
+
+    @POST("store/me/wallet/top-ups")
+    suspend fun requestTopUp(@Body body: TopUpRequest): TopUp
+
+    /** Deposit-slip photo (private to the customer and staff). */
+    @Multipart
+    @POST("store/me/files")
+    suspend fun uploadFile(@Part file: MultipartBody.Part): UploadedFile
 
     // notifications
     @GET("store/notifications")

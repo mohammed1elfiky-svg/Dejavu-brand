@@ -61,7 +61,7 @@ data class Category(
 data class CategoryRef(val id: String, val slug: String, val nameAr: String, val nameEn: String)
 
 @Serializable
-data class ProductImage(val url: String, val altText: String? = null, val variantId: String? = null)
+data class ProductImage(val url: String, val altText: String? = null, val variantId: String? = null, val color: String? = null)
 
 @Serializable
 data class StoreVariant(
@@ -71,9 +71,14 @@ data class StoreVariant(
     val color: String? = null,
     val colorHex: String? = null,
     val price: String,
+    /** Price before a running promotion. */
+    val compareAtPrice: String? = null,
     val availableQty: Int,
     val inStock: Boolean,
 )
+
+@Serializable
+data class PromotionTag(val name: String, val percent: String, val endsAt: String? = null)
 
 @Serializable
 data class StoreProduct(
@@ -92,7 +97,15 @@ data class StoreProduct(
     val images: List<ProductImage> = emptyList(),
     val variants: List<StoreVariant> = emptyList(),
     val inStock: Boolean,
-)
+    val promotion: PromotionTag? = null,
+) {
+    /** Photos to show for [color]: the ones tagged with it first, then the general ones. */
+    fun imagesFor(color: String?): List<ProductImage> {
+        if (color == null) return images
+        val tagged = images.filter { it.color == color }
+        return if (tagged.isEmpty()) images else tagged + images.filter { it.color == null }
+    }
+}
 
 @Serializable
 data class ShippingZone(val governorate: String, val fee: String, val estimatedDays: Int, val isActive: Boolean = true)
@@ -207,7 +220,7 @@ enum class OrderStatus { PENDING, CONFIRMED, PROCESSING, SHIPPED, DELIVERED, COM
 enum class PaymentStatus { UNPAID, PARTIALLY_PAID, PAID, PARTIALLY_REFUNDED, REFUNDED }
 
 @Serializable
-enum class PaymentMethod { CASH_ON_DELIVERY, CARD, WALLET, BANK_TRANSFER, INSTAPAY, CASH }
+enum class PaymentMethod { CASH_ON_DELIVERY, CARD, WALLET, BANK_TRANSFER, INSTAPAY, CASH, CUSTOMER_ACCOUNT }
 
 @Serializable
 data class CheckoutRequest(
@@ -408,9 +421,88 @@ data class DeviceRegistration(val registered: Boolean, val pushEnabled: Boolean)
 // ------------------------------------------------------------ currencies ---
 
 @Serializable
-data class CurrencyRate(val code: Currency, val rate: String, val updatedAt: String? = null)
+data class CurrencyRate(
+    val code: Currency,
+    /** Units per 1 SAR; null while no rate is set. */
+    val rate: String? = null,
+    val updatedAt: String? = null,
+    val nameAr: String? = null,
+    val nameEn: String? = null,
+    val symbol: String? = null,
+    val decimals: Int? = null,
+    val isBase: Boolean = false,
+    val isActive: Boolean = true,
+    val showInCustomerApp: Boolean = true,
+    val sortOrder: Int = 0,
+)
 
 @Serializable
 data class Currencies(val base: Currency, val currencies: List<CurrencyRate>) {
     fun rate(code: Currency): CurrencyRate? = currencies.firstOrNull { it.code == code }
+
+    /** Teaches [Currency] how the server names and rounds each currency; returns them in order. */
+    fun register(): List<Currency> = currencies.map { c ->
+        if (c.symbol != null && c.nameAr != null && c.decimals != null) Currency.register(c.code.code, c.symbol, c.nameAr, c.decimals) else c.code
+    }
 }
+
+// ---------------------------------------------------------------- wallet ---
+
+@Serializable
+data class WalletBalance(val currency: Currency, val balance: String, val owed: String = "0")
+
+@Serializable
+data class WalletEntry(val id: String, val currency: Currency, val amount: String, val note: String, val createdAt: String)
+
+@Serializable
+data class Wallet(val balances: List<WalletBalance> = emptyList(), val entries: List<WalletEntry> = emptyList()) {
+    fun available(currency: Currency): String = balances.firstOrNull { it.currency == currency }?.balance ?: "0"
+}
+
+@Serializable
+data class StoreBankAccount(
+    val id: String,
+    val bankName: String,
+    val accountName: String,
+    val accountNumber: String,
+    val iban: String? = null,
+    val currency: Currency,
+    val instructions: String? = null,
+    val isActive: Boolean = true,
+    val sortOrder: Int = 0,
+)
+
+@Serializable
+enum class TopUpStatus { PENDING, APPROVED, REJECTED }
+
+@Serializable
+data class BankRef(val id: String, val bankName: String, val accountNumber: String, val currency: Currency)
+
+@Serializable
+data class TopUp(
+    val id: String,
+    val number: String,
+    val currency: Currency,
+    val amount: String,
+    val reference: String? = null,
+    val note: String? = null,
+    val status: TopUpStatus,
+    val receiptFileId: String,
+    val rejectReason: String? = null,
+    val createdAt: String,
+    val reviewedAt: String? = null,
+    val bankAccount: BankRef? = null,
+)
+
+@Serializable
+data class TopUpRequest(
+    val currency: Currency,
+    val amount: String,
+    val receiptFileId: String,
+    val bankAccountId: String? = null,
+    val reference: String? = null,
+    val note: String? = null,
+)
+
+@Serializable
+data class UploadedFile(val id: String, val url: String, val mimeType: String, val size: Int)

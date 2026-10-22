@@ -43,6 +43,7 @@ import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.ReturnStatus
 import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.label
+import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.core.ui.theme.Gold
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.theme.Warning
@@ -121,10 +122,11 @@ fun <T> ChipFilter(options: List<T?>, selected: T?, label: (T?) -> String, onSel
     }
 }
 
+/** Frosted-glass section card used across the admin screens. */
 @Composable
 fun InfoCard(content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
+    GlassCard(Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
     }
 }
 

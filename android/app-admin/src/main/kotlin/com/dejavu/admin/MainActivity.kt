@@ -9,7 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import com.dejavu.admin.ui.AdminRoot
-import com.dejavu.core.ui.theme.DejavuTheme
+import com.dejavu.admin.ui.theme.LuxTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,7 +17,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) handle(intent)
         setContent {
-            DejavuTheme {
+            LuxTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { AdminRoot() }
             }
         }

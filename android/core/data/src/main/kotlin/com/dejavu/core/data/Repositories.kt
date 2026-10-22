@@ -9,6 +9,13 @@ import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
 import com.dejavu.core.model.Currencies
 import com.dejavu.core.model.Currency
+import com.dejavu.core.model.StoreBankAccount
+import com.dejavu.core.model.TopUp
+import com.dejavu.core.model.TopUpRequest
+import com.dejavu.core.model.Wallet
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import com.dejavu.core.model.CheckoutRequest
 import com.dejavu.core.model.CouponRequest
 import com.dejavu.core.model.CreateReturnRequest
@@ -211,9 +218,14 @@ class CurrencyRepository(private val api: DejavuApi, private val preferred: () -
     val rates: StateFlow<Currencies?> = _rates.asStateFlow()
     private val _selected = MutableStateFlow(preferred())
     val selected: StateFlow<Currency> = _selected.asStateFlow()
+    private val _available = MutableStateFlow(listOf(Currency.SAR))
+
+    /** Currencies the store offers shoppers right now (base first). */
+    val available: StateFlow<List<Currency>> = _available.asStateFlow()
 
     /** Loads the current rates and applies the preferred currency. */
     suspend fun refresh(): Result<Currencies> = apiCall { api.currencies() }.onSuccess {
+        _available.value = it.register()
         _rates.value = it
         apply(_selected.value)
     }
@@ -226,11 +238,37 @@ class CurrencyRepository(private val api: DejavuApi, private val preferred: () -
     }
 
     /** The currency checkout should invoice in, or null for the SAR default. */
-    fun checkoutCurrency(): Currency? = Money.display.currency.takeIf { it != Currency.SAR }
+    fun checkoutCurrency(): Currency? = Money.display.currency.takeIf { !it.isBase }
 
     private fun apply(currency: Currency) {
         val rate = _rates.value?.rate(currency)?.rate?.toBigDecimalOrNull()
-        Money.display = if (currency != Currency.SAR && rate != null) Money.Display(currency, rate) else Money.Display.BASE
+        Money.display = if (!currency.isBase && rate != null) Money.Display(Currency.of(currency.code), rate) else Money.Display.BASE
+    }
+}
+
+// ----------------------------------------------------------------- wallet ---
+
+/** The shopper's balance and manual top-ups through a bank transfer. */
+class WalletRepository(private val api: DejavuApi) {
+    suspend fun wallet(): Result<Wallet> = apiCall { api.wallet() }
+
+    suspend fun bankAccounts(): Result<List<StoreBankAccount>> = apiCall { api.bankAccounts() }
+
+    suspend fun topUps(): Result<List<TopUp>> = apiCall { api.topUps() }
+
+    /** Uploads the deposit slip, then files the request with it. */
+    suspend fun requestTopUp(
+        currency: Currency,
+        amount: String,
+        receipt: ByteArray,
+        mimeType: String,
+        bankAccountId: String?,
+        reference: String?,
+        note: String?,
+    ): Result<TopUp> = apiCall {
+        val part = MultipartBody.Part.createFormData("file", "receipt.jpg", receipt.toRequestBody(mimeType.toMediaType()))
+        val file = api.uploadFile(part)
+        api.requestTopUp(TopUpRequest(currency, amount, file.id, bankAccountId, reference?.ifBlank { null }, note?.ifBlank { null }))
     }
 }
 

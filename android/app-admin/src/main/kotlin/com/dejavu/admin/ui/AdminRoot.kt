@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -46,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,6 +82,15 @@ import com.dejavu.admin.ui.orders.ReturnDetailScreen
 import com.dejavu.admin.ui.orders.ReturnsScreen
 import com.dejavu.admin.ui.purchasing.PurchaseOrderScreen
 import com.dejavu.admin.ui.purchasing.PurchasingScreen
+import com.dejavu.admin.ui.pos.PosScreen
+import com.dejavu.admin.ui.promotions.PromotionEditScreen
+import com.dejavu.admin.ui.promotions.PromotionsScreen
+import com.dejavu.admin.ui.treasury.CashBoxScreen
+import com.dejavu.admin.ui.treasury.CashBoxesScreen
+import com.dejavu.admin.ui.treasury.ExchangeScreen
+import com.dejavu.admin.ui.wallet.BankAccountsScreen
+import com.dejavu.admin.ui.wallet.TopUpScreen
+import com.dejavu.admin.ui.wallet.TopUpsScreen
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.data.userMessage
@@ -109,6 +120,16 @@ object R {
     const val CUSTOMER = "customer/{id}"
     const val SERVER = "server"
     const val CURRENCY = "currency"
+    const val POS = "pos"
+    const val CASH_BOXES = "cash-boxes"
+    const val CASH_BOX = "cash-box/{id}"
+    const val EXCHANGE = "exchange"
+    const val PROMOTIONS = "promotions"
+    /** id "new" for a new promotion. */
+    const val PROMOTION = "promotion/{id}"
+    const val TOP_UPS = "top-ups"
+    const val TOP_UP = "top-up/{id}"
+    const val BANK_ACCOUNTS = "bank-accounts"
 
     fun of(pattern: String, id: String) = pattern.replace("{id}", Uri.encode(id))
 }
@@ -117,6 +138,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 
 private val tabs = listOf(
     Tab(R.DASHBOARD, "الرئيسية", Icons.Filled.Home, Perm.DASHBOARD),
+    Tab(R.POS, "الكاشير", Icons.Filled.AddCircle, Perm.POS_SELL),
     Tab(R.ORDERS, "الطلبات", Icons.AutoMirrored.Filled.List, Perm.ORDERS_READ),
     Tab(R.STOCK, "المخزون", Icons.Filled.ShoppingCart, Perm.STOCK_READ),
     Tab(R.MORE, "المزيد", Icons.Filled.Menu, null),
@@ -154,6 +176,7 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
     if (container.pushEnabled) AskNotificationPermission()
 
     Scaffold(
+        containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.navigationBars,
         bottomBar = {
             if (visibleTabs.any { it.route == route }) {
@@ -213,6 +236,17 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             composable(R.SERVER) { ServerScreen(back) }
             composable(R.CURRENCY) { CurrencyScreen(session, back) }
+            composable(R.POS) { PosScreen(session, openBoxes = { nav.navigate(R.CASH_BOXES) }) }
+            composable(R.CASH_BOXES) {
+                CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })
+            }
+            composable(R.CASH_BOX) { e -> CashBoxScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.EXCHANGE) { ExchangeScreen(session, back) }
+            composable(R.PROMOTIONS) { PromotionsScreen(session, back, open = { open(R.PROMOTION, it) }) }
+            composable(R.PROMOTION) { e -> PromotionEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
+            composable(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }) }
+            composable(R.TOP_UP) { e -> TopUpScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.BANK_ACCOUNTS) { BankAccountsScreen(session, back) }
         }
     }
 }

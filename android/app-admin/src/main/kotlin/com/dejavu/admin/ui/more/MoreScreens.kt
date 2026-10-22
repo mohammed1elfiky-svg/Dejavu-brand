@@ -20,7 +20,11 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -70,7 +74,12 @@ private val menu = listOf(
     MenuEntry(R.SETTLEMENTS, "توريدات الشحن", "تحصيل الدفع عند الاستلام من شركات الشحن", Icons.Filled.DateRange, listOf(Perm.PAYMENTS_READ)),
     MenuEntry(R.REPORTS, "التقارير", "الأرباح والخسائر والمركز المالي والمبيعات", Icons.Filled.Info, listOf(Perm.REPORTS_FINANCIAL, Perm.REPORTS_SALES)),
     MenuEntry(R.CUSTOMERS, "العملاء", "بيانات العملاء وأرصدتهم", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ)),
-    MenuEntry(R.CURRENCY, "العملة وسعر الصرف", "الريال السعودي والريال اليمني", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE)),
+    MenuEntry(R.CASH_BOXES, "الصناديق والخزائن", "صناديق الكاشير، الخزائن، البنوك والتحويل بينها", Icons.Filled.Lock, listOf(Perm.POS_SELL, Perm.CASHBOXES_MANAGE)),
+    MenuEntry(R.EXCHANGE, "صرف العملات", "شراء وبيع العملات بين الصناديق وأرباح فروق العملة", Icons.Filled.Refresh, listOf(Perm.CASHBOXES_MANAGE)),
+    MenuEntry(R.TOP_UPS, "طلبات شحن حسابات العملاء", "سندات الإيداع والموافقة أو الرفض", Icons.Filled.Email, listOf(Perm.WALLET_MANAGE)),
+    MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ)),
+    MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE)),
+    MenuEntry(R.BANK_ACCOUNTS, "الحسابات البنكية للمتجر", "تظهر للعملاء عند شحن الرصيد", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE)),
 )
 
 @Composable

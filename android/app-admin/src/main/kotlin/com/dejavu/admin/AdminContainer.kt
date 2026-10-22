@@ -8,7 +8,11 @@ import com.dejavu.core.admin.DashboardRepository
 import com.dejavu.core.admin.ExpenseRepository
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.InventoryRepository
+import com.dejavu.core.admin.PosRepository
+import com.dejavu.core.admin.PromotionRepository
 import com.dejavu.core.admin.PurchasingRepository
+import com.dejavu.core.admin.TreasuryRepository
+import com.dejavu.core.admin.WalletAdminRepository
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.StaffSessionRepository
 import com.dejavu.core.network.ApiClient
@@ -45,6 +49,10 @@ class AdminContainer(private val context: Context) {
     val purchasing = PurchasingRepository(api)
     val expenses = ExpenseRepository(api)
     val finance = FinanceRepository(api)
+    val pos = PosRepository(api)
+    val treasury = TreasuryRepository(api)
+    val wallet = WalletAdminRepository(api)
+    val promotions = PromotionRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

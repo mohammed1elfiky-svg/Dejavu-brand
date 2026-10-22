@@ -20,8 +20,8 @@ class SettingsStore(context: Context, val defaultBaseUrl: String) {
 
     /** Currency the shopper sees prices in. */
     var currency: Currency
-        get() = prefs.getString(CURRENCY, null)?.let { runCatching { Currency.valueOf(it) }.getOrNull() } ?: Currency.SAR
-        set(value) = prefs.edit { putString(CURRENCY, value.name) }
+        get() = prefs.getString(CURRENCY, null)?.takeIf { it.isNotBlank() }?.let { Currency.of(it) } ?: Currency.SAR
+        set(value) = prefs.edit { putString(CURRENCY, value.code) }
 
     private companion object {
         const val KEY = "api_base_url"

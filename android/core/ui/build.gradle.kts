@@ -36,4 +36,6 @@ dependencies {
     api(libs.firebase.messaging)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.androidx.core.ktx)
+    api(libs.androidx.activity.compose)
+    implementation(libs.androidx.exifinterface)
 }

@@ -70,6 +70,11 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
+    // Barcodes: Code 128 labels, camera scanning, label printing; drag-and-drop grid.
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.embedded) { isTransitive = false }
+    implementation(libs.reorderable)
+    implementation(libs.androidx.print)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

@@ -14,6 +14,9 @@ import com.dejavu.core.network.apiCall
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 
 /** Permission keys the app checks before showing a screen or an action (mirrors the backend seed). */
@@ -40,6 +43,11 @@ object Perm {
     const val REPORTS_FINANCIAL = "reports.financial"
     const val REPORTS_SALES = "reports.sales"
     const val SETTINGS_MANAGE = "settings.manage"
+    const val POS_SELL = "pos.sell"
+    const val CASHBOXES_MANAGE = "cashboxes.manage"
+    const val WALLET_MANAGE = "wallet.manage"
+    const val PROMOTIONS_MANAGE = "promotions.manage"
+    const val CUSTOMERS_WRITE = "customers.write"
 }
 
 // ----------------------------------------------------------------- session ---
@@ -131,7 +139,7 @@ class AdminOrderRepository(private val api: AdminApi) {
         reference: String? = null,
         accountId: String? = null,
         currency: Currency = Currency.SAR,
-    ) = apiCall { api.recordPayment(id, PaymentRequest(method, amount, accountId, reference?.ifBlank { null }, currency = currency.takeIf { it != Currency.SAR })) }
+    ) = apiCall { api.recordPayment(id, PaymentRequest(method, amount, accountId, reference?.ifBlank { null }, currency = currency.takeIf { !it.isBase })) }
 
     suspend fun refund(
         id: String,
@@ -140,7 +148,7 @@ class AdminOrderRepository(private val api: AdminApi) {
         reason: String,
         accountId: String? = null,
         currency: Currency = Currency.SAR,
-    ) = apiCall { api.refund(id, PaymentRequest(method, amount, accountId, reason = reason, currency = currency.takeIf { it != Currency.SAR })) }
+    ) = apiCall { api.refund(id, PaymentRequest(method, amount, accountId, reason = reason, currency = currency.takeIf { !it.isBase })) }
 }
 
 class AdminReturnRepository(private val api: AdminApi) {
@@ -190,8 +198,13 @@ class InventoryRepository(private val api: AdminApi) {
 
     suspend fun createProduct(request: CreateProductRequest) = apiCall { api.createProduct(request) }
 
-    /** Replaces the product's images with [urls], in order. */
-    suspend fun setImages(id: String, urls: List<String>) = apiCall { api.replaceImages(id, ImagesRequest(urls.map(::ImageRequest))) }
+    /** Replaces the product's images with [images] (at most 10), in order. */
+    suspend fun setImages(id: String, images: List<ImageRequest>) = apiCall { api.replaceImages(id, ImagesRequest(images)) }
+
+    /** Uploads a photo (JPEG bytes) and returns its public URL. */
+    suspend fun uploadImage(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadImage(MultipartBody.Part.createFormData("file", "photo.jpg", bytes.toRequestBody(mimeType.toMediaType())))
+    }
 
     suspend fun addVariant(productId: String, request: NewVariantRequest) = apiCall { api.addVariant(productId, request) }
     suspend fun updateVariant(variantId: String, request: UpdateVariantRequest) = apiCall { api.updateVariant(variantId, request) }
@@ -245,4 +258,78 @@ class FinanceRepository(private val api: AdminApi) {
 
     suspend fun customers(query: String? = null, page: Int = 1) = apiCall { api.customers(query?.trim()?.ifBlank { null }, page) }
     suspend fun customer(id: String) = apiCall { api.customer(id) }
+    suspend fun customerAccount(id: String, page: Int = 1) = apiCall { api.customerAccount(id, page) }
+
+    /** Money taken from a customer at the till: pays off their debt, any excess becomes wallet credit. */
+    suspend fun customerReceipt(id: String, currency: Currency, amount: String, cashBoxId: String? = null, note: String? = null) =
+        apiCall { api.customerReceipt(id, CustomerReceiptRequest(currency, amount.trim(), cashBoxId, note?.ifBlank { null })) }
+
+    // ---- currencies
+
+    /** Every currency (settings screen); registers their names and decimals for display. */
+    suspend fun allCurrencies() = apiCall { api.allCurrencies() }.onSuccess { it.register() }
+
+    /** Active currencies with a rate (till, payment dialogs). */
+    suspend fun activeCurrencies() = apiCall { api.activeCurrencies() }.onSuccess { it.register() }
+
+    suspend fun createCurrency(request: CurrencyRequest) = apiCall { api.createCurrency(request) }
+    suspend fun updateCurrency(code: String, request: CurrencyRequest) = apiCall { api.updateCurrency(code, request) }
+    suspend fun rateHistory(code: String) = apiCall { api.rateHistory(code) }
+}
+
+/** The till: products, scanning, sales and the cashier's shift. */
+class PosRepository(private val api: AdminApi) {
+    suspend fun products(query: String? = null, categoryId: String? = null) = apiCall { api.posProducts(query?.trim()?.ifBlank { null }, categoryId) }
+    suspend fun lookup(code: String) = apiCall { api.posLookup(code.trim()) }
+
+    /** Saves the grid order after a drag and drop (first id shows first). */
+    suspend fun arrange(productIds: List<String>) = apiCall {
+        val res = api.arrangeProducts(PosArrangeRequest(productIds))
+        if (!res.isSuccessful) throw HttpException(res)
+    }
+
+    suspend fun sell(request: PosSaleRequest) = apiCall { api.sell(request) }
+    suspend fun receipt(id: String) = apiCall { api.posReceipt(id) }
+    suspend fun shift() = apiCall { api.shift() }
+    suspend fun quickCustomer(name: String, phone: String) = apiCall { api.quickCustomer(QuickCustomerRequest(name.trim(), phone.trim())) }
+}
+
+/** Drawers, safes and bank boxes; transfers and currency exchange. */
+class TreasuryRepository(private val api: AdminApi) {
+    suspend fun mine() = apiCall { api.myBoxes() }
+    suspend fun all(kind: CashBoxKind? = null, currency: Currency? = null) = apiCall { api.allBoxes(kind?.name, currency?.code) }
+    suspend fun safes() = apiCall { api.safes() }
+    suspend fun create(name: String, kind: CashBoxKind, currency: Currency) = apiCall { api.createBox(CreateBoxRequest(name.trim(), kind, currency)) }
+    suspend fun update(id: String, name: String? = null, isActive: Boolean? = null) = apiCall { api.updateBox(id, UpdateBoxRequest(name, isActive)) }
+    suspend fun entries(id: String, page: Int = 1) = apiCall { api.boxEntries(id, page) }
+
+    suspend fun transfer(fromBoxId: String, toBoxId: String, amount: String, toAmount: String? = null, note: String? = null) =
+        apiCall { api.transfer(TransferRequest(fromBoxId, toBoxId, amount.trim(), toAmount?.trim()?.ifBlank { null }, note?.ifBlank { null })) }
+
+    suspend fun transfers(exchangesOnly: Boolean = false, page: Int = 1) = apiCall { api.transfers(exchangesOnly.takeIf { it }, page) }
+}
+
+/** Wallet top-up requests and the store bank accounts shown to customers. */
+class WalletAdminRepository(private val api: AdminApi) {
+    suspend fun list(status: com.dejavu.core.model.TopUpStatus? = null, page: Int = 1) = apiCall { api.topUps(status?.name, page) }
+    suspend fun get(id: String) = apiCall { api.topUp(id) }
+    suspend fun approve(id: String, cashBoxId: String, amount: String? = null) = apiCall { api.approveTopUp(id, ApproveTopUpRequest(cashBoxId, amount?.trim()?.ifBlank { null })) }
+    suspend fun reject(id: String, reason: String) = apiCall { api.rejectTopUp(id, ReasonBody(reason.trim())) }
+
+    /** The deposit slip image bytes. */
+    suspend fun receipt(fileId: String) = apiCall { api.file(fileId).use { it.bytes() } }
+
+    suspend fun bankAccounts() = apiCall { api.bankAccounts() }
+    suspend fun createBankAccount(request: BankAccountRequest) = apiCall { api.createBankAccount(request) }
+    suspend fun updateBankAccount(id: String, request: BankAccountRequest) = apiCall { api.updateBankAccount(id, request) }
+}
+
+class PromotionRepository(private val api: AdminApi) {
+    suspend fun list() = apiCall { api.promotions() }
+    suspend fun create(request: PromotionRequest) = apiCall { api.createPromotion(request) }
+    suspend fun update(id: String, request: PromotionRequest) = apiCall { api.updatePromotion(id, request) }
+    suspend fun delete(id: String) = apiCall {
+        val res = api.deletePromotion(id)
+        if (!res.isSuccessful) throw HttpException(res)
+    }
 }

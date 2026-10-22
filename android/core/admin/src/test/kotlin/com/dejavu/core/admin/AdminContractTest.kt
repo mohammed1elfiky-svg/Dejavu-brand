@@ -201,7 +201,7 @@ class AdminContractTest {
         val edited = repo.updateProduct(created.id, UpdateProductRequest(nameAr = "قميص معدّل $run", descriptionAr = "وصف", compareAtPrice = "120")).getOrThrow()
         assertEquals("قميص معدّل $run", edited.nameAr)
         assertEquals("وصف", edited.descriptionAr)
-        val withImages = repo.setImages(created.id, listOf("https://example.com/a.jpg")).getOrThrow()
+        val withImages = repo.setImages(created.id, listOf(ImageRequest("https://example.com/a.jpg"))).getOrThrow()
         assertEquals(listOf("https://example.com/a.jpg"), withImages.images.map { it.url })
 
         val reloaded = repo.product(created.id).getOrThrow()
@@ -218,7 +218,7 @@ class AdminContractTest {
         val finance = FinanceRepository(api)
         val before = finance.exchangeRates().getOrThrow()
         assertEquals(Currency.SAR, before.base)
-        val old = before.rate(Currency.YER)!!.rate
+        val old = before.rate(Currency.YER)!!.rate!!
         val updated = finance.setRate(Currency.YER, "151.25", "contract test").getOrThrow()
         assertEquals("151.25", updated.rate(Currency.YER)!!.rate)
         assertEquals("contract test", updated.history.first().note)

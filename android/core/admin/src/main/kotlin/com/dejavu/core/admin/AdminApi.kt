@@ -6,7 +6,16 @@ import com.dejavu.core.model.DeviceRequest
 import com.dejavu.core.model.DeviceToken
 import com.dejavu.core.model.Page
 import com.dejavu.core.model.RefreshRequest
+import com.dejavu.core.model.CurrencyRate
+import com.dejavu.core.model.Currencies
+import com.dejavu.core.model.StoreBankAccount
+import com.dejavu.core.model.UploadedFile
+import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import retrofit2.Response
+import retrofit2.http.DELETE
+import retrofit2.http.Multipart
+import retrofit2.http.Part
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.HTTP
@@ -106,7 +115,54 @@ interface AdminApi {
     @GET("admin/exchange-rates") suspend fun exchangeRates(): ExchangeRates
     @PUT("admin/exchange-rates/{currency}") suspend fun setRate(@Path("currency") currency: Currency, @Body body: SetRateRequest): ExchangeRates
 
+    @GET("admin/currencies") suspend fun allCurrencies(): Currencies
+    @GET("admin/currencies/active") suspend fun activeCurrencies(): Currencies
+    @POST("admin/currencies") suspend fun createCurrency(@Body body: CurrencyRequest): CurrencyRate
+    @PATCH("admin/currencies/{code}") suspend fun updateCurrency(@Path("code") code: String, @Body body: CurrencyRequest): CurrencyRate
+    @GET("admin/currencies/{code}/rates") suspend fun rateHistory(@Path("code") code: String): List<ExchangeRates.Entry>
+
     // customers
     @GET("admin/customers") suspend fun customers(@Query("q") query: String? = null, @Query("page") page: Int = 1): Page<AdminCustomerSummary>
     @GET("admin/customers/{id}") suspend fun customer(@Path("id") id: String): AdminCustomerDetail
+    @GET("admin/customers/{id}/account") suspend fun customerAccount(@Path("id") id: String, @Query("page") page: Int = 1): CustomerAccount
+    @POST("admin/customers/{id}/account/receipts") suspend fun customerReceipt(@Path("id") id: String, @Body body: CustomerReceiptRequest): AccountBalances
+
+    // POS
+    @GET("admin/pos/products") suspend fun posProducts(@Query("q") query: String? = null, @Query("categoryId") categoryId: String? = null): List<PosProduct>
+    @GET("admin/pos/lookup") suspend fun posLookup(@Query("code") code: String): PosLookup
+    @PUT("admin/pos/product-order") suspend fun arrangeProducts(@Body body: PosArrangeRequest): Response<Unit>
+    @POST("admin/pos/sales") suspend fun sell(@Body body: PosSaleRequest): PosReceipt
+    @GET("admin/pos/sales/{id}") suspend fun posReceipt(@Path("id") id: String): PosReceipt
+    @GET("admin/pos/shift") suspend fun shift(): PosShift
+    @POST("admin/pos/customers") suspend fun quickCustomer(@Body body: QuickCustomerRequest): QuickCustomer
+
+    // cash boxes
+    @GET("admin/cash-boxes/mine") suspend fun myBoxes(): List<CashBox>
+    @GET("admin/cash-boxes") suspend fun allBoxes(@Query("kind") kind: String? = null, @Query("currency") currency: String? = null): List<CashBox>
+    @GET("admin/cash-boxes/safes") suspend fun safes(): List<CashBox>
+    @POST("admin/cash-boxes") suspend fun createBox(@Body body: CreateBoxRequest): CashBox
+    @PATCH("admin/cash-boxes/{id}") suspend fun updateBox(@Path("id") id: String, @Body body: UpdateBoxRequest): CashBox
+    @GET("admin/cash-boxes/{id}/entries") suspend fun boxEntries(@Path("id") id: String, @Query("page") page: Int = 1): Page<CashBoxEntry>
+    @POST("admin/cash-transfers") suspend fun transfer(@Body body: TransferRequest): CashTransfer
+    @GET("admin/cash-transfers") suspend fun transfers(@Query("exchangesOnly") exchangesOnly: Boolean? = null, @Query("page") page: Int = 1): Page<CashTransfer>
+
+    // wallet top-ups & bank accounts
+    @GET("admin/wallet/top-ups") suspend fun topUps(@Query("status") status: String? = null, @Query("page") page: Int = 1): Page<AdminTopUp>
+    @GET("admin/wallet/top-ups/{id}") suspend fun topUp(@Path("id") id: String): AdminTopUp
+    @POST("admin/wallet/top-ups/{id}/approve") suspend fun approveTopUp(@Path("id") id: String, @Body body: ApproveTopUpRequest): AdminTopUp
+    @POST("admin/wallet/top-ups/{id}/reject") suspend fun rejectTopUp(@Path("id") id: String, @Body body: ReasonBody): AdminTopUp
+    @GET("admin/bank-accounts") suspend fun bankAccounts(): List<StoreBankAccount>
+    @POST("admin/bank-accounts") suspend fun createBankAccount(@Body body: BankAccountRequest): StoreBankAccount
+    @PATCH("admin/bank-accounts/{id}") suspend fun updateBankAccount(@Path("id") id: String, @Body body: BankAccountRequest): StoreBankAccount
+
+    // promotions
+    @GET("admin/promotions") suspend fun promotions(): List<Promotion>
+    @POST("admin/promotions") suspend fun createPromotion(@Body body: PromotionRequest): Promotion
+    @PATCH("admin/promotions/{id}") suspend fun updatePromotion(@Path("id") id: String, @Body body: PromotionRequest): Promotion
+    @DELETE("admin/promotions/{id}") suspend fun deletePromotion(@Path("id") id: String): Response<Unit>
+
+    // files
+    @Multipart @POST("admin/files") suspend fun uploadImage(@Part file: MultipartBody.Part): UploadedFile
+    /** A private file (deposit slip), read with the staff token. */
+    @GET("admin/files/{id}") suspend fun file(@Path("id") id: String): ResponseBody
 }

@@ -120,10 +120,12 @@ data class AdminPayment(
     /** Currency the money was handed over in; [amount] is its SAR value. */
     val currency: Currency = Currency.SAR,
     val currencyAmount: String? = null,
+    /** Change handed back at the till. */
+    val isChange: Boolean = false,
 ) {
     /** "7,000 ر.ي (46.67 ر.س)" for YER, the SAR amount otherwise. */
     val shown: String
-        get() = if (currency == Currency.SAR || currencyAmount == null) {
+        get() = if (currency.isBase || currencyAmount == null) {
             Money.formatBase(amount)
         } else {
             "${Money.plain(Money.parse(currencyAmount), currency)} (${Money.formatBase(amount)})"
@@ -324,6 +326,8 @@ data class StockLevelRef(val warehouseId: String, val onHand: Int, val reserved:
 data class AdminVariant(
     val id: String,
     val sku: String,
+    val variantNo: Int? = null,
+    /** Manufacturer's barcode; the printed label always encodes [sku]. */
     val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
@@ -348,7 +352,7 @@ enum class ProductStatus { DRAFT, ACTIVE, ARCHIVED }
 data class CategoryName(val id: String, val nameAr: String)
 
 @Serializable
-data class ImageUrl(val url: String)
+data class ImageUrl(val url: String, val color: String? = null)
 
 @Serializable
 data class AdminProduct(
@@ -365,12 +369,17 @@ data class AdminProduct(
     val category: CategoryName,
     val images: List<ImageUrl> = emptyList(),
     val variants: List<AdminVariant> = emptyList(),
+    /** Numeric product SKU (100…); variants are "<skuNumber>-<n>". */
+    val skuNumber: Int? = null,
+    /** Cost per piece in SAR, shared by all variants. */
+    val costPrice: String = "0",
 )
 
 @Serializable
 data class UpdateProductRequest(
     val status: ProductStatus? = null,
     val basePrice: String? = null,
+    val costPrice: String? = null,
     val compareAtPrice: String? = null,
     val isFeatured: Boolean? = null,
     val categoryId: String? = null,
@@ -399,7 +408,9 @@ data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slu
 
 @Serializable
 data class NewVariantRequest(
-    val sku: String,
+    /** Leave null to number it automatically (<product SKU>-<n>). */
+    val sku: String? = null,
+    val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
     val colorHex: String? = null,
@@ -412,7 +423,7 @@ data class NewVariantRequest(
 )
 
 @Serializable
-data class ImageRequest(val url: String)
+data class ImageRequest(val url: String, val color: String? = null)
 
 @Serializable
 data class CreateProductRequest(
@@ -422,6 +433,7 @@ data class CreateProductRequest(
     val slug: String,
     val basePrice: String,
     val variants: List<NewVariantRequest>,
+    val costPrice: String? = null,
     val descriptionAr: String? = null,
     val compareAtPrice: String? = null,
     val status: ProductStatus? = null,
@@ -432,6 +444,8 @@ data class CreateProductRequest(
 @Serializable
 data class UpdateVariantRequest(
     val sku: String? = null,
+    /** "" clears it. */
+    val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
     val colorHex: String? = null,
@@ -753,7 +767,14 @@ data class AdminCustomerDetail(
 
 @Serializable
 data class ExchangeRates(val base: Currency, val currencies: List<CurrencyRate>, val history: List<Entry> = emptyList()) {
-    @Serializable data class Entry(val id: String, val rate: String, val note: String? = null, val effectiveAt: String, val createdBy: PersonName? = null)
+    @Serializable data class Entry(
+        val id: String,
+        val rate: String,
+        val note: String? = null,
+        val effectiveAt: String,
+        val createdBy: PersonName? = null,
+        val currency: Currency? = null,
+    )
     @Serializable data class PersonName(val id: String, val name: String)
 
     fun rate(code: Currency): CurrencyRate? = currencies.firstOrNull { it.code == code }

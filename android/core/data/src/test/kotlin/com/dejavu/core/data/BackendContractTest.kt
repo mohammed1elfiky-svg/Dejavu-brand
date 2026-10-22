@@ -179,7 +179,7 @@ class BackendContractTest {
         val currencies = CurrencyRepository(api, { saved }, { saved = it })
         val rates = currencies.refresh().getOrThrow()
         assertEquals(Currency.SAR, rates.base)
-        val yer = rates.rate(Currency.YER)!!.rate
+        val yer = rates.rate(Currency.YER)!!.rate!!
         currencies.select(Currency.YER)
         assertEquals(Currency.YER, saved)
         assertEquals(Currency.YER, Money.display.currency)

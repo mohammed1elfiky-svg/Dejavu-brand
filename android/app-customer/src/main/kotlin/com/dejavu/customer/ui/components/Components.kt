@@ -4,6 +4,16 @@ package com.dejavu.customer.ui.components
 
 import com.dejavu.core.ui.theme.GlassCard
 import com.dejavu.core.ui.theme.Liquid
+import com.dejavu.core.ui.theme.glass
+import com.dejavu.core.ui.theme.liquidClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import coil3.compose.AsyncImage
+import com.dejavu.core.model.Brand
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,5 +93,51 @@ fun CategoryAvatar(name: String, imageUrl: String?, onClick: () -> Unit) {
         ProductImage(imageUrl, Modifier.size(64.dp).clip(CircleShape))
         Spacer(Modifier.height(6.dp))
         Text(name, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Brand logo in a round glass tile (its initial in gold when there is no logo). */
+@Composable
+fun BrandLogo(brand: Brand, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+    Box(modifier.size(size).glass(CircleShape, elevation = if (size > 32.dp) 6.dp else 0.dp), contentAlignment = Alignment.Center) {
+        if (brand.logoUrl != null) {
+            AsyncImage(
+                model = brand.logoUrl,
+                contentDescription = brand.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(size / 7),
+            )
+        } else {
+            Text(
+                brand.name.trim().take(1).uppercase(),
+                color = Liquid.GoldDeep,
+                style = if (size > 32.dp) MaterialTheme.typography.titleLarge else MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+/** A brand tile for the home screen's "الماركات" row. */
+@Composable
+fun BrandAvatar(brand: Brand, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(80.dp).liquidClickable(onClick = onClick)) {
+        BrandLogo(brand, 64.dp, Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(brand.name, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** "الماركة: <name>" pill on the product page; opens the brand's products. */
+@Composable
+fun BrandChip(brand: Brand, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        modifier.liquidClickable(onClick = onClick).glass(shape, elevation = 4.dp).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (brand.logoUrl != null) BrandLogo(brand, 24.dp)
+        Text("الماركة: ${brand.name}", style = MaterialTheme.typography.labelLarge, color = Liquid.GoldDeep, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

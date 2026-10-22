@@ -126,6 +126,7 @@ class ProductListViewModel(
     private val category: String?,
     private val featured: Boolean,
     initialQuery: String?,
+    private val brand: String? = null,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow(ProductListState())
     val state = _state.asStateFlow()
@@ -154,7 +155,7 @@ class ProductListViewModel(
         if (s.loading || !s.hasMore) return
         _state.value = s.copy(loading = true, error = null)
         viewModelScope.launch {
-            catalog.products(query, category, featured.takeIf { it }, s.sort, page = s.page + 1)
+            catalog.products(query, category, featured.takeIf { it }, s.sort, page = s.page + 1, brand = brand)
                 .onSuccess { page ->
                     _state.value = _state.value.copy(items = _state.value.items + page.items, page = page.page, hasMore = page.hasMore, loading = false)
                 }
@@ -171,8 +172,11 @@ fun ProductListScreen(
     featured: Boolean,
     onBack: () -> Unit,
     openProduct: (String) -> Unit,
+    brand: String? = null,
 ) {
-    val vm = appViewModel(key = "products:$category:$initialQuery:$featured") { ProductListViewModel(it.catalog, category, featured, initialQuery) }
+    val vm = appViewModel(key = "products:$category:$initialQuery:$featured:$brand") {
+        ProductListViewModel(it.catalog, category, featured, initialQuery, brand)
+    }
     val state by vm.state.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(initialQuery.orEmpty()) }
     var sortMenu by remember { mutableStateOf(false) }

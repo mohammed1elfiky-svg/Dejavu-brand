@@ -6,7 +6,7 @@ import com.dejavu.core.ui.push.DejavuMessagingService
 import com.dejavu.core.ui.push.Push
 import kotlinx.coroutines.launch
 
-/** Order updates from the backend. Taps open the order in [MainActivity]. */
+/** Order updates, offers and new products from the backend. Taps open the order or product in [MainActivity]. */
 class PushService : DejavuMessagingService() {
     private val container get() = (application as DejavuApp).container
 
@@ -18,12 +18,16 @@ class PushService : DejavuMessagingService() {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(MainActivity.EXTRA_ORDER, data["order"])
             .putExtra(MainActivity.EXTRA_TOP_UP, data["topUp"])
+            .putExtra(MainActivity.EXTRA_PRODUCT, data["product"])
         val tap = PendingIntent.getActivity(
             this,
-            (data["order"] ?: data["topUp"]).hashCode(),
+            (data["order"] ?: data["topUp"] ?: data["product"] ?: data["promotion"] ?: data["notificationId"]).hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        Push.show(this, AppContainer.CHANNEL_ORDERS, com.dejavu.core.ui.R.drawable.ic_stat_dejavu, title, body, tap)
+        val channel = if (data["type"] == "PROMOTION") AppContainer.CHANNEL_OFFERS else AppContainer.CHANNEL_ORDERS
+        // onMessageReceived runs on a background thread, so the blocking download is fine here.
+        val image = Push.loadImage(data["image"])
+        Push.show(this, channel, com.dejavu.core.ui.R.drawable.ic_stat_dejavu, title, body, tap, image)
     }
 }

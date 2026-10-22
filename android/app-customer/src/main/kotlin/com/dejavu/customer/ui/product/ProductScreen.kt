@@ -63,6 +63,7 @@ import com.dejavu.core.ui.QuantityStepper
 import com.dejavu.core.ui.Tag
 import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.theme.Gold
+import com.dejavu.customer.ui.components.BrandChip
 import com.dejavu.customer.ui.components.discountBadge
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.theme.Warning
@@ -148,7 +149,13 @@ class ProductViewModel(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requireLogin: () -> Unit) {
+fun ProductScreen(
+    slug: String,
+    onBack: () -> Unit,
+    openCart: () -> Unit,
+    requireLogin: () -> Unit,
+    openBrand: (name: String, slug: String) -> Unit = { _, _ -> },
+) {
     val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session) }
     val state by vm.product.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
@@ -194,6 +201,7 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(p.category.nameAr, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     Text(p.nameAr, style = MaterialTheme.typography.headlineSmall)
+                    p.brand?.let { b -> BrandChip(b, onClick = { openBrand(b.name, b.slug) }) }
                     if (p.merchantPrice) Tag("سعر التاجر", Gold)
                     PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                     Promotion(p)

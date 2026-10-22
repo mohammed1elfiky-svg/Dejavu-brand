@@ -79,6 +79,7 @@ import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.core.admin.AdjustmentReason
+import com.dejavu.core.admin.AdminBrand
 import com.dejavu.core.admin.AdminProduct
 import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.Perm
@@ -686,11 +687,22 @@ private fun AdjustDialog(
 
 // ----------------------------------------------------------------- products ---
 
-class ProductsViewModel(private val repo: InventoryRepository) : BaseViewModel() {
+class ProductsViewModel(private val repo: InventoryRepository, initialBrandId: String? = null) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<AdminProduct>>>(Load.Loading)
     val state = _state.asStateFlow()
+    private val _brands = MutableStateFlow<List<AdminBrand>>(emptyList())
+    val brands = _brands.asStateFlow()
     var query = ""
         private set
+    private val _brandId = MutableStateFlow(initialBrandId)
+
+    /** Products of this brand only; null = all. */
+    val brandId = _brandId.asStateFlow()
+
+    fun pickBrand(id: String?) {
+        _brandId.value = id
+        load(reset = true)
+    }
 
     fun search(q: String) {
         query = q
@@ -699,14 +711,17 @@ class ProductsViewModel(private val repo: InventoryRepository) : BaseViewModel()
 
     fun load(reset: Boolean = false) {
         if (reset || _state.value !is Load.Ready) _state.value = Load.Loading
-        viewModelScope.launch { _state.value = repo.products(query).map { it.items }.toLoad() }
+        viewModelScope.launch { _state.value = repo.products(query, pageSize = 100, brandId = _brandId.value).map { it.items }.toLoad() }
+        viewModelScope.launch { repo.brands().onSuccess { list -> _brands.value = list.filter { it.productCount > 0 || it.id == _brandId.value } } }
     }
 }
 
 @Composable
-fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct: (() -> Unit)?) {
-    val vm = adminViewModel { ProductsViewModel(it.inventory) }
+fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct: (() -> Unit)?, initialBrandId: String? = null) {
+    val vm = adminViewModel(key = "products:${initialBrandId.orEmpty()}") { ProductsViewModel(it.inventory, initialBrandId) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val brands by vm.brands.collectAsStateWithLifecycle()
+    val brandId by vm.brandId.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(vm.query) }
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -736,6 +751,14 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct
                 keyboardActions = KeyboardActions(onSearch = { vm.search(query) }),
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
             )
+            if (brands.isNotEmpty()) {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(brandId == null, { vm.pickBrand(null) }, label = { Text("كل الماركات") }) }
+                    items(brands, key = { it.id }) { b ->
+                        FilterChip(brandId == b.id, { vm.pickBrand(b.id) }, label = { Text(b.name) })
+                    }
+                }
+            }
             LoadContent(state, onRetry = { vm.load() }) { list ->
                 LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(list, key = { it.id }) { p ->
@@ -861,7 +884,7 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     InfoCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                p.brand?.takeIf { it.isNotBlank() }?.let { Text("الماركة: $it", style = MaterialTheme.typography.bodySmall) }
+                                p.brand?.let { Text("الماركة: ${it.name}", style = MaterialTheme.typography.bodySmall) }
                                 Text("القسم: ${p.category.nameAr}")
                             }
                             GoldPill { Text("SKU ${p.skuNumber ?: "—"}", color = Color.White, style = MaterialTheme.typography.labelLarge) }

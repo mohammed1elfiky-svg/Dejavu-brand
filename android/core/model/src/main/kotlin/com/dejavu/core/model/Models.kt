@@ -63,6 +63,10 @@ data class Category(
 @Serializable
 data class CategoryRef(val id: String, val slug: String, val nameAr: String, val nameEn: String)
 
+/** A brand shoppers can browse by (GET store/brands, and on each product). */
+@Serializable
+data class Brand(val id: String, val name: String, val slug: String, val logoUrl: String? = null)
+
 @Serializable
 data class ProductImage(val url: String, val altText: String? = null, val variantId: String? = null, val color: String? = null)
 
@@ -97,6 +101,7 @@ data class StoreProduct(
     val ratingAvg: String = "0",
     val ratingCount: Int = 0,
     val category: CategoryRef,
+    val brand: Brand? = null,
     val images: List<ProductImage> = emptyList(),
     val variants: List<StoreVariant> = emptyList(),
     val inStock: Boolean,

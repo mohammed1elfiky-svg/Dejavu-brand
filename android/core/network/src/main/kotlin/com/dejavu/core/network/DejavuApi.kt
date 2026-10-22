@@ -1,5 +1,6 @@
 package com.dejavu.core.network
 
+import com.dejavu.core.model.Brand
 import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
@@ -75,7 +76,11 @@ interface DejavuApi {
         @Query("sort") sort: String? = null,
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
+        @Query("brand") brand: String? = null,
     ): Page<StoreProduct>
+
+    @GET("store/brands")
+    suspend fun brands(): List<Brand>
 
     @GET("store/products/{slug}")
     suspend fun product(@Path("slug") slug: String): StoreProduct

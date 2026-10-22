@@ -1,5 +1,6 @@
 package com.dejavu.core.data
 
+import com.dejavu.core.model.Brand
 import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
@@ -120,8 +121,12 @@ class CatalogRepository(private val api: DejavuApi) {
         sort: ProductSort = ProductSort.NEWEST,
         page: Int = 1,
         pageSize: Int = 20,
+        brand: String? = null,
     ): Result<Page<StoreProduct>> =
-        apiCall { api.products(query?.trim()?.ifBlank { null }, category, featured, sort.wire, page, pageSize) }
+        apiCall { api.products(query?.trim()?.ifBlank { null }, category, featured, sort.wire, page, pageSize, brand) }
+
+    /** Brands with something on sale, for the home screen. */
+    suspend fun brands(): Result<List<Brand>> = apiCall { api.brands() }
 
     suspend fun product(slug: String): Result<StoreProduct> = apiCall { api.product(slug) }
 

@@ -67,6 +67,19 @@ class AppContainer(private val context: Context) {
         _openOrder.value = null
     }
 
+    private val _openProduct = MutableStateFlow<String?>(null)
+
+    /** Product to show, requested from outside the UI (a new-product notification tap). */
+    val openProduct = _openProduct.asStateFlow()
+
+    fun requestProduct(slug: String?) {
+        if (!slug.isNullOrBlank()) _openProduct.value = slug
+    }
+
+    fun productOpened() {
+        _openProduct.value = null
+    }
+
     private val _openWallet = MutableStateFlow(false)
 
     /** Wallet to show, requested from outside the UI (a top-up notification tap). */
@@ -81,7 +94,10 @@ class AppContainer(private val context: Context) {
     }
 
     fun start() {
-        if (pushEnabled) Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")
+        if (pushEnabled) {
+            Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")
+            Push.ensureChannel(context, CHANNEL_OFFERS, "العروض والمنتجات الجديدة")
+        }
         appScope.launch { session.restore() }
         appScope.launch { currencies.refresh() }
         // Keep the cart badge, bell badge and push registration in step with the session.
@@ -117,5 +133,6 @@ class AppContainer(private val context: Context) {
 
     companion object {
         const val CHANNEL_ORDERS = "orders"
+        const val CHANNEL_OFFERS = "offers"
     }
 }

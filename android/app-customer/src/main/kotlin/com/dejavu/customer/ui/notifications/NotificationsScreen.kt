@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -43,6 +45,7 @@ import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
+import com.dejavu.core.ui.ProductImage
 import com.dejavu.core.ui.formatDateTime
 import com.dejavu.customer.ui.appViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,15 +84,17 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
         }
     }
 
-    /** Marks as read and reports what to open: the order it is about, or the wallet for top-up news. */
-    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit) {
+    /** Marks as read and reports what to open: the order it is about, the new product, or the wallet for top-up news. */
+    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit) {
         if (!n.isRead) {
             markLocally(n.id)
             viewModelScope.launch { repo.markRead(n.id) }
         }
         val order = n.orderNumber
+        val product = n.data["product"]?.takeIf { it.isNotBlank() }
         when {
             order != null -> openOrder(order)
+            product != null -> openProduct(product)
             n.type == "WALLET" || n.data["topUp"] != null -> openWallet()
         }
     }
@@ -110,7 +115,7 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
 }
 
 @Composable
-fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWallet: () -> Unit) {
+fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit = {}) {
     val vm = appViewModel { NotificationsViewModel(it.notifications) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
@@ -133,12 +138,12 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWal
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { items ->
             if (items.isEmpty()) {
-                EmptyState(Icons.Filled.Notifications, "لا توجد إشعارات بعد", "سنخبرك هنا بكل جديد عن طلباتك ورصيدك", modifier = Modifier.padding(padding))
+                EmptyState(Icons.Filled.Notifications, "لا توجد إشعارات بعد", "سنخبرك هنا بكل جديد عن طلباتك ورصيدك والعروض", modifier = Modifier.padding(padding))
                 return@LoadContent
             }
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(items, key = { it.id }) { n ->
-                    NotificationRow(n) { vm.open(n, openOrder, openWallet) }
+                    NotificationRow(n) { vm.open(n, openOrder, openWallet, openProduct) }
                     HorizontalDivider()
                 }
                 if (hasMore) {
@@ -165,6 +170,9 @@ private fun NotificationRow(n: AppNotification, onClick: () -> Unit) {
             Text(n.title, style = MaterialTheme.typography.titleSmall, fontWeight = if (n.isRead) FontWeight.Normal else FontWeight.Bold)
             Text(n.body, style = MaterialTheme.typography.bodyMedium)
             Text(formatDateTime(n.sentAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        n.data["image"]?.takeIf { it.isNotBlank() }?.let { url ->
+            ProductImage(url, Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)), contentDescription = null)
         }
     }
 }

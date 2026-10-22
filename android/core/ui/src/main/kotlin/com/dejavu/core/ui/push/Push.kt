@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -17,6 +19,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.tasks.await
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Firebase project values for one app, injected at build time
@@ -71,14 +75,30 @@ object Push {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             NotificationManagerCompat.from(context).areNotificationsEnabled()
 
-    /** Shows a notification while the app is in the foreground (FCM shows background ones itself). */
-    fun show(context: Context, channel: String, smallIcon: Int, title: String, body: String, tap: PendingIntent) {
+    /**
+     * Shows a notification while the app is in the foreground (FCM shows background ones itself).
+     * With an [image] it expands to the big picture (offers, new products).
+     */
+    fun show(
+        context: Context,
+        channel: String,
+        smallIcon: Int,
+        title: String,
+        body: String,
+        tap: PendingIntent,
+        image: Bitmap? = null,
+    ) {
         if (!canNotify(context)) return
-        val n = NotificationCompat.Builder(context, channel)
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(smallIcon)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        if (image != null) {
+            builder.setLargeIcon(image).setStyle(NotificationCompat.BigPictureStyle().bigPicture(image))
+        } else {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        }
+        val n = builder
             .setAutoCancel(true)
             .setContentIntent(tap)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -87,6 +107,29 @@ object Push {
             NotificationManagerCompat.from(context).notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), n)
         } catch (e: SecurityException) {
             Log.w(TAG, "Notification permission revoked", e)
+        }
+    }
+
+    /**
+     * Downloads a notification photo (https only). Blocking: call it off the main thread,
+     * e.g. from onMessageReceived. Any failure yields null and the notification shows without it.
+     */
+    fun loadImage(url: String?): Bitmap? {
+        if (url.isNullOrBlank() || !url.startsWith("https://", ignoreCase = true)) return null
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                instanceFollowRedirects = true
+            }
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.use { BitmapFactory.decodeStream(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Notification image failed", e)
+            null
+        } finally {
+            connection?.disconnect()
         }
     }
 }

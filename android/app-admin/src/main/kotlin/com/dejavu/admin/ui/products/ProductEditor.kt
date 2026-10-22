@@ -56,15 +56,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.brands.BrandLogo
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.core.admin.AdminBrand
 import com.dejavu.core.admin.AdminCategory
 import com.dejavu.core.admin.AdminProduct
 import com.dejavu.core.admin.AdminVariant
@@ -118,8 +122,11 @@ data class VariantRow(
 data class ProductForm(
     val categoryId: String? = null,
     val nameAr: String = "",
-    val brand: String = "",
-    val savedBrand: String = "",
+    val brandId: String? = null,
+    /** The brand when loaded, so removing it is sent as "". */
+    val savedBrandId: String? = null,
+    /** Push a "new product" notification to customers when saved (published products only). */
+    val notify: Boolean = false,
     val instagramUrl: String = "",
     val savedInstagram: String = "",
     /** Uploaded video URL; blank = none. */
@@ -152,6 +159,12 @@ data class ProductForm(
 class ProductFormViewModel(private val productId: String?, private val repo: InventoryRepository) : BaseViewModel() {
     private val _categories = MutableStateFlow<Load<List<Pair<AdminCategory, Int>>>>(Load.Loading)
     val categories = _categories.asStateFlow()
+    private val _brands = MutableStateFlow<List<AdminBrand>>(emptyList())
+    val brands = _brands.asStateFlow()
+    private val _notice = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /** Outcome of the customer notification, shown after leaving the screen. */
+    val notice = _notice.asSharedFlow()
     private val _form = MutableStateFlow(ProductForm())
     val form = _form.asStateFlow()
     private val _ready = MutableStateFlow(productId == null)
@@ -174,6 +187,7 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
 
     fun load() {
         viewModelScope.launch { _categories.value = repo.categories().toLoad() }
+        viewModelScope.launch { repo.brands().onSuccess { _brands.value = it } }
         if (productId != null && !_ready.value) {
             viewModelScope.launch {
                 repo.product(productId).orSay()?.let { p ->
@@ -190,6 +204,16 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                 _categories.value = repo.categories().toLoad()
                 edit { it.copy(categoryId = c.id) }
                 say("تمت إضافة قسم ${c.nameAr}")
+            }
+        }
+    }
+
+    fun addBrand(name: String) {
+        viewModelScope.launch {
+            repo.createBrand(name).orSay()?.let { b ->
+                _brands.value = (_brands.value + b).sortedBy { it.name }
+                edit { it.copy(brandId = b.id) }
+                say("تمت إضافة الماركة ${b.name}")
             }
         }
     }
@@ -283,12 +307,16 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         isFeatured = f.featured,
                         images = requests.ifEmpty { null },
                         variants = f.variants.map { it.toRequest() },
-                        brand = f.brand.trim().ifBlank { null },
+                        brandId = f.brandId,
+                        notifyCustomers = f.notify.takeIf { it },
                         videoUrl = f.videoUrl.trim().ifBlank { null },
                         instagramUrl = f.instagramUrl.trim().ifBlank { null },
                         visibility = f.visibility,
                     ),
-                ).orSay()?.id
+                ).orSay()?.let { p ->
+                    announce(f, p.notifiedCustomers)
+                    p.id
+                }
             } else {
                 repo.updateProduct(
                     productId,
@@ -304,12 +332,14 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         status = f.status,
                         isFeatured = f.featured,
                         // "" clears a value that was set; an unchanged blank is left out.
-                        brand = f.brand.trim().ifBlank { if (f.savedBrand.isNotBlank()) "" else null },
+                        brandId = f.brandId ?: if (f.savedBrandId != null) "" else null,
+                        notifyCustomers = f.notify.takeIf { it },
                         videoUrl = f.videoUrl.trim().ifBlank { if (f.savedVideo.isNotBlank()) "" else null },
                         instagramUrl = f.instagramUrl.trim().ifBlank { if (f.savedInstagram.isNotBlank()) "" else null },
                         visibility = f.visibility,
                     ),
                 ).orSay()?.let { p ->
+                    announce(f, p.notifiedCustomers)
                     if (images != f.savedImages) repo.setImages(p.id, requests).orSay()?.id else p.id
                 }
             }
@@ -318,10 +348,17 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         }
     }
 
+    private fun announce(f: ProductForm, notified: Int?) {
+        if (!f.notify || notified == null) return
+        _notice.tryEmit(
+            if (notified > 0) "تم إرسال إشعار المنتج إلى $notified عميل"
+            else "لم يُرسل الإشعار: المنتج غير منشور للعملاء أو لا يوجد عملاء بعد",
+        )
+    }
+
     private fun problem(f: ProductForm): String? = when {
         f.categoryId == null -> "اختر القسم"
         f.nameAr.trim().length < 2 -> "اكتب اسم المنتج بالعربية"
-        f.brand.trim().length > 80 -> "اسم الماركة طويل جداً (80 حرفاً كحد أقصى)"
         f.instagramUrl.isNotBlank() && !isWebLink(f.instagramUrl) -> "رابط إنستغرام يجب أن يبدأ بـ http:// أو https://"
         !isAmount(f.price) || f.price.trim().toBigDecimal().signum() == 0 -> "اكتب سعراً صحيحاً"
         f.compareAt.isNotBlank() && !isAmount(f.compareAt) -> "السعر قبل الخصم غير صحيح"
@@ -357,8 +394,8 @@ private fun VariantRow.toRequest(): NewVariantRequest {
 private fun AdminProduct.toForm() = ProductForm(
     categoryId = category.id,
     nameAr = nameAr,
-    brand = brand.orEmpty(),
-    savedBrand = brand.orEmpty(),
+    brandId = brand?.id,
+    savedBrandId = brand?.id,
     instagramUrl = instagramUrl.orEmpty(),
     savedInstagram = instagramUrl.orEmpty(),
     videoUrl = videoUrl.orEmpty(),
@@ -384,6 +421,8 @@ private fun AdminProduct.toForm() = ProductForm(
 fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) -> Unit) {
     val vm = adminViewModel(key = "product-form:${productId ?: "new"}") { ProductFormViewModel(productId, it.inventory) }
     val categories by vm.categories.collectAsStateWithLifecycle()
+    val brands by vm.brands.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val form by vm.form.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -395,6 +434,8 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { saved(it) } }
+    // A toast, because the screen closes right after saving.
+    LaunchedEffect(vm) { vm.notice.collect { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() } }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -416,7 +457,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         CategoryPicker(cats, form.categoryId, onAdd = vm::addCategory) { id -> vm.edit { it.copy(categoryId = id) } }
                         Field("اسم المنتج", form.nameAr) { v -> vm.edit { it.copy(nameAr = v) } }
-                        Field("الماركة / العلامة التجارية (اختياري)", form.brand) { v -> vm.edit { it.copy(brand = v.take(80)) } }
+                        BrandPicker(brands, form.brandId, onAdd = vm::addBrand) { id -> vm.edit { it.copy(brandId = id) } }
                         OutlinedTextField(
                             value = form.descriptionAr,
                             onValueChange = { v -> vm.edit { it.copy(descriptionAr = v) } },
@@ -474,6 +515,17 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                             Switch(checked = form.featured, onCheckedChange = { v -> vm.edit { it.copy(featured = v) } })
                         }
                         VisibilityPicker(form.visibility) { v -> vm.edit { it.copy(visibility = v) } }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("إرسال إشعار للعملاء بهذا المنتج")
+                                Text(
+                                    "يصل لكل العملاء عند الحفظ مع اسم المنتج وصورته، إذا كان منشوراً في المتجر",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = form.notify, onCheckedChange = { v -> vm.edit { it.copy(notify = v) } })
+                        }
                     }
                 }
                 if (vm.isNew) {
@@ -853,6 +905,59 @@ private fun CategoryPicker(
                     enabled = nameAr.trim().length >= 2 && VariantPlanner.slugOf(nameEn).length >= 2,
                     onClick = { adding = false; onAdd(nameAr, nameEn) },
                 ) { Text("إضافة") }
+            },
+            dismissButton = { TextButton(onClick = { adding = false }) { Text("تراجع") } },
+        )
+    }
+}
+
+/** Brand choice like the category one: pick a defined brand, none, or add a new one. */
+@Composable
+private fun BrandPicker(brands: List<AdminBrand>, selectedId: String?, onAdd: (name: String) -> Unit, onPick: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
+    val selected = brands.firstOrNull { it.id == selectedId }
+    OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+        Text(selected?.let { "الماركة: ${it.name}" } ?: "الماركة (اختياري)", Modifier.weight(1f))
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("الماركة") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        "بدون ماركة",
+                        style = if (selectedId == null) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().clickable { open = false; onPick(null) }.padding(vertical = 10.dp),
+                    )
+                    brands.filter { it.isActive || it.id == selectedId }.forEach { b ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { open = false; onPick(b.id) }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BrandLogo(b.name, b.logoUrl, 32.dp)
+                            Text(
+                                b.name,
+                                style = if (b.id == selectedId) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 10.dp),
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("إغلاق") } },
+            dismissButton = { TextButton(onClick = { open = false; adding = true }) { Text("+ ماركة جديدة") } },
+        )
+    }
+    if (adding) {
+        var name by rememberSaveable { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { adding = false },
+            title = { Text("ماركة جديدة") },
+            text = { Field("اسم الماركة", name) { name = it.take(80) } },
+            confirmButton = {
+                TextButton(enabled = name.isNotBlank(), onClick = { adding = false; onAdd(name) }) { Text("إضافة") }
             },
             dismissButton = { TextButton(onClick = { adding = false }) { Text("تراجع") } },
         )

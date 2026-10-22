@@ -82,14 +82,14 @@ object Routes {
     const val WALLET = "wallet"
     const val TOP_UP = "wallet/top-up"
 
-    const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}"
+    const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
     const val ORDER = "order/{number}?placed={placed}"
     const val RETURN_REQUEST = "order/{number}/return"
     const val ADDRESS_FORM = "address?id={id}"
 
-    fun products(title: String, category: String? = null, query: String? = null, featured: Boolean = false) =
-        "products?title=${enc(title)}&category=${enc(category)}&q=${enc(query)}&featured=$featured"
+    fun products(title: String, category: String? = null, query: String? = null, featured: Boolean = false, brand: String? = null) =
+        "products?title=${enc(title)}&category=${enc(category)}&q=${enc(query)}&featured=$featured&brand=${enc(brand)}"
     fun product(slug: String) = "product/${enc(slug)}"
     fun order(number: String, placed: Boolean = false) = "order/${enc(number)}?placed=$placed"
     fun returnRequest(number: String) = "order/${enc(number)}/return"
@@ -125,6 +125,13 @@ fun DejavuNavHost() {
         if (session !is SessionState.LoggedIn) return@LaunchedEffect
         nav.navigate(Routes.order(number)) { launchSingleTop = true }
         container.orderOpened()
+    }
+    // A new-product notification tap (no sign-in needed to browse).
+    val openProduct by container.openProduct.collectAsStateWithLifecycle()
+    LaunchedEffect(openProduct) {
+        val slug = openProduct ?: return@LaunchedEffect
+        nav.navigate(Routes.product(slug)) { launchSingleTop = true }
+        container.productOpened()
     }
     // A top-up notification tap.
     LaunchedEffect(openWallet, session is SessionState.LoggedIn) {
@@ -168,6 +175,7 @@ fun DejavuNavHost() {
                     openProduct = { nav.navigate(Routes.product(it)) },
                     openProducts = { title, category, query, featured -> nav.navigate(Routes.products(title, category, query, featured)) },
                     openNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
+                    openBrand = { name, slug -> nav.navigate(Routes.products(name, brand = slug)) },
                 )
             }
             composable(Routes.CATEGORIES) {
@@ -180,6 +188,7 @@ fun DejavuNavHost() {
                     navArgument("category") { type = NavType.StringType; nullable = true },
                     navArgument("q") { type = NavType.StringType; nullable = true },
                     navArgument("featured") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("brand") { type = NavType.StringType; nullable = true },
                 ),
             ) { entry ->
                 val args = entry.arguments
@@ -190,6 +199,7 @@ fun DejavuNavHost() {
                     featured = args?.getBoolean("featured") ?: false,
                     onBack = { nav.popBackStack() },
                     openProduct = { nav.navigate(Routes.product(it)) },
+                    brand = args?.getString("brand")?.ifBlank { null },
                 )
             }
             composable(Routes.PRODUCT) { entry ->
@@ -198,6 +208,7 @@ fun DejavuNavHost() {
                     onBack = { nav.popBackStack() },
                     openCart = { nav.switchTab(Routes.CART) },
                     requireLogin = { nav.navigate(Routes.LOGIN) },
+                    openBrand = { name, slug -> nav.navigate(Routes.products(name, brand = slug)) },
                 )
             }
             composable(Routes.CART) {
@@ -279,6 +290,7 @@ fun DejavuNavHost() {
                     onBack = { nav.popBackStack() },
                     openOrder = { nav.navigate(Routes.order(it)) },
                     openWallet = { nav.navigate(Routes.WALLET) { launchSingleTop = true } },
+                    openProduct = { nav.navigate(Routes.product(it)) },
                 )
             }
             composable(Routes.WALLET) {

@@ -40,12 +40,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.CatalogRepository
 import com.dejavu.core.data.SessionState
+import com.dejavu.core.model.Brand
 import com.dejavu.core.model.Category
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
+import com.dejavu.customer.ui.components.BrandAvatar
 import com.dejavu.customer.ui.components.CategoryAvatar
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.customer.ui.components.ProductCard
@@ -56,7 +58,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class HomeData(val categories: List<Category>, val featured: List<StoreProduct>, val newest: List<StoreProduct>)
+data class HomeData(
+    val categories: List<Category>,
+    val featured: List<StoreProduct>,
+    val newest: List<StoreProduct>,
+    val brands: List<Brand> = emptyList(),
+)
 
 class HomeViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<HomeData>>(Load.Loading)
@@ -70,8 +77,15 @@ class HomeViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
             val categories = async { catalog.categories() }
             val featured = async { catalog.products(featured = true, pageSize = 10) }
             val newest = async { catalog.products(pageSize = 10) }
+            // Optional: without brands the home screen simply hides their row.
+            val brands = async { catalog.brands() }
             _state.value = runCatching {
-                HomeData(categories.await().getOrThrow(), featured.await().getOrThrow().items, newest.await().getOrThrow().items)
+                HomeData(
+                    categories.await().getOrThrow(),
+                    featured.await().getOrThrow().items,
+                    newest.await().getOrThrow().items,
+                    brands.await().getOrNull().orEmpty(),
+                )
             }.toLoad()
         }
     }
@@ -82,6 +96,7 @@ fun HomeScreen(
     openProduct: (String) -> Unit,
     openProducts: (title: String, category: String?, query: String?, featured: Boolean) -> Unit,
     openNotifications: () -> Unit,
+    openBrand: (name: String, slug: String) -> Unit,
 ) {
     val vm = appViewModel { HomeViewModel(it.catalog) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -125,6 +140,14 @@ fun HomeScreen(
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(data.categories, key = { it.id }) { c ->
                             CategoryAvatar(c.nameAr, c.imageUrl) { openProducts(c.nameAr, c.slug, null, false) }
+                        }
+                    }
+                }
+                if (data.brands.isNotEmpty()) {
+                    item { SectionTitle("الماركات") }
+                    item {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(data.brands, key = { it.id }) { b -> BrandAvatar(b) { openBrand(b.name, b.slug) } }
                         }
                     }
                 }

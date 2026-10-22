@@ -60,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
@@ -329,6 +331,8 @@ data class PromotionForm(
     val startsAt: String? = null,
     val endsAt: String? = null,
     val isActive: Boolean = true,
+    /** Push the offer to all customers when saved (only while it runs). */
+    val notify: Boolean = false,
     val products: List<PickedProduct> = emptyList(),
     /** End date the saved promotion has; the API cannot clear it once set. */
     val savedEndsAt: String? = null,
@@ -347,7 +351,8 @@ class PromotionEditViewModel(
     val form = _form.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
-    private val _saved = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits once saved, with the outcome of the customer notification if one was asked for. */
+    private val _saved = MutableSharedFlow<String?>(extraBufferCapacity = 1)
     val saved = _saved.asSharedFlow()
 
     private val _results = MutableStateFlow<List<AdminProduct>>(emptyList())
@@ -432,11 +437,16 @@ class PromotionEditViewModel(
                 startsAt = f.startsAt,
                 endsAt = f.endsAt,
                 isActive = f.isActive,
+                notifyCustomers = f.notify.takeIf { it },
             )
             val result = if (id == null) repo.create(request) else repo.update(id, request)
-            result.orSay()?.let {
+            result.orSay()?.let { p ->
                 say("تم حفظ العرض")
-                _saved.tryEmit(Unit)
+                _saved.tryEmit(
+                    p.notifiedCustomers?.let { n ->
+                        if (n > 0) "تم إرسال إشعار العرض إلى $n عميل" else "لم يُرسل الإشعار: العرض غير مفعّل الآن أو لا يوجد عملاء"
+                    },
+                )
             }
             _busy.value = false
         }
@@ -458,7 +468,13 @@ fun PromotionEditScreen(id: String?, onBack: () -> Unit) {
     var picking by remember { mutableStateOf<DateField?>(null) }
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.load() }
-    LaunchedEffect(vm) { vm.saved.collect { onBack() } }
+    val context = LocalContext.current
+    LaunchedEffect(vm) {
+        vm.saved.collect { notice ->
+            notice?.let { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() }
+            onBack()
+        }
+    }
     val percent = percentOf(form.percent)
     val selectedIds = form.products.map { it.id }.toSet()
 
@@ -518,6 +534,10 @@ fun PromotionEditScreen(id: String?, onBack: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("العرض مفعّل", Modifier.weight(1f))
                                 Switch(checked = form.isActive, onCheckedChange = { v -> vm.edit { it.copy(isActive = v) } })
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("إرسال إشعار للعملاء بهذا العرض", Modifier.weight(1f))
+                                Switch(checked = form.notify, onCheckedChange = { v -> vm.edit { it.copy(notify = v) } })
                             }
                         }
                     }

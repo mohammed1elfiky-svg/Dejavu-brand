@@ -72,6 +72,8 @@ import com.dejavu.admin.ui.finance.ReportsScreen
 import com.dejavu.admin.ui.finance.SettlementsScreen
 import com.dejavu.admin.ui.inventory.ProductDetailScreen
 import com.dejavu.admin.ui.inventory.ProductsScreen
+import com.dejavu.admin.ui.brands.BrandsScreen
+import com.dejavu.admin.ui.system.WipeDataScreen
 import com.dejavu.admin.ui.inventory.StockScreen
 import com.dejavu.admin.ui.products.ProductFormScreen
 import com.dejavu.admin.ui.more.CurrencyScreen
@@ -138,6 +140,9 @@ object R {
     const val STAFF = "staff"
     const val POS_RETURNS = "pos-returns"
     const val PURCHASE_NEW = "purchase-new"
+    const val BRANDS = "brands"
+    const val BRAND_PRODUCTS = "brand-products/{id}"
+    const val WIPE = "wipe-test-data"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -230,6 +235,22 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     newProduct = if (session.can(Perm.PRODUCTS_WRITE)) ({ nav.navigate(R.PRODUCT_NEW) }) else null,
                 )
             }
+            composable(R.BRANDS) {
+                BrandsScreen(
+                    canEdit = session.can(Perm.CATEGORIES_WRITE),
+                    onBack = back,
+                    openProducts = { open(R.BRAND_PRODUCTS, it) },
+                )
+            }
+            composable(R.BRAND_PRODUCTS) { e ->
+                ProductsScreen(
+                    back,
+                    openProduct = { open(R.PRODUCT, it) },
+                    newProduct = null,
+                    initialBrandId = e.arguments?.getString("id"),
+                )
+            }
+            composable(R.WIPE) { WipeDataScreen(back, done = { nav.switchTab(R.MORE) }) }
             composable(R.PRODUCT) { e ->
                 val id = e.arguments?.getString("id").orEmpty()
                 ProductDetailScreen(id, session, back, edit = { open(R.PRODUCT_EDIT, id) })

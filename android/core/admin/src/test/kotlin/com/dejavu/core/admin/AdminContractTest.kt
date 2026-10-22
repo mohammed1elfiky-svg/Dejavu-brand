@@ -175,11 +175,16 @@ class AdminContractTest {
         val category = repo.createCategory("قسم $run", "Section $run").getOrThrow()
         assertTrue(repo.categories().getOrThrow().any { it.first.id == category.id })
 
+        val brand = repo.createBrand("ماركة $run").getOrThrow()
+        assertTrue(repo.brands().getOrThrow().any { it.id == brand.id })
+
         val slug = VariantPlanner.slugOf("Contract Shirt $run")
         val planned = VariantPlanner.plan(slug, listOf("M", "L"), listOf("أسود"))
         val created = repo.createProduct(
             CreateProductRequest(
                 categoryId = category.id,
+                brandId = brand.id,
+                notifyCustomers = true,
                 nameAr = "قميص $run",
                 nameEn = "Contract Shirt $run",
                 slug = slug,
@@ -191,6 +196,15 @@ class AdminContractTest {
             ),
         ).getOrThrow()
         assertEquals(planned.map { it.sku }.toSet(), created.variants.map { it.sku }.toSet())
+        assertEquals(brand.id, created.brand?.id)
+        assertNotNull(created.notifiedCustomers)
+        assertEquals(listOf(created.id), repo.products(brandId = brand.id).getOrThrow().items.map { it.id })
+        repo.updateBrand(brand.id, logoUrl = "https://example.com/logo.png").getOrThrow()
+
+        // A dry run only counts; nothing is deleted.
+        val preview = repo.wipeTestData(dryRun = true).getOrThrow()
+        assertTrue(preview.dryRun && (preview.deleted["products"] ?: 0) > 0)
+        assertEquals(created.id, repo.product(created.id).getOrThrow().id)
         assertEquals(4, created.variants.first { it.size == "M" }.onHand)
         assertEquals("#000000", created.variants.first().colorHex)
 

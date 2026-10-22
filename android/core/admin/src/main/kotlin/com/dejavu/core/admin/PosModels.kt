@@ -305,6 +305,8 @@ data class Promotion(
     val isActive: Boolean = true,
     val running: Boolean = false,
     val products: List<PromotionProduct> = emptyList(),
+    /** After a save with notifyCustomers: customers notified (0 = not running, nothing sent). */
+    val notifiedCustomers: Int? = null,
 )
 
 @Serializable
@@ -315,6 +317,8 @@ data class PromotionRequest(
     val startsAt: String? = null,
     val endsAt: String? = null,
     val isActive: Boolean? = null,
+    /** Push the offer to all customers (only while it runs). */
+    val notifyCustomers: Boolean? = null,
 )
 
 // -------------------------------------------------------------- currencies ---

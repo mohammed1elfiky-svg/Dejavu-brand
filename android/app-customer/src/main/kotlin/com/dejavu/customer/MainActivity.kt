@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
-    /** Opens the order a notification or the payment result page points at. */
+    /** Opens the order (or product) a notification or the payment result page points at. */
     private fun handle(intent: Intent?) {
         intent ?: return
         val order = intent.data?.takeIf { it.scheme == "dejavu" }?.getQueryParameter("order")
@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
             ?: intent.getStringExtra(EXTRA_ORDER)
         val container = (application as DejavuApp).container
         container.requestOrder(order)
+        // New-product notification: open the product.
+        if (order.isNullOrBlank()) container.requestProduct(intent.getStringExtra(EXTRA_PRODUCT))
         // Top-up reviewed (approved or rejected): open the wallet.
         if (order.isNullOrBlank() && !intent.getStringExtra(EXTRA_TOP_UP).isNullOrBlank()) container.requestWallet()
     }
@@ -46,5 +48,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_ORDER = "order"
         const val EXTRA_TOP_UP = "topUp"
+        const val EXTRA_PRODUCT = "product"
     }
 }

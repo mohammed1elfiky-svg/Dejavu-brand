@@ -384,18 +384,23 @@ data class AdminProduct(
     val variants: List<AdminVariant> = emptyList(),
     /** Numeric product SKU (100…); variants are "<skuNumber>-<n>". */
     val skuNumber: Int? = null,
-    val brand: String? = null,
+    val brand: BrandRef? = null,
     val videoUrl: String? = null,
     val instagramUrl: String? = null,
     val visibility: ProductVisibility = ProductVisibility.ALL,
     /** Cost per piece in SAR, shared by all variants. */
     val costPrice: String = "0",
+    /** After a save with notifyCustomers: how many customers were notified (0 = not published, nothing sent). */
+    val notifiedCustomers: Int? = null,
 )
 
 @Serializable
 data class UpdateProductRequest(
     val status: ProductStatus? = null,
-    val brand: String? = null,
+    /** "" clears it. */
+    val brandId: String? = null,
+    /** Push a "new product" notification to customers (only sent when published). */
+    val notifyCustomers: Boolean? = null,
     /** "" clears it. */
     val videoUrl: String? = null,
     /** "" clears it. */
@@ -426,6 +431,40 @@ data class AdminCategory(
     /** This category and all below it, depth-first, with their depth (for an indented picker). */
     fun flatten(depth: Int = 0): List<Pair<AdminCategory, Int>> = listOf(this to depth) + children.flatMap { it.flatten(depth + 1) }
 }
+
+/** A product's brand as shown on the product. */
+@Serializable
+data class BrandRef(val id: String, val name: String, val slug: String, val logoUrl: String? = null)
+
+/** Brand from GET admin/brands. */
+@Serializable
+data class AdminBrand(
+    val id: String,
+    val name: String,
+    val slug: String,
+    val logoUrl: String? = null,
+    val sortOrder: Int = 0,
+    val isActive: Boolean = true,
+    val productCount: Int = 0,
+)
+
+/** Create or edit a brand; on edit, null leaves a field as is and logoUrl "" removes the logo. */
+@Serializable
+data class BrandRequest(
+    val name: String? = null,
+    val logoUrl: String? = null,
+    val sortOrder: Int? = null,
+    val isActive: Boolean? = null,
+)
+
+/** Typed by the admin to confirm wiping the test data. */
+const val WIPE_PHRASE = "حذف البيانات التجريبية"
+
+@Serializable
+data class WipeRequest(val confirm: String, val dryRun: Boolean = false)
+
+@Serializable
+data class WipeSummary(val dryRun: Boolean, val deleted: Map<String, Int> = emptyMap(), val keptUsers: List<String> = emptyList())
 
 @Serializable
 data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slug: String, val parentId: String? = null)
@@ -467,7 +506,8 @@ data class CreateProductRequest(
     val status: ProductStatus? = null,
     val isFeatured: Boolean? = null,
     val images: List<ImageRequest>? = null,
-    val brand: String? = null,
+    val brandId: String? = null,
+    val notifyCustomers: Boolean? = null,
     val videoUrl: String? = null,
     val instagramUrl: String? = null,
     val visibility: ProductVisibility? = null,

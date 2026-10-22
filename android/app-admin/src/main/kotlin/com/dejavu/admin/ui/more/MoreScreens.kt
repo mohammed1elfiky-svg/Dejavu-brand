@@ -37,7 +37,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Email
@@ -104,6 +106,7 @@ private val menu = listOf(
     MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ), SALES),
     MenuEntry(R.TOP_UPS, "طلبات شحن حسابات العملاء", "سندات الإيداع والموافقة أو الرفض", Icons.Filled.Email, listOf(Perm.WALLET_MANAGE), SALES),
     MenuEntry(R.PRODUCTS, "المنتجات", "الأسعار والنشر والمقاسات", Icons.Filled.Star, listOf(Perm.PRODUCTS_READ), STOCK),
+    MenuEntry(R.BRANDS, "الماركات", "إضافة الماركات وشعاراتها وتصفح منتجاتها", Icons.Filled.AccountBox, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.PURCHASING, "المشتريات", "أوامر الشراء والموردين", Icons.Filled.ShoppingCart, listOf(Perm.PURCHASES_READ), STOCK),
     MenuEntry(R.EXPENSES, "المصروفات", "تسجيل واعتماد وسداد المصروفات", Icons.AutoMirrored.Filled.List, listOf(Perm.EXPENSES_READ), FINANCE),
     MenuEntry(R.SETTLEMENTS, "توريدات الشحن", "تحصيل الدفع عند الاستلام من شركات الشحن", Icons.Filled.DateRange, listOf(Perm.PAYMENTS_READ), FINANCE),
@@ -144,6 +147,9 @@ fun MoreScreen(session: StaffSession.LoggedIn, navigate: (String) -> Unit) {
             }
             if (entries.none { it.section == SETTINGS }) {
                 item(key = "h:system", span = { GridItemSpan(maxLineSpan) }) { SectionTitle(SETTINGS) }
+            }
+            if (session.can(Perm.SETTINGS_MANAGE) && profile?.roles?.any { it.name == "admin" } == true) {
+                item(key = "wipe") { MenuTile("تصفير البيانات التجريبية", Icons.Filled.Delete, danger = true) { navigate(R.WIPE) } }
             }
             item(key = "server") { MenuTile("الخادم", Icons.Filled.Settings, caption = container.settings.baseUrl.substringAfter("://")) { navigate(R.SERVER) } }
             item(key = "logout") { MenuTile("تسجيل الخروج", Icons.AutoMirrored.Filled.ExitToApp, danger = true) { confirmLogout = true } }

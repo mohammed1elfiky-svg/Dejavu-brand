@@ -49,6 +49,7 @@ object Perm {
     const val PROMOTIONS_MANAGE = "promotions.manage"
     const val CUSTOMERS_WRITE = "customers.write"
     const val USERS_MANAGE = "users.manage"
+    const val CATEGORIES_WRITE = "categories.write"
 }
 
 // ----------------------------------------------------------------- session ---
@@ -181,8 +182,23 @@ class InventoryRepository(private val api: AdminApi) {
     suspend fun adjust(warehouseId: String, reason: AdjustmentReason, variantId: String, quantity: Int, note: String?) =
         apiCall { api.adjust(AdjustmentRequest(warehouseId, reason, listOf(AdjustmentRequest.Item(variantId, quantity)), note?.ifBlank { null })) }
 
-    suspend fun products(query: String? = null, page: Int = 1, categoryId: String? = null, pageSize: Int = 20) =
-        apiCall { api.products(query?.trim()?.ifBlank { null }, categoryId = categoryId, page = page, pageSize = pageSize) }
+    suspend fun products(query: String? = null, page: Int = 1, categoryId: String? = null, pageSize: Int = 20, brandId: String? = null) =
+        apiCall { api.products(query?.trim()?.ifBlank { null }, categoryId = categoryId, page = page, pageSize = pageSize, brandId = brandId) }
+
+    suspend fun brands() = apiCall { api.brands() }
+    suspend fun createBrand(name: String, logoUrl: String? = null) = apiCall { api.createBrand(BrandRequest(name = name.trim(), logoUrl = logoUrl)) }
+
+    /** [logoUrl] "" removes the logo, null keeps it. */
+    suspend fun updateBrand(id: String, name: String? = null, logoUrl: String? = null, isActive: Boolean? = null) =
+        apiCall { api.updateBrand(id, BrandRequest(name = name?.trim(), logoUrl = logoUrl, isActive = isActive)) }
+
+    suspend fun deleteBrand(id: String) = apiCall {
+        val res = api.deleteBrand(id)
+        if (!res.isSuccessful) throw HttpException(res)
+    }
+
+    /** Deletes all test data (admin only); [dryRun] only counts what would go. */
+    suspend fun wipeTestData(dryRun: Boolean) = apiCall { api.wipeTestData(WipeRequest(WIPE_PHRASE, dryRun)) }
     suspend fun product(id: String) = apiCall { api.product(id) }
     suspend fun updateProduct(id: String, request: UpdateProductRequest) = apiCall { api.updateProduct(id, request) }
 

@@ -69,6 +69,7 @@ interface AdminApi {
         @Query("categoryId") categoryId: String? = null,
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
+        @Query("brandId") brandId: String? = null,
     ): Page<AdminProduct>
     @GET("admin/products/{id}") suspend fun product(@Path("id") id: String): AdminProduct
     @PATCH("admin/products/{id}") suspend fun updateProduct(@Path("id") id: String, @Body body: UpdateProductRequest): AdminProduct
@@ -78,6 +79,11 @@ interface AdminApi {
     @PATCH("admin/variants/{id}") suspend fun updateVariant(@Path("id") id: String, @Body body: UpdateVariantRequest): AdminVariant
     @GET("admin/categories") suspend fun categories(): List<AdminCategory>
     @POST("admin/categories") suspend fun createCategory(@Body body: CreateCategoryRequest): AdminCategory
+    @GET("admin/brands") suspend fun brands(): List<AdminBrand>
+    @POST("admin/brands") suspend fun createBrand(@Body body: BrandRequest): AdminBrand
+    @PATCH("admin/brands/{id}") suspend fun updateBrand(@Path("id") id: String, @Body body: BrandRequest): AdminBrand
+    @DELETE("admin/brands/{id}") suspend fun deleteBrand(@Path("id") id: String): Response<Unit>
+    @POST("admin/system/wipe-test-data") suspend fun wipeTestData(@Body body: WipeRequest): WipeSummary
 
     // inventory
     @GET("admin/warehouses") suspend fun warehouses(): List<Warehouse>

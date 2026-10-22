@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ProductStatus } from '../generated/prisma/client';
+import { Prisma, ProductStatus, ProductVisibility } from '../generated/prisma/client';
 import { AdjustmentReason } from '../inventory/dto/inventory.dto';
 import { AuditService } from '../common/audit.service';
 import { paginated } from '../common/dto/pagination.dto';
@@ -211,7 +211,13 @@ export class CatalogService {
       // Variants are numbered 1..n inside the product; their SKU defaults to "<skuNumber>-<n>".
       const numbered = variants.map((v, i) => ({ ...v, variantNo: i + 1, sku: v.sku ?? `${skuNumber}-${i + 1}` }));
       const created = await tx.product.create({
-        data: { ...fields, skuNumber, taxRateId, variants: { create: numbered.map((v) => ({ ...variantData(v), variantNo: v.variantNo })) } },
+        data: {
+          ...fields,
+          nameEn: fields.nameEn ?? fields.nameAr,
+          slug: fields.slug ?? productSlug(fields.nameEn ?? fields.nameAr, skuNumber),
+          skuNumber,
+          taxRateId,
+          variants: { create: numbered.map((v) => ({ ...variantData(v), variantNo: v.variantNo })) } },
         include: { variants: true },
       });
       if (images?.length) {
@@ -341,6 +347,7 @@ export class CatalogService {
   }
 
   async storeProducts(q: StoreProductsQueryDto, customerId?: string) {
+    const buyer = await this.buyer(customerId);
     let categoryIds: string[] | undefined;
     if (q.category) {
       const cat = await this.prisma.category.findUnique({ where: { slug: q.category } });
@@ -349,6 +356,7 @@ export class CatalogService {
     }
     const where: Prisma.ProductWhereInput = {
       status: ProductStatus.ACTIVE,
+      visibility: { in: storeVisibility(buyer) },
       category: { isActive: true },
       categoryId: categoryIds ? { in: categoryIds } : undefined,
       isFeatured: q.featured || undefined,
@@ -362,7 +370,6 @@ export class CatalogService {
       this.prisma.product.count({ where }),
     ]);
     const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
-    const buyer = await this.buyer(customerId);
     return paginated(
       rows.map((r) => presentStoreProduct(r, promos, buyer)),
       total,
@@ -371,12 +378,13 @@ export class CatalogService {
   }
 
   async storeProduct(slug: string, customerId?: string) {
+    const buyer = await this.buyer(customerId);
     const row = await this.prisma.product.findFirst({
-      where: { slug, status: ProductStatus.ACTIVE, category: { isActive: true } },
+      where: { slug, status: ProductStatus.ACTIVE, visibility: { in: storeVisibility(buyer) }, category: { isActive: true } },
       select: storeProductSelect,
     });
     if (!row) throw new NotFoundException('Product not found');
-    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]), await this.buyer(customerId));
+    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]), buyer);
   }
 }
 
@@ -392,4 +400,21 @@ function variantData(dto: Partial<VariantDto> & { isActive?: boolean }) {
     lowStockThreshold: dto.lowStockThreshold,
     isActive: dto.isActive,
   } as Prisma.ProductVariantCreateWithoutProductInput;
+}
+
+/** What the customer app may show: everything public, plus merchant-only items for merchants. */
+export const storeVisibility = (buyer?: { isMerchant: boolean } | null): ProductVisibility[] =>
+  buyer?.isMerchant ? [ProductVisibility.ALL, ProductVisibility.MERCHANTS] : [ProductVisibility.ALL];
+
+const ARABIC: Record<string, string> = {
+  ا: 'a', أ: 'a', إ: 'e', آ: 'a', ب: 'b', ت: 't', ث: 'th', ج: 'j', ح: 'h', خ: 'kh', د: 'd', ذ: 'th', ر: 'r', ز: 'z',
+  س: 's', ش: 'sh', ص: 's', ض: 'd', ط: 't', ظ: 'z', ع: 'a', غ: 'gh', ف: 'f', ق: 'q', ك: 'k', ل: 'l', م: 'm', ن: 'n',
+  ه: 'h', ة: 'a', و: 'w', ؤ: 'o', ي: 'y', ى: 'a', ئ: 'e', ء: '',
+};
+
+/** URL name from the product name (Arabic transliterated) and its SKU number: "fstan-shra-100". */
+export function productSlug(name: string, skuNumber: number) {
+  const latin = [...name.toLowerCase()].map((c) => ARABIC[c] ?? c).join('');
+  const base = latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+  return base ? `${base}-${skuNumber}` : `p-${skuNumber}`;
 }

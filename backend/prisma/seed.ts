@@ -128,7 +128,7 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
   },
   cashier: {
     description: "Point of sale: sells at the till and sees only their own cash drawers",
-    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell"],
+    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell", "orders.read"],
   },
 };
 
@@ -288,9 +288,8 @@ async function main() {
     create: { code: "MAIN", name: "المخزن الرئيسي", isDefault: true },
   });
 
-  if (!(await prisma.taxRate.findFirst({ where: { name: "VAT 14%" } }))) {
-    await prisma.taxRate.create({ data: { name: "VAT 14%", rate: 14, isDefault: true, accountId: acc.get("2102")! } });
-  }
+  // No VAT: prices are final (tax rates stay in the schema but are not used).
+  void acc;
 
   const expenseCategories: [string, string][] = [
     ["الرواتب", "5201"], ["الإيجار", "5202"], ["المرافق", "5203"], ["التسويق", "5204"],

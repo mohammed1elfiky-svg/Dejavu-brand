@@ -218,3 +218,25 @@ export class SupplierPaymentsQueryDto extends PaginationQueryDto {
   @IsUUID()
   supplierId?: string;
 }
+
+export class QuickPurchaseDto extends PurchaseOrderDto {
+  @ApiPropertyOptional({ default: true, description: 'Receive all pieces into stock right away' })
+  @IsOptional()
+  @IsBoolean()
+  receiveNow?: boolean;
+
+  @ApiPropertyOptional({ enum: [PaymentMethod.CASH, PaymentMethod.BANK_TRANSFER], description: 'Pay the supplier now (omit to buy on account)' })
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  payMethod?: PaymentMethod;
+
+  @ApiPropertyOptional({ description: 'Amount paid now (SAR); the full invoice when omitted' })
+  @IsOptional()
+  @IsAmount()
+  payAmount?: string;
+
+  @ApiPropertyOptional({ description: 'Cash box / bank account paid from' })
+  @IsOptional()
+  @IsUUID()
+  payAccountId?: string;
+}

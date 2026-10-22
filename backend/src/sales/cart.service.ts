@@ -5,6 +5,7 @@ import { PrismaService, Tx } from '../prisma/prisma.service';
 import { AddCartItemDto } from './dto/sales.dto';
 import { priceOrder, PricingResult } from './pricing';
 import { activePromotions, buyerPrice } from '../catalog/promotions';
+import { storeVisibility } from '../catalog/catalog.service';
 import { getSetting } from './settings';
 
 const MAX_LINE_QTY = 20;
@@ -32,6 +33,7 @@ const cartInclude = {
               basePrice: true,
               wholesalePrice: true,
               status: true,
+              visibility: true,
               taxRate: { select: { rate: true, isActive: true } },
               images: { orderBy: { sortOrder: 'asc' }, select: { url: true, color: true } },
             },
@@ -80,9 +82,10 @@ export class CartService {
   async addItem(customerId: string, dto: AddCartItemDto) {
     const variant = await this.prisma.productVariant.findUnique({
       where: { id: dto.variantId },
-      select: { isActive: true, product: { select: { status: true } } },
+      select: { isActive: true, product: { select: { status: true, visibility: true } } },
     });
-    if (!variant || !variant.isActive || variant.product.status !== ProductStatus.ACTIVE) {
+    const buyer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true } });
+    if (!variant || !variant.isActive || variant.product.status !== ProductStatus.ACTIVE || !storeVisibility(buyer).includes(variant.product.visibility)) {
       throw new NotFoundException('Product is not available');
     }
     const cart = await this.ensureCart(customerId);
@@ -124,11 +127,12 @@ export class CartService {
     const items = cart?.items ?? [];
     const problems: string[] = [];
 
+    const visible = storeVisibility(await tx.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true } }));
     const lines: QuoteLine[] = items.map((item) => {
       const v = item.variant;
       const availableQty = v.stockLevels.reduce((n, s) => n + s.onHand - s.reserved, 0);
       let problem: string | undefined;
-      if (!v.isActive || v.product.status !== ProductStatus.ACTIVE) problem = 'No longer available';
+      if (!v.isActive || v.product.status !== ProductStatus.ACTIVE || !visible.includes(v.product.visibility)) problem = 'No longer available';
       else if (availableQty < item.quantity) {
         problem = availableQty > 0 ? `Only ${availableQty} left in stock` : 'Out of stock';
       }

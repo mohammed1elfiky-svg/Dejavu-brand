@@ -109,6 +109,14 @@ enum PaymentStatus {
   REFUNDED
 }
 
+/// Where a product can be sold.
+enum ProductVisibility {
+  ALL // till and customer app
+  POS_ONLY // till only
+  MERCHANTS // till, and the customer app for merchant customers only
+  HIDDEN // nowhere
+}
+
 enum OrderChannel {
   ONLINE // customer app
   POS // in-store cashier
@@ -464,32 +472,37 @@ model Category {
 }
 
 model Product {
-  id             String        @id @default(uuid()) @db.Uuid
-  categoryId     String        @map("category_id") @db.Uuid
-  nameAr         String        @map("name_ar")
-  nameEn         String        @map("name_en")
-  slug           String        @unique
-  descriptionAr  String?       @map("description_ar")
-  descriptionEn  String?       @map("description_en")
-  status         ProductStatus @default(DRAFT)
+  id             String            @id @default(uuid()) @db.Uuid
+  categoryId     String            @map("category_id") @db.Uuid
+  nameAr         String            @map("name_ar")
+  nameEn         String            @map("name_en")
+  slug           String            @unique
+  descriptionAr  String?           @map("description_ar")
+  descriptionEn  String?           @map("description_en")
+  status         ProductStatus     @default(DRAFT)
   /// Default selling price; variants may override.
-  basePrice      Decimal       @map("base_price") @db.Decimal(14, 2)
+  basePrice      Decimal           @map("base_price") @db.Decimal(14, 2)
   /// Strike-through price shown in the app.
-  compareAtPrice Decimal?      @map("compare_at_price") @db.Decimal(14, 2)
+  compareAtPrice Decimal?          @map("compare_at_price") @db.Decimal(14, 2)
   /// Price for merchant (wholesale) customers.
-  wholesalePrice Decimal?      @map("wholesale_price") @db.Decimal(14, 2)
-  taxRateId      String?       @map("tax_rate_id") @db.Uuid
-  isFeatured     Boolean       @default(false) @map("is_featured")
-  ratingAvg      Decimal       @default(0) @map("rating_avg") @db.Decimal(3, 2)
-  ratingCount    Int           @default(0) @map("rating_count")
+  wholesalePrice Decimal?          @map("wholesale_price") @db.Decimal(14, 2)
+  brand          String?
+  /// Uploaded product video (stored file URL).
+  videoUrl       String?           @map("video_url")
+  instagramUrl   String?           @map("instagram_url")
+  visibility     ProductVisibility @default(ALL)
+  taxRateId      String?           @map("tax_rate_id") @db.Uuid
+  isFeatured     Boolean           @default(false) @map("is_featured")
+  ratingAvg      Decimal           @default(0) @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount    Int               @default(0) @map("rating_count")
   /// Numeric base SKU (100..100000); variants are "<skuNumber>-<variantNo>".
-  skuNumber      Int?          @unique @map("sku_number")
+  skuNumber      Int?              @unique @map("sku_number")
   /// Cost per piece in SAR, shared by all variants (opening stock and COGS fallback).
-  costPrice      Decimal       @default(0) @map("cost_price") @db.Decimal(14, 4)
+  costPrice      Decimal           @default(0) @map("cost_price") @db.Decimal(14, 4)
   /// Position on the cashier screen (lower first).
-  posSortOrder   Int           @default(0) @map("pos_sort_order")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  posSortOrder   Int               @default(0) @map("pos_sort_order")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
 
   category   Category           @relation(fields: [categoryId], references: [id])
   taxRate    TaxRate?           @relation(fields: [taxRateId], references: [id])

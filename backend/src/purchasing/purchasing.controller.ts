@@ -5,6 +5,7 @@ import {
   CreateSupplierDto,
   PurchaseOrderDto,
   PurchaseOrdersQueryDto,
+  QuickPurchaseDto,
   ReceivePurchaseDto,
   StatementQueryDto,
   SupplierPaymentDto,
@@ -67,6 +68,13 @@ export class PurchasingController {
   @Post('purchase-orders')
   createOrder(@Body() dto: PurchaseOrderDto, @CurrentUser() u: AuthPrincipal) {
     return this.purchasing.createOrder(dto, u.id);
+  }
+
+  /** Buy and receive in one go (the till-style purchase screen). */
+  @RequirePermissions('purchases.write', 'purchases.receive')
+  @Post('purchase-orders/quick')
+  quick(@Body() dto: QuickPurchaseDto, @CurrentUser() u: AuthPrincipal) {
+    return this.purchasing.quickPurchase(dto, u.id);
   }
 
   @RequirePermissions('purchases.write')

@@ -2,7 +2,9 @@ import { BadRequestException, Injectable, NotFoundException, PayloadTooLargeExce
 import { PrismaService } from '../prisma/prisma.service';
 
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 30 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/3gpp', 'video/quicktime'];
 
 /** What multer hands over for one uploaded part. */
 export interface UploadedPart {
@@ -28,6 +30,17 @@ export class FilesService {
       select: { id: true, mimeType: true, size: true, createdAt: true },
     });
     return row;
+  }
+
+  /** A short product video (public), kept small enough for the database. */
+  async saveVideo(file: UploadedPart | undefined, userId: string) {
+    if (!file) throw new BadRequestException('Attach the video as the "file" field');
+    if (!VIDEO_TYPES.includes(file.mimetype)) throw new BadRequestException('Only MP4, WebM, 3GP or MOV videos are accepted');
+    if (file.size > MAX_VIDEO_BYTES) throw new PayloadTooLargeException('Videos must be 30 MB or smaller');
+    return this.prisma.storedFile.create({
+      data: { mimeType: file.mimetype, size: file.size, data: new Uint8Array(file.buffer), isPublic: true, userId },
+      select: { id: true, mimeType: true, size: true, createdAt: true },
+    });
   }
 
   /** The file if [canSee] allows it; private files are invisible (404) otherwise. */

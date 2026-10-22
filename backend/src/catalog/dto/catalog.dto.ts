@@ -20,7 +20,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { ProductStatus } from '../../generated/prisma/client';
+import { ProductStatus, ProductVisibility } from '../../generated/prisma/client';
 import { IsAmount, SLUG_REGEX } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
@@ -188,15 +188,42 @@ export class CreateProductDto {
   @MaxLength(200)
   nameAr: string;
 
-  @ApiProperty({ example: 'Evening Dress' })
+  @ApiPropertyOptional({ example: 'Evening Dress', description: 'Defaults to the Arabic name' })
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(200)
-  nameEn: string;
+  nameEn?: string;
 
-  @ApiProperty({ example: 'evening-dress' })
+  @ApiPropertyOptional({ example: 'evening-dress-100', description: 'Generated from the name and SKU number when left out' })
+  @IsOptional()
   @Matches(SLUG_REGEX, { message: 'slug must be lowercase-kebab-case' })
-  slug: string;
+  slug?: string;
+
+  @ApiPropertyOptional({ example: 'Zara' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  brand?: string;
+
+  @ApiPropertyOptional({ description: 'Uploaded product video URL (POST admin/files/video)' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsUrl({ require_tld: false })
+  videoUrl?: string | null;
+
+  @ApiPropertyOptional({ example: 'https://www.instagram.com/p/XXXX/' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsUrl()
+  instagramUrl?: string | null;
+
+  @ApiPropertyOptional({ enum: ProductVisibility, default: ProductVisibility.ALL, description: 'ALL, POS_ONLY, MERCHANTS (till + merchant customers), HIDDEN' })
+  @IsOptional()
+  @IsEnum(ProductVisibility)
+  visibility?: ProductVisibility;
 
   @ApiPropertyOptional()
   @IsOptional()

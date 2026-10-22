@@ -4,15 +4,32 @@ import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public, RequirePermissions, StaffOnly } from '../common/decorators/auth.decorators';
 import { requestBaseUrl } from '../common/utils/request-url';
-import { fileUrl, FilesService, MAX_FILE_BYTES, UploadedPart } from './files.service';
+import { fileUrl, FilesService, MAX_FILE_BYTES, MAX_VIDEO_BYTES, UploadedPart } from './files.service';
 
 const upload = FileInterceptor('file', { limits: { fileSize: MAX_FILE_BYTES + 1 } });
+const uploadVideo = FileInterceptor('file', { limits: { fileSize: MAX_VIDEO_BYTES + 1 } });
 const uploadDoc = { schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } };
 
-function send(res: Response, file: { mimeType: string; data: Uint8Array }, cache: string) {
+/** Sends a stored file, honouring a byte Range so video players can seek. */
+function send(res: Response, file: { mimeType: string; data: Uint8Array }, cache: string, range?: string) {
+  const buf = Buffer.from(file.data);
   res.setHeader('Content-Type', file.mimeType);
   res.setHeader('Cache-Control', cache);
-  res.end(Buffer.from(file.data));
+  res.setHeader('Accept-Ranges', 'bytes');
+  const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range) : null;
+  if (m && (m[1] || m[2])) {
+    const start = m[1] ? Number(m[1]) : Math.max(0, buf.length - Number(m[2]));
+    const end = m[1] && m[2] ? Math.min(Number(m[2]), buf.length - 1) : buf.length - 1;
+    if (start >= buf.length || start > end) {
+      res.status(416).setHeader('Content-Range', `bytes */${buf.length}`);
+      res.end();
+      return;
+    }
+    res.status(206).setHeader('Content-Range', `bytes ${start}-${end}/${buf.length}`);
+    res.end(buf.subarray(start, end + 1));
+    return;
+  }
+  res.end(buf);
 }
 
 @ApiTags('Files')
@@ -31,6 +48,17 @@ export class FilesController {
     return { ...saved, url: fileUrl(requestBaseUrl(req), saved.id) };
   }
 
+  /** Product video upload (public), up to 30 MB. */
+  @RequirePermissions('products.write')
+  @Post('admin/files/video')
+  @UseInterceptors(uploadVideo)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody(uploadDoc)
+  async videoUpload(@UploadedFile() file: UploadedPart, @CurrentUser() u: AuthPrincipal, @Req() req: Request) {
+    const saved = await this.files.saveVideo(file, u.id);
+    return { ...saved, url: fileUrl(requestBaseUrl(req), saved.id) };
+  }
+
   /** Deposit receipt photo from the customer app (private to the customer and staff). */
   @CustomerOnly()
   @Post('store/me/files')
@@ -44,8 +72,8 @@ export class FilesController {
 
   @Public()
   @Get('files/:id')
-  async publicFile(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
-    send(res, await this.files.load(id, (f) => f.isPublic), 'public, max-age=31536000, immutable');
+  async publicFile(@Param('id', ParseUUIDPipe) id: string, @Req() req: Request, @Res() res: Response) {
+    send(res, await this.files.load(id, (f) => f.isPublic), 'public, max-age=31536000, immutable', req.headers.range);
   }
 
   @StaffOnly()

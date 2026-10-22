@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountType, NormalBalance, Prisma } from '../generated/prisma/client';
 import { businessDate, parseDateOnly } from '../common/utils/dates';
-import { Decimal, dec, money, sum } from '../common/utils/money';
+import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { PrismaService } from '../prisma/prisma.service';
 import { AsOfQueryDto, PeriodQueryDto, SalesReportQueryDto } from './dto/reports.dto';
 
@@ -230,26 +230,70 @@ export class ReportsService {
 
   // ---------------------------------------------------- inventory valuation ---
 
+  /**
+   * Stock on hand at cost (average purchase cost in SAR, the product cost for pieces not
+   * yet valued) and at selling price, per category and overall.
+   */
   async inventoryValuation() {
     const rows = await this.prisma.$queryRaw<
-      { variant_id: string; sku: string; name_ar: string; on_hand: number; avg_cost: string; value: string }[]
+      {
+        variant_id: string; sku: string; name_ar: string; category_id: string; category: string;
+        on_hand: number; avg_cost: string; value: string; sale_value: string;
+      }[]
     >`
-      SELECT v.id AS variant_id, v.sku, p.name_ar, COALESCE(SUM(s.on_hand), 0)::int AS on_hand,
-             v.avg_cost::text, ROUND(COALESCE(SUM(s.on_hand), 0) * v.avg_cost, 2)::text AS value
+      SELECT v.id AS variant_id, v.sku, p.name_ar, c.id AS category_id, c.name_ar AS category,
+             COALESCE(SUM(s.on_hand), 0)::int AS on_hand,
+             (CASE WHEN v.avg_cost > 0 THEN v.avg_cost ELSE p.cost_price END)::text AS avg_cost,
+             ROUND(COALESCE(SUM(s.on_hand), 0) * (CASE WHEN v.avg_cost > 0 THEN v.avg_cost ELSE p.cost_price END), 2)::text AS value,
+             ROUND(COALESCE(SUM(s.on_hand), 0) * COALESCE(v.price, p.base_price), 2)::text AS sale_value
       FROM product_variants v
       JOIN products p ON p.id = v.product_id
+      JOIN categories c ON c.id = p.category_id
       LEFT JOIN stock_levels s ON s.variant_id = v.id
-      GROUP BY v.id, p.name_ar
+      GROUP BY v.id, p.id, c.id
       HAVING COALESCE(SUM(s.on_hand), 0) <> 0
-      ORDER BY 6 DESC`;
+      ORDER BY 8 DESC`;
     const stockValue = money(sum(rows.map((r) => r.value)));
+    const saleValue = money(sum(rows.map((r) => r.sale_value)));
     const gl = await this.prisma.journalLine.aggregate({
       where: { account: { systemKey: 'INVENTORY' }, journalEntry: { status: { in: ['POSTED', 'REVERSED'] } } },
       _sum: { debit: true, credit: true },
     });
     const ledgerValue = money(dec(gl._sum.debit).sub(dec(gl._sum.credit)));
+
+    const byCategory = new Map<string, { categoryId: string; nameAr: string; products: Set<string>; pieces: number; costValue: Decimal; saleValue: Decimal }>();
+    for (const r of rows) {
+      const c = byCategory.get(r.category_id) ?? { categoryId: r.category_id, nameAr: r.category, products: new Set(), pieces: 0, costValue: ZERO, saleValue: ZERO };
+      c.products.add(r.name_ar);
+      c.pieces += r.on_hand;
+      c.costValue = c.costValue.add(r.value);
+      c.saleValue = c.saleValue.add(r.sale_value);
+      byCategory.set(r.category_id, c);
+    }
+    const categories = [...byCategory.values()]
+      .map((c) => ({
+        categoryId: c.categoryId,
+        nameAr: c.nameAr,
+        products: c.products.size,
+        pieces: c.pieces,
+        costValue: money(c.costValue),
+        saleValue: money(c.saleValue),
+        expectedProfit: money(c.saleValue.sub(c.costValue)),
+      }))
+      .sort((a, b) => b.costValue.cmp(a.costValue));
     return {
-      items: rows.map((r) => ({ variantId: r.variant_id, sku: r.sku, nameAr: r.name_ar, onHand: r.on_hand, avgCost: dec(r.avg_cost), value: money(r.value) })),
+      categories,
+      totals: {
+        products: new Set(rows.map((r) => r.name_ar)).size,
+        pieces: rows.reduce((n, r) => n + r.on_hand, 0),
+        costValue: stockValue,
+        saleValue,
+        expectedProfit: money(saleValue.sub(stockValue)),
+      },
+      items: rows.map((r) => ({
+        variantId: r.variant_id, sku: r.sku, nameAr: r.name_ar, category: r.category, onHand: r.on_hand,
+        avgCost: dec(r.avg_cost), value: money(r.value), saleValue: money(r.sale_value),
+      })),
       stockValue,
       ledgerValue,
       // Small differences come from rounding average cost to 4 decimals.

@@ -13,6 +13,7 @@ import {
   CreateSupplierDto,
   PurchaseOrderDto,
   PurchaseOrdersQueryDto,
+  QuickPurchaseDto,
   ReceivePurchaseDto,
   StatementQueryDto,
   SupplierPaymentDto,
@@ -22,7 +23,7 @@ import {
 } from './dto/purchasing.dto';
 import { landedUnitCost, purchaseTotals, receivedValue } from './purchase-math';
 
-const DEFAULT_TAX_RATE = 14;
+const DEFAULT_TAX_RATE = 0; // No VAT on purchases unless a line says otherwise.
 
 const PAY_FROM: Partial<Record<PaymentMethod, SystemAccount>> = {
   CASH: 'CASH',
@@ -207,6 +208,28 @@ export class PurchasingService {
    * Receives goods: stock in at landed cost, and
    *   Dr Inventory (goods + shipping share) + Dr VAT input  —  Cr Accounts payable
    */
+  /**
+   * The till-style purchase screen: creates the purchase invoice, places it, receives
+   * everything into stock and (optionally) pays the supplier, in one call.
+   */
+  async quickPurchase(dto: QuickPurchaseDto, userId: string) {
+    const { receiveNow, payMethod, payAmount, payAccountId, ...order } = dto;
+    const po = await this.createOrder(order, userId);
+    await this.placeOrder(po.id, userId);
+    if (receiveNow !== false) {
+      const items = await this.prisma.purchaseOrderItem.findMany({ where: { purchaseOrderId: po.id }, select: { id: true, quantity: true } });
+      await this.receive(po.id, { items: items.map((i) => ({ itemId: i.id, quantity: i.quantity })), note: 'Received on purchase' }, userId);
+    }
+    if (payMethod) {
+      const fresh = await this.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, select: { grandTotal: true } });
+      await this.paySupplier(
+        { supplierId: dto.supplierId, purchaseOrderId: po.id, method: payMethod, amount: payAmount ?? fresh.grandTotal.toString(), accountId: payAccountId },
+        userId,
+      );
+    }
+    return this.getOrder(po.id);
+  }
+
   async receive(id: string, dto: ReceivePurchaseDto, userId: string) {
     if (new Set(dto.items.map((i) => i.itemId)).size !== dto.items.length) {
       throw new BadRequestException('Each line may appear only once');

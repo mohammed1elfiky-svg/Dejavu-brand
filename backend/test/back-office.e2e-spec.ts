@@ -52,8 +52,8 @@ describe('Back office: purchasing, expenses, returns, settlements, reports (e2e)
             supplierInvoiceNo: 'INV-77',
             shippingCost: 100,
             items: [
-              { variantId: shirtS, quantity: 10, unitCost: 200 },
-              { variantId: shirtM, quantity: 10, unitCost: 300 },
+              { variantId: shirtS, quantity: 10, unitCost: 200, taxRate: 14 },
+              { variantId: shirtM, quantity: 10, unitCost: 300, taxRate: 14 },
             ],
           },
           admin,
@@ -125,7 +125,7 @@ describe('Back office: purchasing, expenses, returns, settlements, reports (e2e)
       expect(await ledgerBalances(prisma, [po.body.id])).toEqual({ INVENTORY: 300, AP: -300 });
 
       const other = await http
-        .post('/admin/purchase-orders', { supplierId, items: [{ variantId: shirtS, quantity: 1, unitCost: 50 }] }, admin)
+        .post('/admin/purchase-orders', { supplierId, items: [{ variantId: shirtS, quantity: 1, unitCost: 50, taxRate: 14 }] }, admin)
         .expect(201);
       const cancelled = await http.post(`/admin/purchase-orders/${other.body.id}/cancel`, {}, admin).expect(200);
       expect(cancelled.body.status).toBe('CANCELLED');

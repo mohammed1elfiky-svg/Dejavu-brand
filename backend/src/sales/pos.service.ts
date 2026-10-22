@@ -7,6 +7,7 @@ import {
   PaymentStatus,
   Prisma,
   ProductStatus,
+  ProductVisibility,
   StockMovementType,
   TransactionStatus,
 } from '../generated/prisma/client';
@@ -91,6 +92,7 @@ export class PosService {
     const rows = await this.prisma.product.findMany({
       where: {
         status: ProductStatus.ACTIVE,
+        visibility: { not: ProductVisibility.HIDDEN },
         categoryId: q.categoryId,
         ...(contains && {
           OR: [
@@ -112,13 +114,13 @@ export class PosService {
   async lookup(code: string) {
     const term = code.trim();
     const variant = await this.prisma.productVariant.findFirst({
-      where: { isActive: true, product: { status: ProductStatus.ACTIVE }, OR: [{ sku: { equals: term, mode: 'insensitive' } }, { barcode: term }] },
+      where: { isActive: true, product: { status: ProductStatus.ACTIVE, visibility: { not: ProductVisibility.HIDDEN } }, OR: [{ sku: { equals: term, mode: 'insensitive' } }, { barcode: term }] },
       select: { id: true, productId: true },
     });
     const productId =
       variant?.productId ??
       (/^\d{3,6}$/.test(term)
-        ? (await this.prisma.product.findFirst({ where: { skuNumber: Number(term), status: ProductStatus.ACTIVE }, select: { id: true } }))?.id
+        ? (await this.prisma.product.findFirst({ where: { skuNumber: Number(term), status: ProductStatus.ACTIVE, visibility: { not: ProductVisibility.HIDDEN } }, select: { id: true } }))?.id
         : undefined);
     if (!productId) throw new NotFoundException(`No product matches ${term}`);
     const row = await this.prisma.product.findUniqueOrThrow({ where: { id: productId }, select: posProductSelect });
@@ -159,12 +161,12 @@ export class PosService {
       const variants = await tx.productVariant.findMany({
         where: { id: { in: [...quantities.keys()] } },
         include: {
-          product: { select: { id: true, nameAr: true, basePrice: true, wholesalePrice: true, status: true, taxRate: { select: { rate: true, isActive: true } } } },
+          product: { select: { id: true, nameAr: true, basePrice: true, wholesalePrice: true, status: true, visibility: true, taxRate: { select: { rate: true, isActive: true } } } },
         },
         orderBy: { id: 'asc' },
       });
       if (variants.length !== quantities.size) throw new NotFoundException('Some items were not found');
-      const inactive = variants.find((v) => !v.isActive || v.product.status !== ProductStatus.ACTIVE);
+      const inactive = variants.find((v) => !v.isActive || v.product.status !== ProductStatus.ACTIVE || v.product.visibility === ProductVisibility.HIDDEN);
       if (inactive) throw new UnprocessableEntityException(`${inactive.sku} is not for sale`);
       const promos = await activePromotions(tx, variants.map((v) => v.product.id));
       // Merchants pay wholesale prices less their own discount.

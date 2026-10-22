@@ -144,8 +144,82 @@ export class PurchaseOrderDto {
   @ApiProperty({ type: [PurchaseItemDto] })
   @ValidateNested({ each: true })
   @Type(() => PurchaseItemDto)
-  @ArrayMinSize(1)
   items: PurchaseItemDto[];
+
+  @ApiPropertyOptional({ type: () => [LocalNewProductDto], description: 'Items not in the app yet: created with their SKU and barcode now, on sale once received' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => LocalNewProductDto)
+  newProducts?: LocalNewProductDto[];
+}
+
+export class LocalNewVariantDto {
+  @ApiPropertyOptional({ example: 'M' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  size?: string;
+
+  @ApiPropertyOptional({ example: 'أسود' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  color?: string;
+
+  @ApiPropertyOptional({ example: '#000000' })
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  colorHex?: string;
+
+  @ApiPropertyOptional({ description: "Manufacturer's barcode, if the piece has one" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  barcode?: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  @Max(100000)
+  quantity: number;
+}
+
+/** A product bought for the first time (not in the app yet). */
+export class LocalNewProductDto {
+  @ApiProperty()
+  @IsUUID()
+  categoryId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  brandId?: string;
+
+  @ApiProperty({ example: 'بلوزة قطن' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(200)
+  nameAr: string;
+
+  @ApiProperty({ example: '120', description: 'Selling price, SAR' })
+  @IsAmount()
+  basePrice: string;
+
+  @ApiProperty({ example: '55', description: 'Purchase price per piece, SAR' })
+  @IsAmount()
+  unitCost: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @ApiProperty({ type: [LocalNewVariantDto] })
+  @ValidateNested({ each: true })
+  @Type(() => LocalNewVariantDto)
+  @ArrayMinSize(1)
+  variants: LocalNewVariantDto[];
 }
 
 export class ReceiveItemDto {

@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { PaymentMethod, Prisma, PurchaseOrder, PurchaseOrderStatus, StockMovementType } from '../generated/prisma/client';
+import { PaymentMethod, Prisma, ProductStatus, PurchaseOrder, PurchaseOrderStatus, StockMovementType } from '../generated/prisma/client';
 import { AccountingService } from '../accounting/accounting.service';
 import { LedgerService, SystemAccount } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
+import { CatalogService } from '../catalog/catalog.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { parseDateOnly } from '../common/utils/dates';
@@ -61,6 +62,7 @@ export class PurchasingService {
     private readonly accounting: AccountingService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly catalog: CatalogService,
   ) {}
 
   // ------------------------------------------------------------ suppliers ---
@@ -158,7 +160,11 @@ export class PurchasingService {
   }
 
   async createOrder(dto: PurchaseOrderDto, userId: string) {
-    const prepared = await this.prepare(dto);
+    const fresh = await this.draftProducts(dto, userId);
+    if (!dto.items.length && !fresh.length) throw new BadRequestException('Add at least one item');
+    const prepared = await this.prepare({ ...dto, items: [...dto.items, ...fresh] });
+    const created = new Set(fresh.map((f) => f.variantId));
+    prepared.items = prepared.items.map((i) => ({ ...i, createdProduct: created.has(i.variantId) }));
     const id = await this.prisma.$transaction(async (tx) => {
       const po = await tx.purchaseOrder.create({
         data: {
@@ -175,6 +181,8 @@ export class PurchasingService {
   }
 
   async updateOrder(id: string, dto: PurchaseOrderDto, userId: string) {
+    if (dto.newProducts?.length) throw new BadRequestException('Add new products when creating the order');
+    if (!dto.items.length) throw new BadRequestException('Add at least one item');
     const prepared = await this.prepare(dto);
     await this.prisma.$transaction(async (tx) => {
       const po = await this.lock(tx, id);
@@ -283,6 +291,14 @@ export class PurchasingService {
           userId,
         });
         await tx.purchaseOrderItem.update({ where: { id: item.id }, data: { receivedQty: { increment: qty } } });
+        if (item.createdProduct) {
+          // Bought for the first time: on sale now, at what it cost.
+          const v = await tx.productVariant.findUniqueOrThrow({ where: { id: item.variantId }, select: { productId: true } });
+          await tx.product.updateMany({
+            where: { id: v.productId, status: ProductStatus.DRAFT },
+            data: { status: ProductStatus.ACTIVE, costPrice: landedUnitCost(item.unitCost, po.subtotal, po.shippingCost) },
+          });
+        }
       }
 
       const inventory = next.inventory.sub(prev.inventory);
@@ -408,6 +424,31 @@ export class PurchasingService {
   }
 
   // -------------------------------------------------------------- helpers ---
+
+  /**
+   * Items bought for the first time become draft products right away (SKU number, variant
+   * SKUs and barcodes assigned now, so labels can be printed); they go on sale once received.
+   */
+  private async draftProducts(dto: PurchaseOrderDto, userId: string) {
+    const lines: { variantId: string; quantity: number; unitCost: string }[] = [];
+    for (const p of dto.newProducts ?? []) {
+      const product = await this.catalog.createProduct(
+        {
+          categoryId: p.categoryId,
+          brandId: p.brandId,
+          nameAr: p.nameAr,
+          basePrice: p.basePrice,
+          costPrice: p.unitCost,
+          status: ProductStatus.DRAFT,
+          images: p.imageUrl ? [{ url: p.imageUrl }] : undefined,
+          variants: p.variants.map((v) => ({ size: v.size, color: v.color, colorHex: v.colorHex, barcode: v.barcode })),
+        },
+        userId,
+      );
+      p.variants.forEach((v, i) => lines.push({ variantId: product.variants[i].id, quantity: v.quantity, unitCost: p.unitCost }));
+    }
+    return lines;
+  }
 
   private async prepare(dto: PurchaseOrderDto) {
     const supplier = await this.prisma.supplier.findUnique({ where: { id: dto.supplierId } });

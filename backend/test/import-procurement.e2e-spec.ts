@@ -107,6 +107,29 @@ describe('Import procurement (e2e)', () => {
     await http.post(`/admin/purchase-orders/${po.id}/import-receive`, counted, admin).expect(422);
   });
 
+  it('buys products that are not in the app yet: numbered now, on sale once received', async () => {
+    const supplier = (await http.post('/admin/suppliers', { name: `مورد محلي ${run}` }, admin).expect(201)).body;
+    const newProduct = { categoryId, nameAr: `بلوزة جديدة ${run}`, basePrice: '120', unitCost: '50', variants: [{ size: 'S', quantity: 4, barcode: `69${run}` }, { size: 'M', quantity: 6 }] };
+    const later = (await http.post('/admin/purchase-orders', { supplierId: supplier.id, items: [], newProducts: [newProduct] }, admin).expect(201)).body;
+    const item = later.items[0];
+    expect(item.createdProduct).toBe(true);
+    const draft = (await http.get(`/admin/products/${item.variant.product.id}`, admin).expect(200)).body;
+    expect(draft.status).toBe('DRAFT');
+    expect(draft.skuNumber).toBeGreaterThanOrEqual(100);
+    expect(draft.variants.map((v: { sku: string }) => v.sku).sort()).toEqual([`${draft.skuNumber}-1`, `${draft.skuNumber}-2`]);
+    expect(draft.variants.find((v: { size: string }) => v.size === 'S').barcode).toBe(`69${run}`);
+    await http.post(`/admin/purchase-orders/${later.id}/place`, {}, admin).expect(200);
+    await http.post(`/admin/purchase-orders/${later.id}/receive`, { items: later.items.map((i: { id: string; quantity: number }) => ({ itemId: i.id, quantity: i.quantity })) }, admin).expect(200);
+    expect((await http.get(`/admin/products/${draft.id}`, admin).expect(200)).body.status).toBe('ACTIVE');
+
+    // The till-style purchase receives right away.
+    const quick = (await http.post('/admin/purchase-orders/quick', { supplierId: supplier.id, items: [], newProducts: [{ ...newProduct, nameAr: `قميص فوري ${run}`, variants: [{ quantity: 3 }] }] }, admin).expect(201)).body;
+    const p = (await http.get(`/admin/products/${quick.items[0].variant.product.id}`, admin).expect(200)).body;
+    expect(p.status).toBe('ACTIVE');
+    expect(p.variants[0].stockLevels[0].onHand).toBe(3);
+    await http.post('/admin/purchase-orders', { supplierId: supplier.id, items: [] }, admin).expect(400);
+  });
+
   it('takes the commission from the supplier and the USD rate from the settings', async () => {
     const supplier = (await http.post('/admin/suppliers', { name: `وكيل ${run}`, commissionPercent: 3 }, admin).expect(201)).body;
     const p = (await http.post('/admin/products', { categoryId, nameAr: `حقيبة ${run}`, basePrice: '60', variants: [{}] }, admin).expect(201)).body;

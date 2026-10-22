@@ -20,7 +20,7 @@ import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
-import { PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
+import { PosFreeReturnDto, PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
 import { ReturnsService } from './returns.service';
 import { priceOrder, revenueSplit } from './pricing';
 import { getSetting } from './settings';
@@ -471,6 +471,107 @@ export class PosService {
       refunded: result.refunded,
       /** For an exchange: returned value not used by the new items (in the sale's currency). */
       leftover: result.leftover,
+    };
+  }
+
+  /**
+   * Return or exchange without the invoice: the pieces are picked by hand and valued at
+   * their shelf price (or the price typed). Their value is credited to the customer
+   * (Dr sales returns), restocked pieces go back at their average cost (Dr inventory /
+   * Cr COGS), then the value pays for new pieces, is handed back as cash, or stays as credit.
+   */
+  async returnWithoutInvoice(dto: PosFreeReturnDto, cashierId: string) {
+    await this.treasury.ensureCashierBoxes(cashierId);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const walkInId = await this.walkInId(tx);
+      const customerId = dto.customerId ?? walkInId;
+      if (dto.customerId && !(await tx.customer.findUnique({ where: { id: dto.customerId }, select: { id: true } }))) {
+        throw new NotFoundException('Customer not found');
+      }
+      if (dto.refundTo === 'ACCOUNT' && customerId === walkInId) throw new BadRequestException('Pick a named customer to keep the refund as credit');
+      const cur = await this.currencies.requireActive(dto.currency ?? BASE_CURRENCY, tx);
+      const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true } });
+      if (!warehouse) throw new UnprocessableEntityException('No default warehouse is configured');
+
+      const variants = await tx.productVariant.findMany({
+        where: { id: { in: [...new Set(dto.items.map((i) => i.variantId))] } },
+        include: { product: { select: { nameAr: true, basePrice: true, costPrice: true } } },
+      });
+      if (variants.length !== new Set(dto.items.map((i) => i.variantId)).size) throw new NotFoundException('Some items were not found');
+      const lines = dto.items.map((i) => {
+        const v = variants.find((x) => x.id === i.variantId)!;
+        const unit = i.unitPrice != null ? inCurrency(i.unitPrice, cur.code) : toCurrency(v.price ?? v.product.basePrice, cur.code, cur.rate);
+        return { ...i, variant: v, value: inCurrency(unit.mul(i.quantity), cur.code) };
+      });
+      const value = inCurrency(lines.reduce((t, l) => t.add(l.value), dec(0)), cur.code);
+      if (!value.gt(0)) throw new BadRequestException('The returned pieces have no value');
+      const valueSar = toBase(value, cur.code, cur.rate);
+      const number = await this.sequences.next(tx, 'RTN');
+
+      // Restocked pieces return to the shelf at their average cost.
+      let restocked = dec(0);
+      for (const l of [...lines].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
+        if (l.restock === false) continue;
+        const cost = dec(l.variant.avgCost).gt(0) ? dec(l.variant.avgCost) : dec(l.variant.product.costPrice);
+        const res = await this.stock.stockIn(tx, {
+          type: StockMovementType.SALES_RETURN,
+          variantId: l.variantId,
+          warehouseId: warehouse.id,
+          quantity: l.quantity,
+          unitCost: cost,
+          sourceType: 'SALES_RETURN',
+          note: `${number} (return without invoice)`,
+          userId: cashierId,
+        });
+        restocked = restocked.add(res.value);
+      }
+      await this.ledger.post(tx, {
+        description: `Return without invoice ${number}${dto.reason ? `: ${dto.reason}` : ''}`,
+        sourceType: 'SALES_RETURN',
+        userId: cashierId,
+        lines: [
+          { account: 'SALES_RETURNS', debit: valueSar },
+          ...(await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId, currency: cur.code, amount: value.neg(), sar: valueSar.neg() })),
+          { account: 'INVENTORY', debit: money(restocked) },
+          { account: 'COGS', credit: money(restocked) },
+        ],
+      });
+
+      let saleId: string | null = null;
+      let leftover = value;
+      if (dto.newItems?.length) {
+        saleId = await this.sellIn(
+          tx,
+          {
+            items: dto.newItems,
+            currency: cur.code,
+            saleType: 'CASH',
+            customerId,
+            payments: dto.payments,
+            paymentMethod: dto.paymentMethod,
+            reference: dto.reference,
+            changeCurrency: dto.changeCurrency,
+            note: `Exchange for ${number}`,
+            fromAccountMax: value,
+          },
+          cashierId,
+        );
+        const used = await tx.payment.aggregate({ where: { orderId: saleId, method: PaymentMethod.CUSTOMER_ACCOUNT }, _sum: { currencyAmount: true } });
+        leftover = value.sub(dec(used._sum.currencyAmount));
+      }
+      if (leftover.gt(0) && dto.refundTo !== 'ACCOUNT') {
+        await this.payOutCredit(tx, customerId, cur.code, leftover, dto.refundCurrency ?? cur.code, cashierId, number);
+      }
+      await this.audit.log({ userId: cashierId, action: 'CREATE', entityType: 'PosFreeReturn', entityId: customerId, after: { number, ...dto } }, tx);
+      return { number, value, valueSar, saleId, leftover };
+    });
+    return {
+      number: result.number,
+      refunded: { amount: result.valueSar, currencyAmount: result.value },
+      sale: result.saleId ? await this.receipt(result.saleId) : null,
+      leftover: result.leftover,
+      /** Credit kept on the customer's account. */
+      keptAsCredit: dto.refundTo === 'ACCOUNT' ? result.leftover : dec(0),
     };
   }
 

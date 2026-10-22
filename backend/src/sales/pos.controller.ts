@@ -4,7 +4,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import { startOfBusinessDay } from '../common/utils/dates';
 import { CustomersService } from './customers.service';
-import { PosArrangeDto, PosLookupQueryDto, PosProductsQueryDto, PosReturnDto, PosSaleDto, QuickCustomerDto } from './dto/pos.dto';
+import { PosArrangeDto, PosLookupQueryDto, PosProductsQueryDto, PosFreeReturnDto, PosReturnDto, PosSaleDto, QuickCustomerDto } from './dto/pos.dto';
 import { PosService } from './pos.service';
 
 @ApiTags('Admin · POS')
@@ -52,6 +52,13 @@ export class AdminPosController {
   }
 
   /** Return, or exchange for other pieces, settling the difference. */
+  /** Return or exchange without the invoice: returned pieces picked by hand. */
+  @RequirePermissions('pos.sell')
+  @Post('returns/without-invoice')
+  returnWithoutInvoice(@Body() dto: PosFreeReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.pos.returnWithoutInvoice(dto, u.id);
+  }
+
   @RequirePermissions('pos.sell')
   @Post('returns')
   returnOrExchange(@Body() dto: PosReturnDto, @CurrentUser() u: AuthPrincipal) {

@@ -287,6 +287,39 @@ describe('POS, treasury & wallet (e2e)', () => {
     await assertBooksAgree();
   });
 
+  it('returns and exchanges pieces without the invoice', async () => {
+    const [v35, v36] = product.variants;
+    const stockOf = async (id: string) => (await prisma.stockLevel.aggregate({ where: { variantId: id }, _sum: { onHand: true } }))._sum.onHand ?? 0;
+    const before35 = await stockOf(v35.id);
+    let cash = Number((await drawer('SAR')).balance);
+
+    // Walk-in brings one pair back: 100 SAR in cash, pair back on the shelf.
+    const back = (await http.post('/admin/pos/returns/without-invoice', { items: [{ variantId: v35.id, quantity: 1 }] }, cashier).expect(201)).body;
+    expect(back.refunded.currencyAmount).toBe('100');
+    expect(await stockOf(v35.id)).toBe(before35 + 1);
+    expect(Number((await drawer('SAR')).balance)).toBeCloseTo(cash - 100, 2);
+    cash -= 100;
+
+    // Exchange: returns one valued at 80, takes two new pairs (200), pays 120 on top.
+    const ex = (
+      await http
+        .post('/admin/pos/returns/without-invoice', { items: [{ variantId: v35.id, quantity: 1, unitPrice: '80' }], newItems: [{ variantId: v36.id, quantity: 2 }], payments: [{ currency: 'SAR', amount: '120' }] }, cashier)
+        .expect(201)
+    ).body;
+    expect(ex.sale.grandTotal).toBe('200');
+    expect(ex.leftover).toBe('0');
+    expect(Number((await drawer('SAR')).balance)).toBeCloseTo(cash + 120, 2);
+
+    // A named customer keeps the value as credit.
+    const c = await customerToken(app, 'عميل مرتجع');
+    await http.post('/admin/pos/returns/without-invoice', { items: [{ variantId: v36.id, quantity: 1 }], refundTo: 'ACCOUNT' }, cashier).expect(400);
+    const kept = (await http.post('/admin/pos/returns/without-invoice', { customerId: c.customerId, items: [{ variantId: v36.id, quantity: 1, restock: false }], refundTo: 'ACCOUNT' }, cashier).expect(201)).body;
+    expect(kept.keptAsCredit).toBe('100');
+    const acct = (await http.get(`/admin/customers/${c.customerId}/account`, admin).expect(200)).body;
+    expect(acct.balances.find((b: { currency: string }) => b.currency === 'SAR').balance).toBe('-100');
+    await assertBooksAgree();
+  });
+
   it('exchanges currencies between boxes and books the realised gain', async () => {
     const all = await http.get('/admin/cash-boxes', admin).expect(200);
     const yerDrawer = await drawer('YER');

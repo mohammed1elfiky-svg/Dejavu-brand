@@ -217,3 +217,91 @@ export class PosReturnDto {
   @IsCurrencyCode()
   changeCurrency?: string;
 }
+
+export class PosFreeReturnItemDto {
+  @ApiProperty()
+  @IsUUID()
+  variantId: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  quantity: number;
+
+  @ApiPropertyOptional({ example: '120', description: "Value per piece in the return's currency; defaults to the current shelf price" })
+  @IsOptional()
+  @IsAmount()
+  unitPrice?: string;
+
+  @ApiPropertyOptional({ default: true, description: 'false when the piece is damaged and cannot be sold again' })
+  @IsOptional()
+  @IsBoolean()
+  restock?: boolean;
+}
+
+/** A return or exchange with no invoice to look up: the pieces are picked by hand. */
+export class PosFreeReturnDto {
+  @ApiPropertyOptional({ description: 'Defaults to the walk-in customer' })
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
+  @ApiPropertyOptional({ example: 'SAR', description: 'Currency the pieces are valued and settled in' })
+  @IsOptional()
+  @IsCurrencyCode()
+  currency?: string;
+
+  @ApiProperty({ type: [PosFreeReturnItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => PosFreeReturnItemDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  items: PosFreeReturnItemDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  @ApiPropertyOptional({ enum: ['CASH', 'ACCOUNT'], default: 'CASH' })
+  @IsOptional()
+  @IsIn(['CASH', 'ACCOUNT'])
+  refundTo?: 'CASH' | 'ACCOUNT';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsCurrencyCode()
+  refundCurrency?: string;
+
+  @ApiPropertyOptional({ type: [PosItemDto], description: 'Exchange: the pieces taken instead' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PosItemDto)
+  @ArrayMaxSize(200)
+  newItems?: PosItemDto[];
+
+  @ApiPropertyOptional({ type: [PosTenderDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PosTenderDto)
+  @ArrayMaxSize(10)
+  payments?: PosTenderDto[];
+
+  @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER'] })
+  @IsOptional()
+  @IsIn(['CASH', 'BANK_TRANSFER'])
+  paymentMethod?: 'CASH' | 'BANK_TRANSFER';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsCurrencyCode()
+  changeCurrency?: string;
+}

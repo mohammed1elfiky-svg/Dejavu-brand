@@ -104,6 +104,8 @@ data class AdminOrderItem(
     val lineTotal: String,
     val unitCost: String,
     val returnedQty: Int = 0,
+    /** Pieces that can still be returned (sale looked up at the till). */
+    val returnableQty: Int? = null,
 )
 
 @Serializable

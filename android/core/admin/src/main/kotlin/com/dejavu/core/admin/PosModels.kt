@@ -94,6 +94,8 @@ data class PosSaleRequest(
     val paymentMethod: String? = null,
     /** Transfer or deposit slip number. */
     val reference: String? = null,
+    /** Pay this much (invoice currency) from the customer's own credit first. */
+    val fromAccount: String? = null,
 )
 
 @Serializable
@@ -469,3 +471,39 @@ object PermissionLabels {
 
     fun label(key: String): String = groups.flatMap { it.second }.firstOrNull { it.first == key }?.second ?: key
 }
+
+// --------------------------------------------------- returns & exchanges ---
+
+@Serializable
+data class PosReturnItem(val orderItemId: String, val quantity: Int, val restock: Boolean = true)
+
+@Serializable
+data class PosReturnRequest(
+    val orderId: String,
+    val items: List<PosReturnItem>,
+    val reason: String? = null,
+    /** CASH (from the drawer) or ACCOUNT (kept as the customer's credit). */
+    val refundTo: String = "CASH",
+    /** SAR or the sale's currency. */
+    val refundCurrency: Currency? = null,
+    /** Exchange: the pieces taken instead. */
+    val newItems: List<PosItem>? = null,
+    /** Exchange: what the customer pays on top. */
+    val payments: List<PosTender>? = null,
+    val paymentMethod: String? = null,
+    val reference: String? = null,
+    val changeCurrency: Currency? = null,
+)
+
+@Serializable
+data class RefundedAmount(val sar: String = "0", val currencyAmount: String = "0")
+
+@Serializable
+data class PosReturnResult(
+    @kotlinx.serialization.SerialName("return") val salesReturn: AdminReturnDetail? = null,
+    val sale: PosReceipt? = null,
+    /** Returned value paid back or credited. */
+    val refunded: RefundedAmount = RefundedAmount(),
+    /** Exchange: returned value not used by the new pieces (sale currency). */
+    val leftover: String = "0",
+)

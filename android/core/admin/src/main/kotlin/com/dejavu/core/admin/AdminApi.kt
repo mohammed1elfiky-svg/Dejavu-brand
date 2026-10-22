@@ -66,6 +66,7 @@ interface AdminApi {
     @GET("admin/products") suspend fun products(
         @Query("q") query: String? = null,
         @Query("status") status: String? = null,
+        @Query("categoryId") categoryId: String? = null,
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
     ): Page<AdminProduct>
@@ -144,6 +145,8 @@ interface AdminApi {
     @PUT("admin/pos/product-order") suspend fun arrangeProducts(@Body body: PosArrangeRequest): Response<Unit>
     @POST("admin/pos/sales") suspend fun sell(@Body body: PosSaleRequest): PosReceipt
     @GET("admin/pos/sales/{id}") suspend fun posReceipt(@Path("id") id: String): PosReceipt
+    @GET("admin/pos/sales/by-number/{number}") suspend fun findSale(@Path("number") number: String): PosReceipt
+    @POST("admin/pos/returns") suspend fun posReturn(@Body body: PosReturnRequest): PosReturnResult
     @GET("admin/pos/shift") suspend fun shift(): PosShift
     @POST("admin/pos/customers") suspend fun quickCustomer(@Body body: QuickCustomerRequest): QuickCustomer
 

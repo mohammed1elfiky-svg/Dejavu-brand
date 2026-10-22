@@ -181,7 +181,8 @@ class InventoryRepository(private val api: AdminApi) {
     suspend fun adjust(warehouseId: String, reason: AdjustmentReason, variantId: String, quantity: Int, note: String?) =
         apiCall { api.adjust(AdjustmentRequest(warehouseId, reason, listOf(AdjustmentRequest.Item(variantId, quantity)), note?.ifBlank { null })) }
 
-    suspend fun products(query: String? = null, page: Int = 1) = apiCall { api.products(query?.trim()?.ifBlank { null }, page = page) }
+    suspend fun products(query: String? = null, page: Int = 1, categoryId: String? = null, pageSize: Int = 20) =
+        apiCall { api.products(query?.trim()?.ifBlank { null }, categoryId = categoryId, page = page, pageSize = pageSize) }
     suspend fun product(id: String) = apiCall { api.product(id) }
     suspend fun updateProduct(id: String, request: UpdateProductRequest) = apiCall { api.updateProduct(id, request) }
 
@@ -305,6 +306,12 @@ class PosRepository(private val api: AdminApi) {
 
     suspend fun sell(request: PosSaleRequest) = apiCall { api.sell(request) }
     suspend fun receipt(id: String) = apiCall { api.posReceipt(id) }
+
+    /** A sale by its receipt number, with what can still be returned of each line. */
+    suspend fun findSale(number: String) = apiCall { api.findSale(number.trim()) }
+
+    /** Return (refund to the drawer or the account) or exchange for other pieces. */
+    suspend fun returnOrExchange(request: PosReturnRequest) = apiCall { api.posReturn(request) }
     suspend fun shift() = apiCall { api.shift() }
     suspend fun quickCustomer(name: String, phone: String) = apiCall { api.quickCustomer(QuickCustomerRequest(name.trim(), phone.trim())) }
 }

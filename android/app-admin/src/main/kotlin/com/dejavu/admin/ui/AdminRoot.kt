@@ -82,6 +82,7 @@ import com.dejavu.admin.ui.orders.ReturnDetailScreen
 import com.dejavu.admin.ui.orders.ReturnsScreen
 import com.dejavu.admin.ui.purchasing.PurchaseOrderScreen
 import com.dejavu.admin.ui.purchasing.PurchasingScreen
+import com.dejavu.admin.ui.pos.PosReturnScreen
 import com.dejavu.admin.ui.pos.PosScreen
 import com.dejavu.admin.ui.staff.StaffEditScreen
 import com.dejavu.admin.ui.staff.StaffScreen
@@ -133,6 +134,7 @@ object R {
     const val TOP_UP = "top-up/{id}"
     const val BANK_ACCOUNTS = "bank-accounts"
     const val STAFF = "staff"
+    const val POS_RETURNS = "pos-returns"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -241,7 +243,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             composable(R.SERVER) { ServerScreen(back) }
             composable(R.CURRENCY) { CurrencyScreen(session, back) }
-            composable(R.POS) { PosScreen(session, openBoxes = { nav.navigate(R.CASH_BOXES) }) }
+            composable(R.POS) { PosScreen(session, openBoxes = { nav.navigate(R.CASH_BOXES) }, openReturns = { nav.navigate(R.POS_RETURNS) }) }
+            composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })
             }

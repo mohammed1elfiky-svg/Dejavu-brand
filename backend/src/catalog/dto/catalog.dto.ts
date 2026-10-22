@@ -68,6 +68,41 @@ export class CreateCategoryDto {
 
 export class UpdateCategoryDto extends PartialType(CreateCategoryDto) {}
 
+// ----------------------------------------------------------------- brands ---
+
+export class CreateBrandDto {
+  @ApiProperty({ example: 'Zara' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name: string;
+
+  @ApiPropertyOptional({ example: 'zara', description: 'Generated from the name when left out' })
+  @IsOptional()
+  @Matches(SLUG_REGEX, { message: 'slug must be lowercase-kebab-case' })
+  slug?: string;
+
+  @ApiPropertyOptional({ description: 'Logo (uploaded image URL); "" clears it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsUrl({ require_tld: false })
+  logoUrl?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class UpdateBrandDto extends PartialType(CreateBrandDto) {}
+
 // ---------------------------------------------------------------- products ---
 
 export class VariantDto {
@@ -200,13 +235,17 @@ export class CreateProductDto {
   @Matches(SLUG_REGEX, { message: 'slug must be lowercase-kebab-case' })
   slug?: string;
 
-  @ApiPropertyOptional({ example: 'Zara' })
+  @ApiPropertyOptional({ description: 'Brand id; "" or null for none' })
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || null : value))
+  @Transform(({ value }) => (value === '' ? null : value))
   @ValidateIf((_, v) => v !== null)
-  @IsString()
-  @MaxLength(80)
-  brand?: string | null;
+  @IsUUID()
+  brandId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Push a "new product" notification (name + photo) to customers once it is published' })
+  @IsOptional()
+  @IsBoolean()
+  notifyCustomers?: boolean;
 
   @ApiPropertyOptional({ description: 'Uploaded product video URL (POST admin/files/video)' })
   @IsOptional()
@@ -315,6 +354,11 @@ export class AdminProductsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(ProductStatus)
   status?: ProductStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  brandId?: string;
 }
 
 export class StoreProductsQueryDto extends PaginationQueryDto {
@@ -327,6 +371,11 @@ export class StoreProductsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @ApiPropertyOptional({ description: 'Brand slug' })
+  @IsOptional()
+  @IsString()
+  brand?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -371,6 +420,11 @@ export class PromotionDto {
   @IsUUID('all', { each: true })
   @ArrayMinSize(1)
   productIds: string[];
+
+  @ApiPropertyOptional({ description: 'Push the offer to all customers when it is running' })
+  @IsOptional()
+  @IsBoolean()
+  notifyCustomers?: boolean;
 }
 
 export class UpdatePromotionDto extends PartialType(PromotionDto) {}

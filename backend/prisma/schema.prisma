@@ -471,6 +471,22 @@ model Category {
   @@map("categories")
 }
 
+/// Product brands (e.g. Zara), managed like categories.
+model Brand {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  slug      String   @unique
+  logoUrl   String?  @map("logo_url")
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products Product[]
+
+  @@map("brands")
+}
+
 model Product {
   id             String            @id @default(uuid()) @db.Uuid
   categoryId     String            @map("category_id") @db.Uuid
@@ -486,7 +502,7 @@ model Product {
   compareAtPrice Decimal?          @map("compare_at_price") @db.Decimal(14, 2)
   /// Price for merchant (wholesale) customers.
   wholesalePrice Decimal?          @map("wholesale_price") @db.Decimal(14, 2)
-  brand          String?
+  brandId        String?           @map("brand_id") @db.Uuid
   /// Uploaded product video (stored file URL).
   videoUrl       String?           @map("video_url")
   instagramUrl   String?           @map("instagram_url")
@@ -505,6 +521,7 @@ model Product {
   updatedAt      DateTime          @updatedAt @map("updated_at")
 
   category   Category           @relation(fields: [categoryId], references: [id])
+  brand      Brand?             @relation(fields: [brandId], references: [id], onDelete: SetNull)
   taxRate    TaxRate?           @relation(fields: [taxRateId], references: [id])
   variants   ProductVariant[]
   images     ProductImage[]
@@ -513,6 +530,7 @@ model Product {
   promotions PromotionProduct[]
 
   @@index([categoryId])
+  @@index([brandId])
   @@index([status])
   @@map("products")
 }

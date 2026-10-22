@@ -19,6 +19,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
+import { SystemModule } from './system/system.module';
 import { TreasuryModule } from './treasury/treasury.module';
 import { UsersModule } from './users/users.module';
 
@@ -40,6 +41,7 @@ import { UsersModule } from './users/users.module';
     PurchasingModule,
     ExpensesModule,
     ReportsModule,
+    SystemModule,
   ],
   controllers: [HealthController],
   providers: [

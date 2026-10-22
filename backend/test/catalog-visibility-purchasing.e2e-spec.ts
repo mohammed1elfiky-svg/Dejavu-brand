@@ -10,13 +10,14 @@ describe('Visibility, media, valuation & quick purchases (e2e)', () => {
   let http: ReturnType<typeof api>;
   let admin: string;
   let categoryId: string;
+  let brandId: string;
   const run = Date.now().toString(36);
 
   const make = (name: string, visibility: string) =>
     http
       .post(
         '/admin/products',
-        { categoryId, nameAr: name, status: 'ACTIVE', basePrice: '50', costPrice: '20', taxRateId: null, visibility, brand: 'Dejavu', variants: [{ size: 'M', initialQuantity: 4 }] },
+        { categoryId, nameAr: name, status: 'ACTIVE', basePrice: '50', costPrice: '20', taxRateId: null, visibility, brandId, variants: [{ size: 'M', initialQuantity: 4 }] },
         admin,
       )
       .expect(201);
@@ -26,6 +27,7 @@ describe('Visibility, media, valuation & quick purchases (e2e)', () => {
     http = api(app);
     admin = await staffToken(app);
     categoryId = (await http.post('/admin/categories', { nameAr: `قسم ${run}`, nameEn: `Section ${run}`, slug: `section-${run}` }, admin).expect(201)).body.id;
+    brandId = (await http.post('/admin/brands', { name: `Dejavu ${run}` }, admin).expect(201)).body.id;
   });
   afterAll(() => app.close());
 
@@ -33,7 +35,7 @@ describe('Visibility, media, valuation & quick purchases (e2e)', () => {
     const p = (await make('فستان سهرة', 'ALL')).body;
     expect(p.slug).toBe(`fstan-shra-${p.skuNumber}`);
     expect(p.nameEn).toBe('فستان سهرة');
-    expect(p.brand).toBe('Dejavu');
+    expect(p.brand.name).toBe(`Dejavu ${run}`);
   });
 
   it('shows each product only where its visibility allows', async () => {

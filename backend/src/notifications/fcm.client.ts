@@ -15,6 +15,8 @@ export interface PushMessage {
   data?: Record<string, string>;
   /** Android notification channel (created by the app). */
   channel?: string;
+  /** Public https image shown expanded in the notification. */
+  image?: string;
 }
 
 /** Outcome per token: sent, or the token is dead and should be forgotten. */
@@ -46,7 +48,7 @@ export class FcmClient {
       body: JSON.stringify({
         message: {
           token: msg.token,
-          notification: { title: msg.title, body: msg.body },
+          notification: { title: msg.title, body: msg.body, ...(msg.image?.startsWith('https://') ? { image: msg.image } : {}) },
           data: msg.data ?? {},
           android: { priority: 'high', notification: { channel_id: msg.channel ?? 'orders' } },
         },

@@ -4,6 +4,8 @@ import { AuthPrincipal, CurrentUser, Public, RequirePermissions } from '../commo
 import { CatalogService } from './catalog.service';
 import {
   AdminProductsQueryDto,
+  CreateBrandDto,
+  UpdateBrandDto,
   CreateCategoryDto,
   CreateProductDto,
   ReplaceImagesDto,
@@ -45,6 +47,31 @@ export class AdminCatalogController {
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteCategory(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
     return this.catalog.deleteCategory(id, u.id);
+  }
+
+  @RequirePermissions('products.read')
+  @Get('brands')
+  listBrands() {
+    return this.catalog.listBrands();
+  }
+
+  @RequirePermissions('categories.write')
+  @Post('brands')
+  createBrand(@Body() dto: CreateBrandDto, @CurrentUser() u: AuthPrincipal) {
+    return this.catalog.createBrand(dto, u.id);
+  }
+
+  @RequirePermissions('categories.write')
+  @Patch('brands/:id')
+  updateBrand(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateBrandDto, @CurrentUser() u: AuthPrincipal) {
+    return this.catalog.updateBrand(id, dto, u.id);
+  }
+
+  @RequirePermissions('categories.write')
+  @Delete('brands/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteBrand(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.catalog.deleteBrand(id, u.id);
   }
 
   @RequirePermissions('products.read')
@@ -99,6 +126,11 @@ export class StoreCatalogController {
   @Get('categories')
   categories() {
     return this.catalog.categoryTree();
+  }
+
+  @Get('brands')
+  brands() {
+    return this.catalog.storeBrands();
   }
 
   @Get('products')

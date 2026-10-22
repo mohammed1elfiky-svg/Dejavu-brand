@@ -2,14 +2,18 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, ProductStatus, ProductVisibility } from '../generated/prisma/client';
 import { AdjustmentReason } from '../inventory/dto/inventory.dto';
 import { AuditService } from '../common/audit.service';
+import { formatAmount } from '../common/currency.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { activePromotions, Buyer, buyerPrice, promotedPrice } from './promotions';
 import {
   AdminProductsQueryDto,
+  CreateBrandDto,
   CreateCategoryDto,
   CreateProductDto,
+  UpdateBrandDto,
   ProductImageDto,
   StoreProductsQueryDto,
   UpdateCategoryDto,
@@ -19,8 +23,11 @@ import {
   VariantDto,
 } from './dto/catalog.dto';
 
+const brandSelect = { id: true, name: true, slug: true, logoUrl: true } satisfies Prisma.BrandSelect;
+
 const adminProductInclude = {
   category: { select: { id: true, nameAr: true, nameEn: true, slug: true } },
+  brand: { select: brandSelect },
   taxRate: { select: { id: true, name: true, rate: true } },
   images: { orderBy: { sortOrder: 'asc' } },
   variants: {
@@ -44,6 +51,7 @@ const storeProductSelect = {
   ratingAvg: true,
   ratingCount: true,
   category: { select: { id: true, slug: true, nameAr: true, nameEn: true } },
+  brand: { select: brandSelect },
   images: { orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true, variantId: true, color: true } },
   variants: {
     where: { isActive: true },
@@ -98,7 +106,66 @@ export class CatalogService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  // --------------------------------------------------------------- brands ---
+
+  async listBrands() {
+    const rows = await this.prisma.brand.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: { _count: { select: { products: true } } },
+    });
+    return rows.map(({ _count, ...b }) => ({ ...b, productCount: _count.products }));
+  }
+
+  /** Brands shown to shoppers: active ones that have something on sale. */
+  storeBrands() {
+    return this.prisma.brand.findMany({
+      where: { isActive: true, products: { some: { status: ProductStatus.ACTIVE, visibility: ProductVisibility.ALL } } },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: brandSelect,
+    });
+  }
+
+  async createBrand(dto: CreateBrandDto, userId: string) {
+    const brand = await this.saveBrand(() =>
+      this.prisma.brand.create({ data: { ...dto, slug: dto.slug ?? textSlug(dto.name, 'brand') } }),
+    );
+    await this.audit.log({ userId, action: 'CREATE', entityType: 'Brand', entityId: brand.id, after: brand });
+    return brand;
+  }
+
+  async updateBrand(id: string, dto: UpdateBrandDto, userId: string) {
+    await this.findBrand(id);
+    const brand = await this.saveBrand(() => this.prisma.brand.update({ where: { id }, data: dto }));
+    await this.audit.log({ userId, action: 'UPDATE', entityType: 'Brand', entityId: id, after: brand });
+    return brand;
+  }
+
+  /** Products of a deleted brand simply lose their brand. */
+  async deleteBrand(id: string, userId: string) {
+    const before = await this.findBrand(id);
+    await this.prisma.brand.delete({ where: { id } });
+    await this.audit.log({ userId, action: 'DELETE', entityType: 'Brand', entityId: id, before });
+  }
+
+  private async findBrand(id: string) {
+    const brand = await this.prisma.brand.findUnique({ where: { id } });
+    if (!brand) throw new NotFoundException('Brand not found');
+    return brand;
+  }
+
+  private async saveBrand<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('A brand with this name or link already exists');
+      }
+      throw e;
+    }
+  }
 
   // ----------------------------------------------------------- categories ---
 
@@ -179,6 +246,7 @@ export class CatalogService {
     const categoryIds = q.categoryId ? [q.categoryId, ...(await this.descendantIds(q.categoryId))] : undefined;
     const where: Prisma.ProductWhereInput = {
       categoryId: categoryIds ? { in: categoryIds } : undefined,
+      brandId: q.brandId,
       status: q.status,
       ...(q.q && this.searchFilter(q.q)),
     };
@@ -203,8 +271,9 @@ export class CatalogService {
 
   async createProduct(dto: CreateProductDto, userId: string) {
     await this.findCategory(dto.categoryId);
+    if (dto.brandId) await this.findBrand(dto.brandId);
     const taxRateId = dto.taxRateId === undefined ? await this.defaultTaxRateId() : dto.taxRateId;
-    const { variants, images, ...fields } = dto;
+    const { variants, images, notifyCustomers, ...fields } = dto;
 
     const product = await this.prisma.$transaction(async (tx) => {
       const skuNumber = fields.skuNumber ?? (await this.nextSkuNumber(tx));
@@ -231,17 +300,19 @@ export class CatalogService {
       return created;
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Product', entityId: product.id, after: dto });
-    return this.getProduct(product.id);
+    return this.withAnnouncement(await this.getProduct(product.id), notifyCustomers);
   }
 
   async updateProduct(id: string, dto: UpdateProductDto, userId: string) {
     const before = await this.getProduct(id);
     if (dto.categoryId) await this.findCategory(dto.categoryId);
+    if (dto.brandId) await this.findBrand(dto.brandId);
+    const { notifyCustomers, ...data } = dto;
     if (dto.status === ProductStatus.ACTIVE && !before.variants.some((v) => v.isActive)) {
       throw new BadRequestException('A product needs at least one active variant to be published');
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.product.update({ where: { id }, data: dto });
+      await tx.product.update({ where: { id }, data });
       // The product cost is the cost of pieces not yet valued (nothing in stock).
       if (dto.costPrice !== undefined) {
         await tx.$executeRaw`
@@ -251,7 +322,29 @@ export class CatalogService {
       }
     });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Product', entityId: id, after: dto });
-    return this.getProduct(id);
+    return this.withAnnouncement(await this.getProduct(id), notifyCustomers);
+  }
+
+  /**
+   * "New product" push to customers (name, price and photo). Only a published product
+   * customers can see is announced; [notifiedCustomers] says how many got it (0 = not sent).
+   */
+  private async withAnnouncement<P extends Awaited<ReturnType<CatalogService['getProduct']>>>(product: P, notify?: boolean) {
+    if (!notify) return product;
+    const visible = product.status === ProductStatus.ACTIVE && (product.visibility === ProductVisibility.ALL || product.visibility === ProductVisibility.MERCHANTS);
+    if (!visible) return { ...product, notifiedCustomers: 0 };
+    const image = product.images[0]?.url ?? null;
+    const notifiedCustomers = await this.notifications.broadcast(
+      {
+        type: 'PROMOTION',
+        title: 'وصل حديثاً ✨',
+        body: `${product.nameAr} متوفر الآن بسعر ${formatAmount(product.basePrice)}. اطّلع عليه قبل نفاد الكمية!`,
+        data: { product: product.slug },
+        image,
+      },
+      { merchantsOnly: product.visibility === ProductVisibility.MERCHANTS },
+    );
+    return { ...product, notifiedCustomers };
   }
 
   async addVariant(productId: string, dto: NewVariantDto, userId: string) {
@@ -359,6 +452,7 @@ export class CatalogService {
       visibility: { in: storeVisibility(buyer) },
       category: { isActive: true },
       categoryId: categoryIds ? { in: categoryIds } : undefined,
+      ...(q.brand && { brand: { slug: q.brand, isActive: true } }),
       isFeatured: q.featured || undefined,
       ...(q.q && this.searchFilter(q.q)),
     };
@@ -412,9 +506,18 @@ const ARABIC: Record<string, string> = {
   ه: 'h', ة: 'a', و: 'w', ؤ: 'o', ي: 'y', ى: 'a', ئ: 'e', ء: '',
 };
 
+const latinBase = (name: string) => {
+  const latin = [...name.toLowerCase()].map((c) => ARABIC[c] ?? c).join('');
+  return latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+};
+
 /** URL name from the product name (Arabic transliterated) and its SKU number: "fstan-shra-100". */
 export function productSlug(name: string, skuNumber: number) {
-  const latin = [...name.toLowerCase()].map((c) => ARABIC[c] ?? c).join('');
-  const base = latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+  const base = latinBase(name);
   return base ? `${base}-${skuNumber}` : `p-${skuNumber}`;
+}
+
+/** URL name from a name alone ("زارا" → "zara"); [fallback] plus a short random tail if nothing is left. */
+export function textSlug(name: string, fallback: string) {
+  return latinBase(name) || `${fallback}-${Math.random().toString(36).slice(2, 8)}`;
 }

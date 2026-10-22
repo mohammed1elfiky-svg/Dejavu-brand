@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { dec } from '../common/utils/money';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface PromotionInput {
@@ -10,6 +11,7 @@ export interface PromotionInput {
   endsAt?: string | null;
   isActive?: boolean;
   productIds: string[];
+  notifyCustomers?: boolean;
 }
 
 const include = {
@@ -24,6 +26,7 @@ export class PromotionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list() {
@@ -44,7 +47,7 @@ export class PromotionsService {
       data: { ...data, products: { create: dto.productIds.map((productId) => ({ productId })) } },
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Promotion', entityId: p.id, after: dto });
-    return this.get(p.id);
+    return this.announce(await this.get(p.id), dto.notifyCustomers);
   }
 
   async update(id: string, dto: Partial<PromotionInput>, userId: string) {
@@ -66,12 +69,28 @@ export class PromotionsService {
       }
     });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Promotion', entityId: id, after: dto });
-    return this.get(id);
+    return this.announce(await this.get(id), dto.notifyCustomers);
   }
 
   async remove(id: string, userId: string) {
     await this.prisma.promotion.delete({ where: { id } });
     await this.audit.log({ userId, action: 'DELETE', entityType: 'Promotion', entityId: id });
+  }
+
+  /** Offer push to all customers, only while the promotion is running. */
+  private async announce(p: Awaited<ReturnType<PromotionsService['get']>>, notify?: boolean) {
+    if (!notify) return p;
+    if (!p.running) return { ...p, notifiedCustomers: 0 };
+    const percent = p.percent.toDecimalPlaces(0).toString();
+    const count = p.products.length;
+    const notifiedCustomers = await this.notifications.broadcast({
+      type: 'PROMOTION',
+      title: `${p.name} 🔥`,
+      body: `خصم ${percent}% على ${count === 1 ? p.products[0].nameAr : `${count} منتجاً`}. تسوّق الآن قبل انتهاء العرض!`,
+      data: { promotion: p.id },
+      image: p.products[0]?.images[0]?.url ?? null,
+    });
+    return { ...p, notifiedCustomers };
   }
 
   private async validate(dto: PromotionInput) {
@@ -88,8 +107,8 @@ export class PromotionsService {
   }
 }
 
-function present<T extends { startsAt: Date; endsAt: Date | null; isActive: boolean; products: { product: unknown }[] }>(p: T, now: Date) {
+function present<T extends { startsAt: Date; endsAt: Date | null; isActive: boolean; products: { product: object }[] }>(p: T, now: Date) {
   const { products, ...rest } = p;
   const running = p.isActive && p.startsAt <= now && (!p.endsAt || p.endsAt > now);
-  return { ...rest, running, products: products.map((x) => x.product) };
+  return { ...rest, running, products: products.map((x) => x.product as T['products'][number]['product']) };
 }

@@ -21,10 +21,10 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
-      # Demo products, orders and accounts to try the apps. Set to "false" (or remove)
-      # before using it as a real store: demo accounts have well-known passwords.
+      # Demo products, orders and accounts to try the apps ("true"). Off for a real store;
+      # after "wipe test data" in the admin app demo data is never loaded again anyway.
       - key: DEMO_DATA
-        value: "true"
+        value: "false"
       - key: TRUST_PROXY
         value: "1"
       # Card payments stay off until Paymob keys are added in the dashboard

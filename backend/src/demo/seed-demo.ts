@@ -110,6 +110,13 @@ async function main() {
   const get = <T>(cls: new (...args: never[]) => T) => app.get(cls, { strict: false });
   const prisma = get(PrismaService);
 
+  // The admin wiped the test data to go live: never bring demo data back.
+  if (await prisma.setting.findUnique({ where: { key: 'system.wipedAt' } })) {
+    console.log('Test data was wiped — demo data stays off.');
+    await app.close();
+    return;
+  }
+
   const admin = await prisma.user.findFirstOrThrow({ where: { roles: { some: { role: { name: 'admin' } } } } });
   // Staff for each role; also tops up demo databases loaded before a role existed.
   const users = get(UsersService);

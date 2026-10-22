@@ -64,6 +64,25 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     this.kick();
   }
 
+  /**
+   * Adds [n] to the inbox of every active customer (or merchants only); the dispatcher
+   * pushes it. [image] (an https URL) is shown as a big picture. Returns how many got it.
+   */
+  async broadcast(n: NewNotification & { image?: string | null }, audience: { merchantsOnly?: boolean } = {}) {
+    const customers = await this.prisma.customer.findMany({
+      where: { status: 'ACTIVE', code: { not: 'CUS-WALKIN' }, ...(audience.merchantsOnly ? { isMerchant: true } : {}) },
+      select: { id: true },
+    });
+    const data = { ...(n.data ?? {}), ...(n.image ? { image: n.image } : {}) };
+    for (let i = 0; i < customers.length; i += 1000) {
+      await this.prisma.notification.createMany({
+        data: customers.slice(i, i + 1000).map((c) => ({ customerId: c.id, type: n.type, title: n.title, body: n.body, data })),
+      });
+    }
+    this.kick();
+    return customers.length;
+  }
+
   /** Push-only alert to staff who hold [permission] (e.g. a new order for the sales team). */
   async notifyStaff(permission: string, n: NewNotification) {
     if (!this.fcm) return;
@@ -113,8 +132,9 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
               where: { customerId: n.customerId, appType: AppType.CUSTOMER },
               select: { id: true, fcmToken: true },
             });
-            const data = { ...((n.data as Record<string, string>) ?? {}), notificationId: n.id, type: n.type };
-            await this.pushTo(devices, { type: n.type, title: n.title, body: n.body, data }, 'orders');
+            const data: Record<string, string> = { ...((n.data as Record<string, string>) ?? {}), notificationId: n.id, type: n.type };
+            const channel = n.type === 'PROMOTION' ? 'offers' : 'orders';
+            await this.pushTo(devices, { type: n.type, title: n.title, body: n.body, data }, channel, data.image);
           }
           await this.prisma.notification.update({ where: { id: n.id }, data: { pushedAt: new Date() } });
           processed += 1;
@@ -129,10 +149,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     return processed;
   }
 
-  private async pushTo(devices: { id: string; fcmToken: string }[], n: NewNotification, channel: string) {
+  private async pushTo(devices: { id: string; fcmToken: string }[], n: NewNotification, channel: string, image?: string) {
     if (!this.fcm) return;
     for (const d of devices) {
-      const outcome = await this.fcm.send({ token: d.fcmToken, title: n.title, body: n.body, data: n.data, channel });
+      const outcome = await this.fcm.send({ token: d.fcmToken, title: n.title, body: n.body, data: n.data, channel, image });
       if (outcome === 'unregistered') await this.prisma.device.deleteMany({ where: { id: d.id } });
     }
   }

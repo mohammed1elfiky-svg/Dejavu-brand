@@ -1,5 +1,6 @@
 package com.dejavu.core.data
 
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.network.ApiException
 
@@ -29,9 +30,14 @@ object ServerMessages {
         "Only delivered orders can be returned" to "يمكن إرجاع الطلبات بعد استلامها فقط",
         "You can save up to 10 addresses" to "يمكن حفظ 10 عناوين كحد أقصى",
         "Each item may appear only once" to "يمكن اختيار كل منتج مرة واحدة فقط",
+        "Amount must be greater than zero" to "المبلغ يجب أن يكون أكبر من صفر",
+        "Upload the deposit receipt first" to "أرفق صورة إيصال الإيداع أولاً",
+        "Bank account not found" to "الحساب البنكي غير متاح",
+        "You already have several requests under review" to "لديك عدة طلبات شحن قيد المراجعة، انتظر حتى تتم مراجعتها",
     )
 
     private val patterns: List<Pair<Regex, (MatchResult) -> String>> = listOf(
+        Regex("^Not enough wallet balance in (.+)$") to { m -> "رصيد المحفظة بعملة ${Currency.of(m.groupValues[1]).nameAr} غير كافٍ" },
         Regex("^Only (\\d+) left in stock$") to { m -> "متبقي ${m.groupValues[1]} فقط" },
         Regex("^Insufficient stock for (.+)$") to { m -> "الكمية المطلوبة غير متاحة (${m.groupValues[1]})" },
         Regex("^Minimum order for this coupon is (.+)$") to { m -> "الحد الأدنى للطلب مع هذا الكود ${Money.format(m.groupValues[1])}" },

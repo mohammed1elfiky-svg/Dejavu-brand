@@ -7,6 +7,16 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.IconButton
 import com.dejavu.admin.ui.products.AddVariantDialog
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.graphics.Color
+import com.dejavu.admin.ui.barcode.StickerData
+import com.dejavu.admin.ui.products.StickerDialog
+import com.dejavu.admin.ui.theme.GlassCard
+import com.dejavu.admin.ui.theme.GoldPill
+import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.model.Currency
 import com.dejavu.admin.ui.products.EditVariantDialog
 import com.dejavu.core.admin.AdminVariant
 import com.dejavu.core.admin.NewVariantRequest
@@ -316,7 +326,7 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct
                                 ProductImage(p.images.firstOrNull()?.url, Modifier.size(56.dp).clip(MaterialTheme.shapes.small))
                                 Column(Modifier.weight(1f)) {
                                     Text(p.nameAr, style = MaterialTheme.typography.titleSmall)
-                                    Text("${p.category.nameAr} · ${Money.format(p.basePrice)}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${p.skuNumber?.let { "SKU $it · " } ?: ""}${p.category.nameAr} · ${Money.format(p.basePrice)}", style = MaterialTheme.typography.bodySmall)
                                     Text("المتاح: ${p.variants.sumOf { it.available }} قطعة", style = MaterialTheme.typography.bodySmall)
                                 }
                                 StatusChip(p.status.label, if (p.status == ProductStatus.ACTIVE) Success else Warning)
@@ -329,15 +339,28 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct
     }
 }
 
-class ProductDetailViewModel(private val id: String, private val repo: InventoryRepository) : BaseViewModel() {
+class ProductDetailViewModel(
+    private val id: String,
+    private val repo: InventoryRepository,
+    private val finance: FinanceRepository,
+) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<AdminProduct>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _yerRate = MutableStateFlow<String?>(null)
+
+    /** Current YER rate (units per 1 SAR) for the second price on stickers; null when unknown. */
+    val yerRate = _yerRate.asStateFlow()
 
     fun load() {
         _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.product(id).toLoad() }
+        if (_yerRate.value == null) {
+            viewModelScope.launch {
+                _yerRate.value = finance.activeCurrencies().getOrNull()?.rate(Currency.YER)?.rate?.takeIf { !Money.isZero(it) }
+            }
+        }
     }
 
     fun update(request: UpdateProductRequest) = act {
@@ -349,7 +372,7 @@ class ProductDetailViewModel(private val id: String, private val repo: Inventory
 
     fun addVariant(request: NewVariantRequest) = act {
         repo.addVariant(id, request).orSay()?.let {
-            say("تمت إضافة ${it.title}")
+            say("تمت إضافة ${it.title} (${it.sku})")
             _state.value = repo.product(id).toLoad()
         }
     }
@@ -371,14 +394,28 @@ class ProductDetailViewModel(private val id: String, private val repo: Inventory
     }
 }
 
+/** What the barcode label of [v] shows: SKU, name, "color · size", price in SAR and (when a rate is set) YER. */
+private fun AdminProduct.sticker(v: AdminVariant, yerRate: String?): StickerData {
+    val price = v.price ?: basePrice
+    return StickerData(
+        sku = v.sku,
+        name = nameAr,
+        variant = listOfNotNull(v.color, v.size).joinToString(" · ").ifBlank { null },
+        priceSar = Money.formatBase(price),
+        priceYer = yerRate?.let { Money.format(price, Currency.YER, it) },
+    )
+}
+
 @Composable
 fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, edit: () -> Unit) {
-    val vm = adminViewModel(key = "product:$id") { ProductDetailViewModel(id, it.inventory) }
+    val vm = adminViewModel(key = "product:$id") { ProductDetailViewModel(id, it.inventory, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val yerRate by vm.yerRate.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<AdminVariant?>(null) }
+    var printing by remember { mutableStateOf<List<AdminVariant>?>(null) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -398,12 +435,19 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             var price by rememberSaveable(p.basePrice) { mutableStateOf(p.basePrice) }
             var compareAt by rememberSaveable(p.compareAtPrice) { mutableStateOf(p.compareAtPrice.orEmpty()) }
+            var cost by rememberSaveable(p.costPrice) { mutableStateOf(p.costPrice) }
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
                     InfoCard {
-                        Text(p.nameEn, style = MaterialTheme.typography.bodySmall)
-                        Text("القسم: ${p.category.nameAr}")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(p.nameEn, style = MaterialTheme.typography.bodySmall)
+                                Text("القسم: ${p.category.nameAr}")
+                            }
+                            GoldPill { Text("SKU ${p.skuNumber ?: "—"}", color = Color.White, style = MaterialTheme.typography.labelLarge) }
+                        }
+                        SummaryRow("التكلفة", Money.formatBase(p.costPrice))
                         if (canEdit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("مميز في الصفحة الرئيسية", Modifier.weight(1f))
@@ -422,9 +466,22 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                                 value = compareAt, onValueChange = { compareAt = it }, label = { Text("السعر قبل الخصم (اختياري)") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                             )
+                            OutlinedTextField(
+                                value = cost, onValueChange = { cost = it }, label = { Text("التكلفة (ر.س)") }, singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
+                            )
+                            val costValid = cost.isBlank() || cost.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
                             Button(
-                                onClick = { vm.update(UpdateProductRequest(basePrice = price.trim(), compareAtPrice = compareAt.trim().ifBlank { null })) },
-                                enabled = !busy && price.toBigDecimalOrNull() != null,
+                                onClick = {
+                                    vm.update(
+                                        UpdateProductRequest(
+                                            basePrice = price.trim(),
+                                            compareAtPrice = compareAt.trim().ifBlank { null },
+                                            costPrice = cost.trim().ifBlank { null },
+                                        ),
+                                    )
+                                },
+                                enabled = !busy && price.toBigDecimalOrNull() != null && costValid,
                             ) { Text("حفظ الأسعار") }
                         } else {
                             SummaryRow("السعر", Money.format(p.basePrice))
@@ -432,26 +489,62 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     }
                 }
                 item {
+                    InfoCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("الصور (${p.images.size}/10)", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                            if (canEdit) TextButton(onClick = edit) { Text("إدارة الصور") }
+                        }
+                        if (p.images.isEmpty()) {
+                            Text("لا توجد صور بعد", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(p.images) { img ->
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        ProductImage(img.url, Modifier.size(84.dp).clip(RoundedCornerShape(14.dp)))
+                                        Text(img.color ?: "عام", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("المقاسات والألوان (${p.variants.size})", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                        if (canEdit) TextButton(onClick = { adding = true }, enabled = !busy) { Text("+ إضافة مقاس / لون") }
+                        if (canEdit) TextButton(onClick = { adding = true }, enabled = !busy) { Text("+ إضافة") }
+                    }
+                }
+                if (p.variants.isNotEmpty()) {
+                    item {
+                        OutlinedButton(onClick = { printing = p.variants.filter { it.isActive }.ifEmpty { p.variants } }, modifier = Modifier.fillMaxWidth()) {
+                            Text("طباعة ملصقات كل المقاسات")
+                        }
                     }
                 }
                 items(p.variants, key = { it.id }) { v ->
-                    Card(
-                        onClick = { if (canEdit) editing = v },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        modifier = Modifier.fillMaxWidth(),
+                    GlassCard(
+                        Modifier.fillMaxWidth().clickable(enabled = canEdit) { editing = v },
+                        elevation = 6.dp,
+                        contentPadding = 14.dp,
                     ) {
-                        Row(Modifier.padding(16.dp)) {
-                            Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("${v.title}${if (!v.isActive) " · موقوف" else ""}", style = MaterialTheme.typography.titleSmall)
-                                Text(v.sku, style = MaterialTheme.typography.bodySmall)
-                                Text("متوسط التكلفة ${Money.format(v.avgCost)}${v.price?.let { " · سعر خاص ${Money.format(it)}" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+                                Text("SKU: ${v.sku}", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "باركود المصنع: ${v.barcode ?: "—"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    "متوسط التكلفة ${Money.formatBase(v.avgCost)}${v.price?.let { " · سعر خاص ${Money.format(it)}" } ?: ""}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text("${v.available}", style = MaterialTheme.typography.titleLarge, color = if (v.available <= v.lowStockThreshold) MaterialTheme.colorScheme.error else Success)
                                 Text("متاح", style = MaterialTheme.typography.labelSmall)
+                                TextButton(onClick = { printing = listOf(v) }) { Text("طباعة ملصق الباركود") }
                             }
                         }
                     }
@@ -463,4 +556,13 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
     val product = (state as? Load.Ready)?.value
     if (adding && product != null) AddVariantDialog(product, onDismiss = { adding = false }, onSave = vm::addVariant)
     editing?.let { v -> EditVariantDialog(v, onDismiss = { editing = null }, onSave = { vm.updateVariant(v.id, it) }) }
+    val toPrint = printing
+    if (toPrint != null && product != null) {
+        val stickers = remember(toPrint, product, yerRate) { toPrint.map { product.sticker(it, yerRate) } }
+        StickerDialog(
+            title = if (toPrint.size == 1) "ملصق ${toPrint.first().sku}" else "ملصقات ${product.nameAr}",
+            stickers = stickers,
+            onDismiss = { printing = null },
+        )
+    }
 }

@@ -37,10 +37,14 @@ class MainActivity : ComponentActivity() {
         val order = intent.data?.takeIf { it.scheme == "dejavu" }?.getQueryParameter("order")
             // Our own notifications, and FCM's background ones (data keys become extras).
             ?: intent.getStringExtra(EXTRA_ORDER)
-        (application as DejavuApp).container.requestOrder(order)
+        val container = (application as DejavuApp).container
+        container.requestOrder(order)
+        // Top-up reviewed (approved or rejected): open the wallet.
+        if (order.isNullOrBlank() && !intent.getStringExtra(EXTRA_TOP_UP).isNullOrBlank()) container.requestWallet()
     }
 
     companion object {
         const val EXTRA_ORDER = "order"
+        const val EXTRA_TOP_UP = "topUp"
     }
 }

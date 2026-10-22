@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -112,6 +113,7 @@ fun AccountScreen(
     returns: () -> Unit,
     orders: () -> Unit,
     notifications: () -> Unit,
+    wallet: () -> Unit,
     server: () -> Unit,
 ) {
     val container = appContainer()
@@ -132,6 +134,7 @@ fun AccountScreen(
                     }
                     HorizontalDivider()
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)
+                    MenuRow(Icons.Filled.AccountBox, "المحفظة / رصيدي", wallet)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
                     MenuRow(Icons.Filled.Refresh, "طلبات الإرجاع", returns)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
@@ -162,17 +165,19 @@ fun AccountScreen(
     }
 }
 
-/** Prices in SAR or YER. Orders already placed keep the currency and rate they were placed with. */
+/** Display currency: the ones the store offers shoppers. Orders already placed keep the currency and rate they were placed with. */
 @Composable
 private fun CurrencyRow() {
     val currencies = appContainer().currencies
     val selected by currencies.selected.collectAsStateWithLifecycle()
     val rates by currencies.rates.collectAsStateWithLifecycle()
+    val available by currencies.available.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
-    val yer = rates?.rate(Currency.YER)
+    val rateOf = { c: Currency -> rates?.rate(c)?.rate?.toBigDecimalOrNull() }
+    val selectedRate = rateOf(selected)
     ListItem(
-        headlineContent = { Text("عملة العرض: ${selected.nameAr}") },
-        supportingContent = yer?.let { { Text("1 ر.س = ${Money.plain(it.rate.toBigDecimal(), Currency.YER)}") } },
+        headlineContent = { Text("العملة: ${selected.nameAr}") },
+        supportingContent = selectedRate?.takeIf { !selected.isBase }?.let { r -> { Text("1 ${Currency.SAR.symbol} = ${Money.plain(r, selected)}") } },
         leadingContent = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
         modifier = Modifier.clickable { open = true },
     )
@@ -182,14 +187,24 @@ private fun CurrencyRow() {
             title = { Text("عملة عرض الأسعار") },
             text = {
                 Column {
-                    Currency.entries.forEach { c ->
-                        val available = c == Currency.SAR || rates?.rate(c) != null
+                    available.forEach { c ->
+                        val rate = rateOf(c)
+                        val usable = c.isBase || rate != null
                         Row(
-                            Modifier.fillMaxWidth().clickable(enabled = available) { currencies.select(c); open = false }.padding(vertical = 8.dp),
+                            Modifier.fillMaxWidth().clickable(enabled = usable) { currencies.select(c); open = false }.padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(selected = c == selected, onClick = null, enabled = available)
-                            Text("${c.nameAr} (${c.symbol})")
+                            RadioButton(selected = c == selected, onClick = null, enabled = usable)
+                            Column {
+                                Text("${c.nameAr} (${c.symbol})")
+                                if (!c.isBase && rate != null) {
+                                    Text(
+                                        "1 ${Currency.SAR.symbol} = ${Money.plain(rate, c)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                     Text(
@@ -389,7 +404,7 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
         ) {
             Field("اسم العنوان (اختياري)", form.label, placeholder = "المنزل، العمل…") { v -> vm.update { copy(label = v) } }
             Field("اسم المستلم", form.recipient, err("recipient")) { v -> vm.update { copy(recipient = v) } }
-            Field("موبايل المستلم", form.phone, err("phone"), keyboard = KeyboardType.Phone) { v -> vm.update { copy(phone = v) } }
+            Field("موبايل المستلم", form.phone, err("phone"), placeholder = "771234567", keyboard = KeyboardType.Phone) { v -> vm.update { copy(phone = v) } }
 
             // Read-only field that opens the list of governorates we deliver to.
             Box {
@@ -404,7 +419,7 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
                 )
                 Box(Modifier.matchParentSize().clickable { pickGovernorate = true })
             }
-            Field("المدينة / المنطقة", form.city, err("city")) { v -> vm.update { copy(city = v) } }
+            Field("المدينة / المنطقة", form.city, err("city"), placeholder = "مثال: صنعاء، عدن") { v -> vm.update { copy(city = v) } }
             Field("الحي (اختياري)", form.district) { v -> vm.update { copy(district = v) } }
             Field("الشارع ورقم العقار", form.street, err("street")) { v -> vm.update { copy(street = v) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

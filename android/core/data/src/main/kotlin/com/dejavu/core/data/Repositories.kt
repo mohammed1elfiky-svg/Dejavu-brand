@@ -192,7 +192,7 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
         return apiCall { api.paymentMethods() }.getOrNull()
             ?.filter { it in CHECKOUT_METHODS }
             ?.also { methodsCache = it }
-            ?: CHECKOUT_METHODS.filter { it != PaymentMethod.CARD }
+            ?: CHECKOUT_METHODS.filter { it != PaymentMethod.CARD && it != PaymentMethod.CUSTOMER_ACCOUNT }
     }
 
     companion object {
@@ -203,6 +203,7 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
             PaymentMethod.INSTAPAY,
             PaymentMethod.WALLET,
             PaymentMethod.BANK_TRANSFER,
+            PaymentMethod.CUSTOMER_ACCOUNT,
         )
     }
 }

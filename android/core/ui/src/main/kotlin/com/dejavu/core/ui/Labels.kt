@@ -50,7 +50,7 @@ val ReturnStatus.label: String
         ReturnStatus.REFUNDED -> "تم رد المبلغ"
     }
 
-private val cairo = ZoneId.of("Africa/Cairo")
+private val cairo = ZoneId.of("Asia/Aden")
 private val dateFormat = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("ar"))
 private val dateTimeFormat = DateTimeFormatter.ofPattern("d MMMM، h:mm a", Locale("ar"))
 

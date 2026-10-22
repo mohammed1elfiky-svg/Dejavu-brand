@@ -60,6 +60,8 @@ import com.dejavu.customer.ui.orders.OrderDetailScreen
 import com.dejavu.customer.ui.orders.OrdersScreen
 import com.dejavu.customer.ui.orders.ReturnRequestScreen
 import com.dejavu.customer.ui.product.ProductScreen
+import com.dejavu.customer.ui.wallet.TopUpScreen
+import com.dejavu.customer.ui.wallet.WalletScreen
 
 /** Route patterns and builders. Values are URL-encoded. */
 object Routes {
@@ -75,6 +77,8 @@ object Routes {
     const val RETURNS = "returns"
     const val SERVER = "server"
     const val NOTIFICATIONS = "notifications"
+    const val WALLET = "wallet"
+    const val TOP_UP = "wallet/top-up"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}"
     const val PRODUCT = "product/{slug}"
@@ -111,6 +115,7 @@ fun DejavuNavHost() {
     val cart by container.cart.cart.collectAsStateWithLifecycle()
     val session by container.session.state.collectAsStateWithLifecycle()
     val openOrder by container.openOrder.collectAsStateWithLifecycle()
+    val openWallet by container.openWallet.collectAsStateWithLifecycle()
 
     // A notification tap or the payment page's "back to the app" link.
     LaunchedEffect(openOrder, session is SessionState.LoggedIn) {
@@ -118,6 +123,12 @@ fun DejavuNavHost() {
         if (session !is SessionState.LoggedIn) return@LaunchedEffect
         nav.navigate(Routes.order(number)) { launchSingleTop = true }
         container.orderOpened()
+    }
+    // A top-up notification tap.
+    LaunchedEffect(openWallet, session is SessionState.LoggedIn) {
+        if (!openWallet || session !is SessionState.LoggedIn) return@LaunchedEffect
+        nav.navigate(Routes.WALLET) { launchSingleTop = true }
+        container.walletOpened()
     }
     if (session is SessionState.LoggedIn && container.pushEnabled) AskNotificationPermission()
 
@@ -192,6 +203,7 @@ fun DejavuNavHost() {
                 CheckoutScreen(
                     onBack = { nav.popBackStack() },
                     addAddress = { nav.navigate(Routes.addressForm()) },
+                    topUp = { nav.navigate(Routes.TOP_UP) },
                     placed = { number ->
                         nav.navigate(Routes.order(number, placed = true)) { popUpTo(Routes.CART) }
                     },
@@ -225,6 +237,7 @@ fun DejavuNavHost() {
                     returns = { nav.navigate(Routes.RETURNS) },
                     orders = { nav.switchTab(Routes.ORDERS) },
                     notifications = { nav.navigate(Routes.NOTIFICATIONS) },
+                    wallet = { nav.navigate(Routes.WALLET) },
                     server = { nav.navigate(Routes.SERVER) },
                 )
             }
@@ -253,7 +266,25 @@ fun DejavuNavHost() {
             }
             composable(Routes.SERVER) { ServerSettingsScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.NOTIFICATIONS) {
-                NotificationsScreen(onBack = { nav.popBackStack() }, openOrder = { nav.navigate(Routes.order(it)) })
+                NotificationsScreen(
+                    onBack = { nav.popBackStack() },
+                    openOrder = { nav.navigate(Routes.order(it)) },
+                    openWallet = { nav.navigate(Routes.WALLET) { launchSingleTop = true } },
+                )
+            }
+            composable(Routes.WALLET) {
+                WalletScreen(onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.ACCOUNT) }, topUp = { nav.navigate(Routes.TOP_UP) })
+            }
+            composable(Routes.TOP_UP) {
+                TopUpScreen(
+                    onBack = { nav.popBackStack() },
+                    // Show the new request (under review) in the wallet.
+                    submitted = {
+                        if (!nav.popBackStack(Routes.WALLET, inclusive = false)) {
+                            nav.navigate(Routes.WALLET) { popUpTo(Routes.TOP_UP) { inclusive = true } }
+                        }
+                    },
+                )
             }
         }
     }

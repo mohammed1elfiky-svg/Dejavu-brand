@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,10 @@ import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.PriceText
 import com.dejavu.core.ui.ProductImage
 import com.dejavu.core.ui.QuantityStepper
+import com.dejavu.core.ui.Tag
+import com.dejavu.core.ui.formatDate
+import com.dejavu.core.ui.theme.Gold
+import com.dejavu.customer.ui.components.discountBadge
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.theme.Warning
 import com.dejavu.core.ui.toLoad
@@ -170,7 +175,7 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
                 Surface(shadowElevation = 8.dp) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            PriceText(variant?.price ?: p.basePrice, p.compareAtPrice)
+                            PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                         }
                         Button(
                             onClick = vm::addToCart,
@@ -184,11 +189,12 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             val variant = vm.selectedVariant()
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-                Gallery(p)
+                Gallery(p, selection.color)
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(p.category.nameAr, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     Text(p.nameAr, style = MaterialTheme.typography.headlineSmall)
-                    PriceText(variant?.price ?: p.basePrice, p.compareAtPrice)
+                    PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
+                    Promotion(p)
 
                     val colors = p.variants.map { it.color to it.colorHex }.distinctBy { it.first }
                     if (colors.size > 1 || colors.firstOrNull()?.first != null) {
@@ -233,9 +239,15 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
     }
 }
 
+/** Photos of the chosen [color] first; a new color starts again from its first photo. */
 @Composable
-private fun Gallery(p: StoreProduct) {
-    val images = p.images.ifEmpty { listOf(null) }
+private fun Gallery(p: StoreProduct, color: String?) {
+    key(color) { ColorGallery(p, color) }
+}
+
+@Composable
+private fun ColorGallery(p: StoreProduct, color: String?) {
+    val images = remember(p, color) { p.imagesFor(color) }.ifEmpty { listOf(null) }
     val pager = rememberPagerState { images.size }
     Box {
         HorizontalPager(pager, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 5f)) { page ->
@@ -250,6 +262,19 @@ private fun Gallery(p: StoreProduct) {
                     )
                 }
             }
+        }
+    }
+}
+
+/** Running promotion: badge, its name and when it ends. */
+@Composable
+private fun Promotion(p: StoreProduct) {
+    val badge = p.discountBadge() ?: return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Tag(badge, Gold)
+        p.promotion?.let { promo ->
+            Text(promo.name, style = MaterialTheme.typography.labelLarge, color = Gold)
+            promo.endsAt?.let { Text("حتى ${formatDate(it)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

@@ -81,13 +81,17 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
         }
     }
 
-    /** Marks as read and reports the order to open, if any. */
-    fun open(n: AppNotification, openOrder: (String) -> Unit) {
+    /** Marks as read and reports what to open: the order it is about, or the wallet for top-up news. */
+    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit) {
         if (!n.isRead) {
             markLocally(n.id)
             viewModelScope.launch { repo.markRead(n.id) }
         }
-        n.orderNumber?.let(openOrder)
+        val order = n.orderNumber
+        when {
+            order != null -> openOrder(order)
+            n.type == "WALLET" || n.data["topUp"] != null -> openWallet()
+        }
     }
 
     fun readAll() {
@@ -106,7 +110,7 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
 }
 
 @Composable
-fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
+fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWallet: () -> Unit) {
     val vm = appViewModel { NotificationsViewModel(it.notifications) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
@@ -129,12 +133,12 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { items ->
             if (items.isEmpty()) {
-                EmptyState(Icons.Filled.Notifications, "لا توجد إشعارات بعد", "سنخبرك هنا بكل جديد عن طلباتك", modifier = Modifier.padding(padding))
+                EmptyState(Icons.Filled.Notifications, "لا توجد إشعارات بعد", "سنخبرك هنا بكل جديد عن طلباتك ورصيدك", modifier = Modifier.padding(padding))
                 return@LoadContent
             }
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(items, key = { it.id }) { n ->
-                    NotificationRow(n) { vm.open(n, openOrder) }
+                    NotificationRow(n) { vm.open(n, openOrder, openWallet) }
                     HorizontalDivider()
                 }
                 if (hasMore) {

@@ -279,7 +279,7 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
     var tax by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var payee by rememberSaveable { mutableStateOf("") }
-    var date by rememberSaveable { mutableStateOf(LocalDate.now(ZoneId.of("Africa/Cairo")).toString()) }
+    var date by rememberSaveable { mutableStateOf(LocalDate.now(ZoneId.of("Asia/Aden")).toString()) }
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.created.collect { created(it) } }
 
@@ -315,8 +315,8 @@ fun NewExpenseScreen(onBack: () -> Unit, created: (String) -> Unit) {
                 isError = !validDate, modifier = Modifier.fillMaxWidth(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = false, onClick = { date = LocalDate.now(ZoneId.of("Africa/Cairo")).toString() }, label = { Text("اليوم") })
-                FilterChip(selected = false, onClick = { date = LocalDate.now(ZoneId.of("Africa/Cairo")).minusDays(1).toString() }, label = { Text("أمس") })
+                FilterChip(selected = false, onClick = { date = LocalDate.now(ZoneId.of("Asia/Aden")).toString() }, label = { Text("اليوم") })
+                FilterChip(selected = false, onClick = { date = LocalDate.now(ZoneId.of("Asia/Aden")).minusDays(1).toString() }, label = { Text("أمس") })
             }
             Button(
                 onClick = {

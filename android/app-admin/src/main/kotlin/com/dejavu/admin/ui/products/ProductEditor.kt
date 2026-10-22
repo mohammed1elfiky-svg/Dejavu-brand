@@ -25,10 +25,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -59,17 +58,22 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
+import com.dejavu.admin.ui.theme.GlassCard
+import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminCategory
 import com.dejavu.core.admin.AdminProduct
 import com.dejavu.core.admin.AdminVariant
 import com.dejavu.core.admin.CreateProductRequest
 import com.dejavu.core.admin.ImageRequest
+import com.dejavu.core.admin.ImageUrl
 import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.NewVariantRequest
 import com.dejavu.core.admin.ProductStatus
 import com.dejavu.core.admin.UpdateProductRequest
 import com.dejavu.core.admin.UpdateVariantRequest
 import com.dejavu.core.admin.VariantPlanner
+import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
@@ -88,15 +92,22 @@ private val SLUG = Regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")
 /** A non-negative amount with up to 2 decimals, as the API accepts. */
 internal fun isAmount(v: String) = v.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
 
-/** One size × color line of a new product. Text fields stay strings while typing. */
+/** A factory barcode as typed or scanned: printable characters only, at most 64. */
+internal fun cleanBarcode(v: String) = v.filter { !it.isWhitespace() }.take(64)
+
+/**
+ * One size × color line of a new product. Text fields stay strings while typing.
+ * The SKU is not typed: the server numbers variants "<product SKU>-<n>".
+ */
 data class VariantRow(
     val size: String?,
     val color: String?,
     val colorHex: String?,
-    val sku: String,
     val quantity: String = "",
+    /** Optional override; empty = the product cost. */
     val unitCost: String = "",
     val price: String = "",
+    val barcode: String = "",
 ) {
     val title: String get() = listOfNotNull(size, color).joinToString(" · ").ifBlank { "مقاس واحد" }
 }
@@ -110,12 +121,20 @@ data class ProductForm(
     val descriptionAr: String = "",
     val price: String = "",
     val compareAt: String = "",
+    /** Cost per piece (SAR), shared by all variants. */
+    val costPrice: String = "",
     val status: ProductStatus = ProductStatus.DRAFT,
     val featured: Boolean = false,
-    val imageUrls: String = "",
+    val images: List<ImageUrl> = emptyList(),
+    /** What the product had when loaded, so images are only re-sent when changed. */
+    val savedImages: List<ImageUrl> = emptyList(),
     val sizes: String = "",
     val colors: String = "",
     val variants: List<VariantRow> = emptyList(),
+    /** Existing product only. */
+    val skuNumber: Int? = null,
+    val variantSkus: List<String> = emptyList(),
+    val variantColors: List<String> = emptyList(),
 )
 
 class ProductFormViewModel(private val productId: String?, private val repo: InventoryRepository) : BaseViewModel() {
@@ -129,6 +148,10 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
     val ready = _ready.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _uploading = MutableStateFlow(0)
+
+    /** Photos still being uploaded. */
+    val uploading = _uploading.asStateFlow()
     private val _saved = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val saved = _saved.asSharedFlow()
     val isNew = productId == null
@@ -161,15 +184,17 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
 
     fun setNameEn(v: String) = edit { f -> f.copy(nameEn = v, slug = if (f.slugEdited || !isNew) f.slug else VariantPlanner.slugOf(v)) }
 
+    /** Colors a photo can be tagged with. */
+    fun colorsOf(f: ProductForm): List<String> = if (isNew) VariantPlanner.split(f.colors) else f.variantColors
+
     /** Rebuilds the size × color lines, keeping what was typed for lines that stay. */
     fun generate() {
         val f = _form.value
         val sizes = VariantPlanner.split(f.sizes)
         val colors = VariantPlanner.split(f.colors)
-        val slug = f.slug.ifBlank { VariantPlanner.slugOf(f.nameEn) }
-        val rows = VariantPlanner.plan(slug, sizes, colors).map { p ->
-            f.variants.firstOrNull { it.size == p.size && it.color == p.color }?.copy(sku = p.sku)
-                ?: VariantRow(p.size, p.color, p.colorHex, p.sku)
+        // Only the size × color combinations are used; the server assigns the SKUs.
+        val rows = VariantPlanner.plan("item", sizes, colors).map { p ->
+            f.variants.firstOrNull { it.size == p.size && it.color == p.color } ?: VariantRow(p.size, p.color, p.colorHex)
         }
         _form.value = f.copy(variants = rows)
     }
@@ -184,13 +209,30 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
 
     fun removeRow(index: Int) = edit { f -> f.copy(variants = f.variants.filterIndexed { i, _ -> i != index }) }
 
+    fun setImages(images: List<ImageUrl>) = edit { it.copy(images = images.take(MAX_IMAGES)) }
+
+    /** Uploads a picked photo and adds it to the gallery. */
+    fun upload(bytes: ByteArray) {
+        if (_form.value.images.size + _uploading.value >= MAX_IMAGES) return say("الحد الأقصى $MAX_IMAGES صور للمنتج")
+        _uploading.value += 1
+        viewModelScope.launch {
+            repo.uploadImage(bytes).orSay()?.let { file ->
+                edit { f -> f.copy(images = (f.images + ImageUrl(file.url)).take(MAX_IMAGES)) }
+            }
+            _uploading.value -= 1
+        }
+    }
+
     fun save() {
         val f = _form.value
+        if (_uploading.value > 0) return say("انتظر حتى يكتمل رفع الصور")
         problem(f)?.let { return say(it) }
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            val urls = f.imageUrls.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            val colors = colorsOf(f)
+            val images = f.images.map { if (it.color != null && it.color !in colors) it.copy(color = null) else it }
+            val requests = images.map { ImageRequest(it.url, it.color) }
             val id = if (productId == null) {
                 repo.createProduct(
                     CreateProductRequest(
@@ -199,11 +241,12 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         nameEn = f.nameEn.trim(),
                         slug = f.slug.trim(),
                         basePrice = f.price.trim(),
+                        costPrice = f.costPrice.trim().ifBlank { null },
                         compareAtPrice = f.compareAt.trim().ifBlank { null },
                         descriptionAr = f.descriptionAr.trim().ifBlank { null },
                         status = f.status,
                         isFeatured = f.featured,
-                        images = urls.map(::ImageRequest).ifEmpty { null },
+                        images = requests.ifEmpty { null },
                         variants = f.variants.map { it.toRequest() },
                     ),
                 ).orSay()?.id
@@ -217,12 +260,13 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         slug = f.slug.trim(),
                         descriptionAr = f.descriptionAr.trim().ifBlank { null },
                         basePrice = f.price.trim(),
+                        costPrice = f.costPrice.trim().ifBlank { null },
                         compareAtPrice = f.compareAt.trim().ifBlank { null },
                         status = f.status,
                         isFeatured = f.featured,
                     ),
                 ).orSay()?.let { p ->
-                    if (urls != p.images.map { it.url }) repo.setImages(p.id, urls).orSay()?.id else p.id
+                    if (images != f.savedImages) repo.setImages(p.id, requests).orSay()?.id else p.id
                 }
             }
             _busy.value = false
@@ -237,27 +281,33 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         !SLUG.matches(f.slug.trim()) -> "الرابط: حروف إنجليزية صغيرة وأرقام وشرطات فقط (مثل linen-shirt)"
         !isAmount(f.price) || f.price.trim().toBigDecimal().signum() == 0 -> "اكتب سعراً صحيحاً"
         f.compareAt.isNotBlank() && !isAmount(f.compareAt) -> "السعر قبل الخصم غير صحيح"
-        f.imageUrls.lines().any { it.isNotBlank() && !it.trim().startsWith("http") } -> "روابط الصور يجب أن تبدأ بـ http"
+        f.costPrice.isNotBlank() && !isAmount(f.costPrice) -> "التكلفة غير صحيحة"
+        f.images.size > MAX_IMAGES -> "الحد الأقصى $MAX_IMAGES صور"
         !isNew -> null
         f.variants.isEmpty() -> "أضف المقاسات والألوان ثم اضغط \"توليد المتغيرات\""
-        f.variants.any { !VariantPlanner.isValidSku(it.sku) } -> "رمز SKU: حروف إنجليزية كبيرة وأرقام وشرطات"
-        f.variants.map { it.sku }.toSet().size != f.variants.size -> "رموز SKU مكررة"
         f.variants.any { it.quantity.isNotBlank() && it.quantity.toIntOrNull()?.let { q -> q >= 0 } != true } -> "الكمية يجب أن تكون رقماً صحيحاً"
-        f.variants.any { (it.quantity.toIntOrNull() ?: 0) > 0 && !isAmount(it.unitCost) } -> "اكتب تكلفة القطعة لكل متغير له كمية"
+        f.variants.any { it.unitCost.isNotBlank() && !isAmount(it.unitCost) } -> "تكلفة القطعة غير صحيحة"
+        f.variants.any { (it.quantity.toIntOrNull() ?: 0) > 0 && it.unitCost.isBlank() } && Money.isZero(f.costPrice) ->
+            "اكتب تكلفة المنتج حتى تُسجَّل الكميات الحالية بقيمتها"
         f.variants.any { it.price.isNotBlank() && !isAmount(it.price) } -> "سعر المتغير غير صحيح"
+        f.variants.map { it.barcode.trim() }.filter { it.isNotEmpty() }.let { it.toSet().size != it.size } -> "باركود المصنع مكرر بين المتغيرات"
         else -> null
     }
 }
 
-private fun VariantRow.toRequest() = NewVariantRequest(
-    sku = sku,
-    size = size,
-    color = color,
-    colorHex = colorHex,
-    price = price.trim().ifBlank { null },
-    initialQuantity = quantity.toIntOrNull()?.takeIf { it > 0 },
-    unitCost = unitCost.trim().ifBlank { null }?.takeIf { (quantity.toIntOrNull() ?: 0) > 0 },
-)
+private fun VariantRow.toRequest(): NewVariantRequest {
+    val qty = quantity.toIntOrNull()?.takeIf { it > 0 }
+    return NewVariantRequest(
+        sku = null,
+        barcode = barcode.trim().ifBlank { null },
+        size = size,
+        color = color,
+        colorHex = colorHex,
+        price = price.trim().ifBlank { null },
+        initialQuantity = qty,
+        unitCost = unitCost.trim().ifBlank { null }?.takeIf { qty != null },
+    )
+}
 
 private fun AdminProduct.toForm() = ProductForm(
     categoryId = category.id,
@@ -268,9 +318,14 @@ private fun AdminProduct.toForm() = ProductForm(
     descriptionAr = descriptionAr.orEmpty(),
     price = basePrice,
     compareAt = compareAtPrice.orEmpty(),
+    costPrice = costPrice.takeIf { !Money.isZero(it) }.orEmpty(),
     status = status,
     featured = isFeatured,
-    imageUrls = images.joinToString("\n") { it.url },
+    images = images,
+    savedImages = images,
+    skuNumber = skuNumber,
+    variantSkus = variants.map { it.sku },
+    variantColors = variants.mapNotNull { it.color?.trim()?.ifBlank { null } }.distinct(),
 )
 
 /** Create ([productId] null) or edit a product. */
@@ -281,7 +336,10 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     val form by vm.form.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val uploading by vm.uploading.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    var scanRow by rememberSaveable { mutableStateOf(-1) }
+    val scan = rememberBarcodeScanner { code -> if (scanRow >= 0) vm.editRow(scanRow) { it.copy(barcode = cleanBarcode(code)) } }
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { saved(it) } }
@@ -292,7 +350,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Surface(shadowElevation = 8.dp) {
-                Button(onClick = vm::save, enabled = ready && !busy, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Button(onClick = vm::save, enabled = ready && !busy && uploading == 0, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("حفظ المنتج")
                 }
             }
@@ -300,6 +358,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     ) { padding ->
         LoadContent(if (ready) categories else Load.Loading, onRetry = vm::load, modifier = Modifier.padding(padding)) { cats ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 24.dp)) {
+                item { SkuCard(form, vm.isNew) }
                 item { SectionTitle("البيانات الأساسية") }
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -318,11 +377,19 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                         )
                     }
                 }
-                item { SectionTitle("السعر (ر.س، شامل الضريبة)") }
+                item { SectionTitle("السعر والتكلفة (ر.س)") }
                 item {
-                    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Field("السعر", form.price, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(price = v) } }
-                        Field("قبل الخصم (اختياري)", form.compareAt, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(compareAt = v) } }
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Field("سعر البيع (شامل الضريبة)", form.price, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(price = v) } }
+                            Field("قبل الخصم (اختياري)", form.compareAt, Modifier.weight(1f), decimal = true) { v -> vm.edit { it.copy(compareAt = v) } }
+                        }
+                        Field(
+                            "التكلفة (ر.س)",
+                            form.costPrice,
+                            decimal = true,
+                            hint = "تكلفة القطعة الواحدة، تُستخدم لكل المقاسات والألوان",
+                        ) { v -> vm.edit { it.copy(costPrice = v) } }
                     }
                 }
                 item { SectionTitle("النشر") }
@@ -341,34 +408,64 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                         }
                     }
                 }
-                item { SectionTitle("الصور") }
-                item {
-                    OutlinedTextField(
-                        value = form.imageUrls,
-                        onValueChange = { v -> vm.edit { it.copy(imageUrls = v) } },
-                        label = { Text("روابط الصور (رابط في كل سطر)") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    )
-                }
                 if (vm.isNew) {
                     item { SectionTitle("المقاسات والألوان") }
                     item { VariantOptions(form, vm) }
                     itemsIndexed(form.variants, key = { _, r -> "${r.size}|${r.color}" }) { i, row ->
-                        VariantRowCard(row, onChange = { change -> vm.editRow(i, change) }, onRemove = { vm.removeRow(i) })
+                        VariantRowCard(
+                            row,
+                            onChange = { change -> vm.editRow(i, change) },
+                            onRemove = { vm.removeRow(i) },
+                            onScan = { scanRow = i; scan() },
+                        )
                     }
                 } else {
                     item {
                         Text(
-                            "المقاسات والألوان وكمياتها تُعدَّل من صفحة المنتج.",
+                            "المقاسات والألوان وكمياتها وباركود المصنع تُعدَّل من صفحة المنتج.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp),
                         )
                     }
                 }
+                item { SectionTitle("الصور") }
+                item {
+                    ProductGallery(
+                        images = form.images,
+                        colors = vm.colorsOf(form),
+                        uploading = uploading > 0,
+                        onChange = vm::setImages,
+                        onPicked = vm::upload,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
         }
+    }
+}
+
+/** Read-only product SKU: numbered by the server (100…), variants "<SKU>-<n>". */
+@Composable
+private fun SkuCard(form: ProductForm, isNew: Boolean) {
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("رقم الصنف (SKU)", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (isNew || form.skuNumber == null) "يُولَّد تلقائياً" else form.skuNumber.toString(),
+                style = MaterialTheme.typography.titleMedium,
+                color = Lux.GoldDeep,
+            )
+        }
+        Text(
+            if (isNew) {
+                "يُرقَّم المنتج تلقائياً عند الحفظ (مثل 100) وكل مقاس/لون برقم فرعي (100-1، 100-2…)."
+            } else {
+                form.variantSkus.joinToString("، ").ifBlank { "لا توجد متغيرات بعد" }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = Lux.InkSoft,
+        )
     }
 }
 
@@ -407,7 +504,7 @@ private fun VariantOptions(form: ProductForm, vm: ProductFormViewModel) {
             Text("تعبئة سريعة لكل المتغيرات", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Field("الكمية", bulkQty, Modifier.weight(1f), number = true) { bulkQty = it }
-                Field("تكلفة القطعة", bulkCost, Modifier.weight(1f), decimal = true) { bulkCost = it }
+                Field("تكلفة خاصة (اختياري)", bulkCost, Modifier.weight(1f), decimal = true) { bulkCost = it }
                 TextButton(onClick = { vm.fillAll(bulkQty, bulkCost) }) { Text("تطبيق") }
             }
         }
@@ -415,55 +512,66 @@ private fun VariantOptions(form: ProductForm, vm: ProductFormViewModel) {
 }
 
 @Composable
-private fun VariantRowCard(row: VariantRow, onChange: ((VariantRow) -> VariantRow) -> Unit, onRemove: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun VariantRowCard(row: VariantRow, onChange: ((VariantRow) -> VariantRow) -> Unit, onRemove: () -> Unit, onScan: () -> Unit) {
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), contentPadding = 12.dp, elevation = 6.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.colorHex?.let { Swatch(it) }
                 Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text("SKU تلقائي", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
                 IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
             }
-            Field("SKU", row.sku) { v -> onChange { it.copy(sku = v.uppercase()) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field("الكمية الحالية", row.quantity, Modifier.weight(1f), number = true) { v -> onChange { it.copy(quantity = v) } }
-                Field("تكلفة القطعة", row.unitCost, Modifier.weight(1f), decimal = true) { v -> onChange { it.copy(unitCost = v) } }
+                Field("تكلفة خاصة", row.unitCost, Modifier.weight(1f), decimal = true) { v -> onChange { it.copy(unitCost = v) } }
                 Field("سعر خاص", row.price, Modifier.weight(1f), decimal = true) { v -> onChange { it.copy(price = v) } }
             }
+            BarcodeField(row.barcode, onScan = onScan) { v -> onChange { it.copy(barcode = v) } }
         }
     }
 }
 
 // ----------------------------------------------- variants of an existing product ---
 
-/** Adds a size/color to an existing product, with its current stock. */
+/** Adds a size/color to an existing product, with its current stock. The SKU is numbered by the server. */
 @Composable
 fun AddVariantDialog(product: AdminProduct, onDismiss: () -> Unit, onSave: (NewVariantRequest) -> Unit) {
     var size by rememberSaveable { mutableStateOf("") }
     var color by rememberSaveable { mutableStateOf("") }
-    var sku by rememberSaveable { mutableStateOf("") }
-    var skuEdited by rememberSaveable { mutableStateOf(false) }
+    var barcode by rememberSaveable { mutableStateOf("") }
     var quantity by rememberSaveable { mutableStateOf("") }
     var cost by rememberSaveable { mutableStateOf("") }
     var price by rememberSaveable { mutableStateOf("") }
-    val suggested = VariantPlanner.plan(product.slug, listOfNotNull(size.trim().ifBlank { null }), listOfNotNull(color.trim().ifBlank { null })).first().sku
-    val shownSku = if (skuEdited) sku else suggested
+    val scan = rememberBarcodeScanner { barcode = cleanBarcode(it) }
     val qty = quantity.toIntOrNull() ?: 0
-    val taken = product.variants.any { it.sku == shownSku }
-    val valid = VariantPlanner.isValidSku(shownSku) && !taken && (quantity.isBlank() || quantity.toIntOrNull() != null) &&
-        (qty == 0 || isAmount(cost)) && (price.isBlank() || isAmount(price))
+    val nextNo = (product.variants.mapNotNull { it.variantNo }.maxOrNull() ?: product.variants.size) + 1
+    val nextSku = product.skuNumber?.let { "$it-$nextNo" }
+    val barcodeTaken = barcode.isNotBlank() && product.variants.any { it.barcode == barcode.trim() || it.sku == barcode.trim() }
+    val valid = (quantity.isBlank() || quantity.toIntOrNull() != null) && !barcodeTaken &&
+        (cost.isBlank() || isAmount(cost)) && (price.isBlank() || isAmount(price)) &&
+        (size.isNotBlank() || color.isNotBlank())
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("إضافة مقاس / لون") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "SKU: ${nextSku ?: "يُولَّد تلقائياً"}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Lux.GoldDeep,
+                )
                 Field("المقاس", size) { size = it }
                 Field("اللون", color) { color = it }
-                Field("SKU", shownSku, hint = if (taken) "هذا الرمز مستخدم" else null) { sku = it.uppercase(); skuEdited = true }
+                BarcodeField(barcode, hint = if (barcodeTaken) "هذا الباركود مستخدم في هذا المنتج" else null, onScan = scan) { barcode = it }
                 Field("الكمية الحالية", quantity, number = true) { quantity = it }
-                if (qty > 0) Field("تكلفة القطعة (ر.س)", cost, decimal = true) { cost = it }
+                if (qty > 0) {
+                    Field(
+                        "تكلفة القطعة (اختياري)",
+                        cost,
+                        decimal = true,
+                        hint = "فارغ = تكلفة المنتج ${Money.formatBase(product.costPrice)}",
+                    ) { cost = it }
+                }
                 Field("سعر خاص (اختياري)", price, decimal = true) { price = it }
             }
         },
@@ -474,13 +582,14 @@ fun AddVariantDialog(product: AdminProduct, onDismiss: () -> Unit, onSave: (NewV
                     onDismiss()
                     onSave(
                         NewVariantRequest(
-                            sku = shownSku,
+                            sku = null,
+                            barcode = barcode.trim().ifBlank { null },
                             size = size.trim().ifBlank { null },
                             color = color.trim().ifBlank { null },
                             colorHex = VariantPlanner.colorHex(color),
                             price = price.trim().ifBlank { null },
                             initialQuantity = qty.takeIf { it > 0 },
-                            unitCost = cost.trim().takeIf { qty > 0 },
+                            unitCost = cost.trim().ifBlank { null }?.takeIf { qty > 0 },
                         ),
                     )
                 },
@@ -496,8 +605,10 @@ fun EditVariantDialog(variant: AdminVariant, onDismiss: () -> Unit, onSave: (Upd
     var size by rememberSaveable { mutableStateOf(variant.size.orEmpty()) }
     var color by rememberSaveable { mutableStateOf(variant.color.orEmpty()) }
     var price by rememberSaveable { mutableStateOf(variant.price.orEmpty()) }
+    var barcode by rememberSaveable { mutableStateOf(variant.barcode.orEmpty()) }
     var threshold by rememberSaveable { mutableStateOf(variant.lowStockThreshold.toString()) }
     var active by rememberSaveable { mutableStateOf(variant.isActive) }
+    val scan = rememberBarcodeScanner { barcode = cleanBarcode(it) }
     val valid = (price.isBlank() || isAmount(price)) && threshold.toIntOrNull()?.let { it >= 0 } == true
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -506,6 +617,7 @@ fun EditVariantDialog(variant: AdminVariant, onDismiss: () -> Unit, onSave: (Upd
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field("المقاس", size) { size = it }
                 Field("اللون", color) { color = it }
+                BarcodeField(barcode, hint = if (variant.barcode != null && barcode.isBlank()) "سيُحذف باركود المصنع" else null, onScan = scan) { barcode = it }
                 Field("سعر خاص (فارغ = سعر المنتج)", price, decimal = true) { price = it }
                 Field("تنبيه عند وصول المخزون إلى", threshold, number = true) { threshold = it }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -519,8 +631,11 @@ fun EditVariantDialog(variant: AdminVariant, onDismiss: () -> Unit, onSave: (Upd
                 enabled = valid,
                 onClick = {
                     onDismiss()
+                    val newBarcode = barcode.trim()
                     onSave(
                         UpdateVariantRequest(
+                            // Only sent when changed; "" clears it.
+                            barcode = newBarcode.takeIf { it != variant.barcode.orEmpty() },
                             size = size.trim().ifBlank { null },
                             color = color.trim().ifBlank { null },
                             colorHex = VariantPlanner.colorHex(color),
@@ -538,6 +653,23 @@ fun EditVariantDialog(variant: AdminVariant, onDismiss: () -> Unit, onSave: (Upd
 }
 
 // ----------------------------------------------------------------- widgets ---
+
+/** "باركود المصنع" with a camera scan button. */
+@Composable
+private fun BarcodeField(value: String, hint: String? = null, onScan: () -> Unit, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onChange(cleanBarcode(it)) },
+        label = { Text("باركود المصنع (اختياري)") },
+        supportingText = hint?.let { { Text(it) } },
+        isError = hint != null && hint.contains("مستخدم"),
+        singleLine = true,
+        trailingIcon = {
+            IconButton(onClick = onScan) { Icon(Icons.Filled.Search, contentDescription = "مسح الباركود بالكاميرا", tint = Lux.GoldDeep) }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
 @Composable
 private fun Field(

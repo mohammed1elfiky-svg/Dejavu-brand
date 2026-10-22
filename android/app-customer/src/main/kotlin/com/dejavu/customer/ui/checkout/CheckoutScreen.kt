@@ -30,6 +30,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,11 +48,13 @@ import com.dejavu.core.data.CartRepository
 import com.dejavu.core.data.CurrencyRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.ServerMessages
+import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.PaymentMethod
+import com.dejavu.core.model.Wallet
 import com.dejavu.core.network.ApiException
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.customer.ui.appContainer
@@ -67,6 +70,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 
 data class CheckoutState(
     val addresses: List<Address>? = null,
@@ -76,6 +80,8 @@ data class CheckoutState(
     val note: String = "",
     val placing: Boolean = false,
     val problems: List<String> = emptyList(),
+    /** Wallet balances, for paying from the account; null until loaded (or if it failed). */
+    val wallet: Wallet? = null,
 )
 
 class CheckoutViewModel(
@@ -83,6 +89,7 @@ class CheckoutViewModel(
     private val cartRepo: CartRepository,
     private val orders: OrderRepository,
     private val currencies: CurrencyRepository,
+    private val walletRepo: WalletRepository,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow(CheckoutState())
     val state = _state.asStateFlow()
@@ -95,6 +102,13 @@ class CheckoutViewModel(
         viewModelScope.launch { _state.value = _state.value.copy(methods = orders.paymentMethods()) }
         // Fresh rate before invoicing, so the total shown is the one the order gets.
         viewModelScope.launch { currencies.refresh() }
+    }
+
+    /** Balances for "pay from wallet"; reloaded when coming back from a top-up. */
+    fun loadWallet() {
+        viewModelScope.launch {
+            walletRepo.wallet().getOrNull()?.let { _state.value = _state.value.copy(wallet = it) }
+        }
     }
 
     fun loadAddresses() {
@@ -144,8 +158,8 @@ class CheckoutViewModel(
 }
 
 @Composable
-fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) -> Unit) {
-    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies) }
+fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit, placed: (String) -> Unit) {
+    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies, it.wallet) }
     val rates by appContainer().currencies.rates.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val cart by vm.cart.collectAsStateWithLifecycle()
@@ -161,8 +175,16 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
     // Reload when coming back from "add address".
     LifecycleResumeEffect(vm) {
         vm.loadAddresses()
+        vm.loadWallet()
         onPauseOrDispose {}
     }
+
+    // What paying from the wallet would take: the total in the invoice (display) currency
+    // versus the balance in that currency. The server has the final say.
+    val display = rates.let { Money.display }
+    val walletBalance = state.wallet?.let { Money.parse(it.available(display.currency)) }
+    val orderTotal = cart?.let { Money.convert(Money.parse(it.totals.grandTotal), display.currency, display.rate) }
+    val walletShort = walletBalance != null && orderTotal != null && walletBalance < orderTotal
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -177,7 +199,7 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
                         val d = Money.display
                         if (d.currency != Currency.SAR) {
                             Text(
-                                "بالريال اليمني بسعر 1 ر.س = ${Money.plain(d.rate, d.currency)}، ويُثبَّت هذا السعر في فاتورتك",
+                                "بـ${d.currency.nameAr} بسعر 1 ر.س = ${Money.plain(d.rate, d.currency)}، ويُثبَّت هذا السعر في فاتورتك",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -185,7 +207,8 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
                     }
                     Button(
                         onClick = vm::place,
-                        enabled = !state.placing && state.addressId != null && cart?.canCheckout == true,
+                        enabled = !state.placing && state.addressId != null && cart?.canCheckout == true &&
+                            !(state.method == PaymentMethod.CUSTOMER_ACCOUNT && walletShort),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
                         if (state.placing) CircularProgressIndicator(Modifier.padding(2.dp), strokeWidth = 2.dp) else Text("تأكيد الطلب")
@@ -224,10 +247,35 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
 
             item { SectionTitle("طريقة الدفع") }
             items(state.methods) { m ->
-                Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
-                    Text(m.label, style = MaterialTheme.typography.titleSmall)
-                    methodHint(m)?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (m == PaymentMethod.CUSTOMER_ACCOUNT) {
+                    Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }, enabled = !walletShort) {
+                        Text("الدفع من رصيد المحفظة", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "رصيدك المتاح: " + (walletBalance?.let { Money.plain(it.max(BigDecimal.ZERO), display.currency) } ?: "…"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (walletShort) {
+                            Text(
+                                "الرصيد بـ${display.currency.nameAr} لا يكفي لإجمالي الطلب (${orderTotal?.let { Money.plain(it, display.currency) }})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            TextButton(onClick = topUp) { Text("شحن الرصيد") }
+                        } else {
+                            Text(
+                                "يُخصم إجمالي الطلب من رصيدك فور التأكيد",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                } else {
+                    Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
+                        Text(m.label, style = MaterialTheme.typography.titleSmall)
+                        methodHint(m)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
@@ -261,21 +309,22 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, placed: (String) 
 
 private fun methodHint(m: PaymentMethod): String? = when (m) {
     PaymentMethod.CASH_ON_DELIVERY -> null
+    PaymentMethod.CUSTOMER_ACCOUNT -> "يُخصم إجمالي الطلب من رصيدك فور التأكيد"
     PaymentMethod.CARD -> "ادفع بأمان على صفحة الدفع الإلكتروني بعد تأكيد الطلب (فيزا، ماستركارد، مدى). يُخصم المبلغ بالريال السعودي"
     else -> "سيتواصل معك فريقنا بتفاصيل الدفع لتأكيد الطلب"
 }
 
 @Composable
-private fun Choice(selected: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
+private fun Choice(selected: Boolean, onClick: () -> Unit, enabled: Boolean = true, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
+            .selectable(selected = selected, onClick = onClick, enabled = enabled, role = Role.RadioButton),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         ),
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RadioButton(selected = selected, onClick = null)
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
             Column(Modifier.weight(1f)) { content() }
         }
     }

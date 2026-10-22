@@ -9,6 +9,7 @@ import com.dejavu.core.data.NotificationRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
+import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.network.ApiClient
 import com.dejavu.core.ui.push.Push
 import com.dejavu.core.ui.push.PushConfig
@@ -42,6 +43,7 @@ class AppContainer(private val context: Context) {
     val orders = OrderRepository(api, cart)
     val notifications = NotificationRepository(api)
     val currencies = CurrencyRepository(api, preferred = { settings.currency }, save = { settings.currency = it })
+    val wallet = WalletRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -63,6 +65,19 @@ class AppContainer(private val context: Context) {
 
     fun orderOpened() {
         _openOrder.value = null
+    }
+
+    private val _openWallet = MutableStateFlow(false)
+
+    /** Wallet to show, requested from outside the UI (a top-up notification tap). */
+    val openWallet = _openWallet.asStateFlow()
+
+    fun requestWallet() {
+        _openWallet.value = true
+    }
+
+    fun walletOpened() {
+        _openWallet.value = false
     }
 
     fun start() {

@@ -31,6 +31,7 @@ import com.dejavu.core.ui.PriceText
 import com.dejavu.core.ui.ProductImage
 import com.dejavu.core.ui.Tag
 import com.dejavu.core.ui.theme.Gold
+import java.math.RoundingMode
 
 @Composable
 fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -48,15 +49,33 @@ fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier =
             )
             if (!product.inStock) {
                 Tag("نفدت الكمية", Color.Black.copy(alpha = 0.7f), Modifier.align(Alignment.TopStart).padding(8.dp))
-            } else if (product.compareAtPrice != null) {
-                Tag("خصم", Gold, Modifier.align(Alignment.TopStart).padding(8.dp))
+            } else {
+                product.discountBadge()?.let { Tag(it, Gold, Modifier.align(Alignment.TopStart).padding(8.dp)) }
             }
         }
         Column(Modifier.padding(10.dp)) {
             Text(product.nameAr, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            PriceText(product.variants.minOfOrNull { Money.parse(it.price) }?.toPlainString() ?: product.basePrice, product.compareAtPrice)
+            val cheapest = product.variants.minByOrNull { Money.parse(it.price) }
+            PriceText(cheapest?.price ?: product.basePrice, cheapest?.compareAtPrice ?: product.compareAtPrice)
         }
+    }
+}
+
+/** Percent off while a promotion runs ("20.00" → 20), else the saving versus the strike-through price. */
+fun StoreProduct.discountPercent(): Int? {
+    promotion?.percent?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }?.let { return it.setScale(0, RoundingMode.HALF_UP).toInt() }
+    val cheapest = variants.minByOrNull { Money.parse(it.price) }
+    return Money.discountPercent(cheapest?.price ?: basePrice, cheapest?.compareAtPrice ?: compareAtPrice)
+}
+
+/** "خصم 20%" on promoted or reduced products, null otherwise. */
+fun StoreProduct.discountBadge(): String? {
+    val percent = discountPercent()
+    return when {
+        percent != null -> "خصم $percent%"
+        compareAtPrice != null -> "خصم"
+        else -> null
     }
 }
 

@@ -109,7 +109,7 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
             if (registering) {
                 Input("الاسم", form.name, errors["name"]) { v -> vm.update { copy(name = v) } }
             }
-            Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "01012345678") { v -> vm.update { copy(phone = v) } }
+            Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
             if (registering) {
                 Input("البريد الإلكتروني (اختياري)", form.email, errors["email"], KeyboardType.Email) { v -> vm.update { copy(email = v) } }
             }

@@ -2,6 +2,11 @@
 
 package com.dejavu.admin.ui.pos
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.print.Printers
 import com.dejavu.core.ui.theme.GlassTopBar
 import com.dejavu.core.ui.theme.GoldBadge
 import com.dejavu.core.ui.theme.LiquidGoldButton
@@ -56,6 +61,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import com.dejavu.core.ui.theme.Button
@@ -615,7 +621,7 @@ class PosViewModel(
 
 /** The till: product grid, cart and multi-currency checkout. */
 @Composable
-fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit, onLogout: (() -> Unit)? = null) {
+fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit, onLogout: (() -> Unit)? = null, openPrinters: (() -> Unit)? = null) {
     var confirmLogout by remember { mutableStateOf(false) }
     val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury) }
     val snackbar = remember { SnackbarHostState() }
@@ -628,6 +634,32 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
     val canEditRates = session.can(Perm.SETTINGS_MANAGE)
     var editRates by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
+
+    // Receipt printer: automatic after each sale (if set up), or from the receipt dialog.
+    val printerSettings by adminContainer().printers.settings.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val printScope = rememberCoroutineScope()
+    var printing by remember { mutableStateOf(false) }
+    var printStatus by remember { mutableStateOf<String?>(null) }
+    fun printReceipt(r: PosReceipt) {
+        if (printing) return
+        if (!printerSettings.receipt.target.isSet) {
+            printStatus = "لم تُضبط طابعة الفواتير بعد: المزيد ← الطابعات"
+            return
+        }
+        printing = true
+        printStatus = "جارٍ الطباعة…"
+        printScope.launch {
+            val result = Printers.printReceipt(context, printerSettings, r)
+            printing = false
+            printStatus = result.fold({ "تمت طباعة الفاتورة ✓" }, { it.message ?: "تعذّرت الطباعة" })
+        }
+    }
+    LaunchedEffect(vm.receipt?.id) {
+        printStatus = null
+        val r = vm.receipt ?: return@LaunchedEffect
+        if (printerSettings.receipt.autoPrint && printerSettings.receipt.target.isSet) printReceipt(r)
+    }
     val scan = rememberBarcodeScanner { code -> vm.scan(code) { picking = it } }
 
     LaunchedEffect(arranging, vm.products) {
@@ -658,6 +690,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
                     IconButton(onClick = openReturns, enabled = !arranging) { Icon(Icons.Filled.Refresh, contentDescription = "مرتجع / استبدال") }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
                     IconButton(onClick = openBoxes) { Icon(Icons.Filled.Lock, contentDescription = "الصناديق") }
+                    if (openPrinters != null) IconButton(onClick = openPrinters) { Icon(Icons.Filled.Settings, contentDescription = "الطابعات") }
                     if (onLogout != null) {
                         IconButton(onClick = { confirmLogout = true }) {
                             Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "تسجيل الخروج", tint = MaterialTheme.colorScheme.error)
@@ -762,7 +795,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
 
     if (editRates && canEditRates) RatesDialog(vm, onDismiss = { editRates = false })
 
-    vm.receipt?.let { r -> ReceiptDialog(r, onNewSale = vm::newSale) }
+    vm.receipt?.let { r -> ReceiptDialog(r, onNewSale = vm::newSale, printing = printing, printStatus = printStatus, onPrint = { printReceipt(r) }) }
 
     vm.shift?.let { s -> ShiftDialog(s, onRetry = vm::loadShift, onDismiss = vm::closeShift, openBoxes = { vm.closeShift(); openBoxes() }) }
 }
@@ -1522,7 +1555,7 @@ private fun QuickCustomerDialog(onDismiss: () -> Unit, onCreate: (String, String
 }
 
 @Composable
-private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit) {
+private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit, printing: Boolean, printStatus: String?, onPrint: () -> Unit) {
     val cur = r.currency
     fun inCur(v: String) = Money.plain(Money.parse(v), cur)
     AlertDialog(
@@ -1568,6 +1601,7 @@ private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit) {
                 if (!Money.isZero(r.onAccount) && r.payments.none { it.method == PaymentMethod.CUSTOMER_ACCOUNT }) {
                     SummaryRow("على حساب العميل", r.inInvoiceCurrency(r.onAccount), valueColor = Lux.GoldDeep)
                 }
+                printStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft, modifier = Modifier.padding(top = 6.dp)) }
             }
         },
         confirmButton = {
@@ -1575,6 +1609,9 @@ private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit) {
                 onClick = onNewSale,
                 shape = RoundedCornerShape(16.dp),
             ) { Text("بيع جديد") }
+        },
+        dismissButton = {
+            TextButton(onClick = onPrint, enabled = !printing) { Text(if (printing) "جارٍ الطباعة…" else "طباعة الفاتورة") }
         },
     )
 }

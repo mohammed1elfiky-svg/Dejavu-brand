@@ -151,6 +151,7 @@ fun MoreScreen(session: StaffSession.LoggedIn, navigate: (String) -> Unit) {
             if (session.can(Perm.SETTINGS_MANAGE) && profile?.roles?.any { it.name == "admin" } == true) {
                 item(key = "wipe") { MenuTile("تصفير البيانات التجريبية", Icons.Filled.Delete, danger = true) { navigate(R.WIPE) } }
             }
+            item(key = "printers") { MenuTile("الطابعات", Icons.Filled.Build, caption = "الفواتير والباركود") { navigate(R.PRINTERS) } }
             item(key = "server") { MenuTile("الخادم", Icons.Filled.Settings, caption = container.settings.baseUrl.substringAfter("://")) { navigate(R.SERVER) } }
             item(key = "logout") { MenuTile("تسجيل الخروج", Icons.AutoMirrored.Filled.ExitToApp, danger = true) { confirmLogout = true } }
         }

@@ -22,6 +22,7 @@ import com.dejavu.core.ui.push.PushConfig
 import com.dejavu.core.ui.storage.SecureTokenStore
 import com.dejavu.core.ui.storage.SettingsStore
 import kotlinx.coroutines.CoroutineScope
+import com.dejavu.admin.print.PrinterStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +56,9 @@ class AdminContainer(private val context: Context) {
     val wallet = WalletAdminRepository(api)
     val promotions = PromotionRepository(api)
     val staff = StaffRepository(api)
+
+    /** Receipt and barcode-label printers of this device. */
+    val printers = PrinterStore(context)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

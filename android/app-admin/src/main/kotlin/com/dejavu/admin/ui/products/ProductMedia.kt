@@ -2,6 +2,9 @@
 
 package com.dejavu.admin.ui.products
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.print.Printers
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -346,6 +349,24 @@ fun StickerDialog(title: String, stickers: List<StickerData>, onDismiss: () -> U
     val maxCopies = (MAX_STICKERS / stickers.size).coerceIn(1, 50)
     val preview = remember(stickers) { stickerBitmap(stickers.first()).asImageBitmap() }
     val total = stickers.size * copies
+    val printerSettings by adminContainer().printers.settings.collectAsStateWithLifecycle()
+    var labelStatus by remember { mutableStateOf<String?>(null) }
+
+    /** Straight to the thermal barcode printer (TSPL / ZPL / ESC) set up under Printers. */
+    fun printOnLabelPrinter() {
+        if (working) return
+        if (!printerSettings.label.target.isSet) {
+            labelStatus = "لم تُضبط طابعة الباركود بعد: المزيد ← الطابعات"
+            return
+        }
+        working = true
+        labelStatus = "جارٍ الإرسال إلى طابعة الباركود…"
+        scope.launch {
+            val result = Printers.printLabels(context, printerSettings, stickers, copies)
+            working = false
+            labelStatus = result.fold({ "تم إرسال $total ملصق إلى ${printerSettings.label.target.title} ✓" }, { it.message ?: "تعذّرت الطباعة" })
+        }
+    }
 
     fun build(then: (Bitmap) -> Unit) {
         if (working) return
@@ -378,8 +399,12 @@ fun StickerDialog(title: String, stickers: List<StickerData>, onDismiss: () -> U
                     Text(if (stickers.size > 1) "عدد النسخ لكل مقاس" else "عدد النسخ", Modifier.weight(1f))
                     QuantityStepper(value = copies, onChange = { copies = it.coerceIn(1, maxCopies) }, max = maxCopies)
                 }
-                Text("الإجمالي: $total ملصق · المقاس 50×30 مم", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                Text("الإجمالي: $total ملصق · المقاس ${printerSettings.label.widthMm}×${printerSettings.label.heightMm} مم", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                 if (working) LinearProgressIndicator(Modifier.fillMaxWidth())
+                com.dejavu.core.ui.theme.Button(onClick = { printOnLabelPrinter() }, enabled = !working, modifier = Modifier.fillMaxWidth()) {
+                    Text("طباعة على طابعة الباركود")
+                }
+                labelStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
             }
         },
         confirmButton = {
@@ -387,7 +412,7 @@ fun StickerDialog(title: String, stickers: List<StickerData>, onDismiss: () -> U
                 build { bmp ->
                     PrintHelper(context).apply { scaleMode = PrintHelper.SCALE_MODE_FIT }.printBitmap("dejavu-stickers", bmp)
                 }
-            }) { Text("طباعة") }
+            }) { Text("طباعة عادية") }
         },
         dismissButton = {
             Row {

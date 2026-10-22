@@ -410,7 +410,6 @@ data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slu
 data class NewVariantRequest(
     /** Leave null to number it automatically (<product SKU>-<n>). */
     val sku: String? = null,
-    val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
     val colorHex: String? = null,
@@ -420,6 +419,8 @@ data class NewVariantRequest(
     /** Pieces on hand now, booked as opening stock with [unitCost] (SAR). */
     val initialQuantity: Int? = null,
     val unitCost: String? = null,
+    /** Manufacturer's barcode. */
+    val barcode: String? = null,
 )
 
 @Serializable
@@ -444,14 +445,14 @@ data class CreateProductRequest(
 @Serializable
 data class UpdateVariantRequest(
     val sku: String? = null,
-    /** "" clears it. */
-    val barcode: String? = null,
     val size: String? = null,
     val color: String? = null,
     val colorHex: String? = null,
     val price: String? = null,
     val lowStockThreshold: Int? = null,
     val isActive: Boolean? = null,
+    /** Manufacturer's barcode; "" clears it. */
+    val barcode: String? = null,
 )
 
 @Serializable

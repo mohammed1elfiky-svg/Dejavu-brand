@@ -19,7 +19,8 @@ import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
-import { PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
+import { PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
+import { ReturnsService } from './returns.service';
 import { priceOrder, revenueSplit } from './pricing';
 import { getSetting } from './settings';
 
@@ -79,6 +80,7 @@ export class PosService {
     private readonly currencies: CurrencyService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly returns: ReturnsService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -139,7 +141,13 @@ export class PosService {
 
   async sell(dto: PosSaleDto, cashierId: string) {
     await this.treasury.ensureCashierBoxes(cashierId);
-    const orderId = await this.prisma.$transaction(async (tx) => {
+    const orderId = await this.prisma.$transaction((tx) => this.sellIn(tx, dto, cashierId));
+    return this.receipt(orderId);
+  }
+
+  /** Rings up a sale inside the caller's transaction; returns the new order's id. */
+  async sellIn(tx: Tx, dto: PosSaleDto & { fromAccountMax?: Decimal }, cashierId: string): Promise<string> {
+    {
       const invoiceCurrency = await this.currencies.requireActive(dto.currency ?? BASE_CURRENCY, tx);
       const customerId = await this.customerFor(tx, dto);
       const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true } });
@@ -176,8 +184,10 @@ export class PosService {
       });
       const total = pricing.grandTotal;
 
-      // ---- the money handed over ----
-      const tenders = await this.tenders(tx, dto, cashierId, invoiceCurrency.code, rate, total);
+      // ---- the money handed over (first any credit the customer holds, e.g. from a return) ----
+      const credit = await this.accountTender(tx, dto, customerId, invoiceCurrency.code, rate, total);
+      const tenders = await this.tenders(tx, dto, cashierId, invoiceCurrency.code, rate, total, credit?.sar ?? ZERO);
+      if (credit) tenders.unshift(credit);
       let paid = sum(tenders.map((t) => t.sar));
       // A remainder smaller than the smallest coin of the last currency used counts as paid.
       const last = tenders[tenders.length - 1];
@@ -292,7 +302,15 @@ export class PosService {
       const lines: PostingLine[] = [];
       const payments: Prisma.PaymentCreateManyInput[] = [];
       for (const t of tenders) {
-        lines.push(...(await this.treasury.moneyLines(tx, { account: { id: t.boxAccountId }, currency: t.currency, amount: t.amount, sar: t.sar })));
+        lines.push(
+          ...(await this.treasury.moneyLines(tx, {
+            account: { id: t.boxAccountId },
+            customerId: t.method === PaymentMethod.CUSTOMER_ACCOUNT ? customerId : undefined,
+            currency: t.currency,
+            amount: t.amount,
+            sar: t.sar,
+          })),
+        );
         payments.push({
           ...(await this.payment(tx, order.id, t.method, t.boxAccountId, t.currency, t.amount, t.rate, t.sar)),
           ...(t.method === PaymentMethod.BANK_TRANSFER && dto.reference ? { gatewayPayload: { reference: dto.reference } } : {}),
@@ -327,8 +345,150 @@ export class PosService {
       });
       await this.audit.log({ userId: cashierId, action: 'CREATE', entityType: 'PosSale', entityId: order.id, after: dto }, tx);
       return order.id;
+    }
+  }
+
+  /**
+   * Pays first from the customer's own credit in the invoice currency (wallet, or the
+   * value of goods just returned): up to [fromAccount] typed by the cashier, or up to
+   * [fromAccountMax] for an exchange.
+   */
+  private async accountTender(tx: Tx, dto: PosSaleDto & { fromAccountMax?: Decimal }, customerId: string, currency: string, rate: Decimal, total: Decimal) {
+    const wanted = dto.fromAccountMax ?? (dto.fromAccount ? inCurrency(dto.fromAccount, currency) : null);
+    if (!wanted || !wanted.gt(0)) return null;
+    const bal = await this.treasury.balanceOf(tx, { customerId, currency });
+    const available = bal.amount.lt(0) ? bal.amount.neg() : ZERO;
+    if (dto.fromAccount && wanted.gt(available)) {
+      throw new UnprocessableEntityException(`The customer has only ${available.toFixed()} ${currency} of credit`);
+    }
+    const totalShown = toCurrency(total, currency, rate);
+    const amount = Decimal.min(wanted, available, totalShown);
+    if (!amount.gt(0)) return null;
+    const acc = await tx.account.findUniqueOrThrow({ where: { systemKey: 'CUSTOMER_ACCOUNTS' }, select: { id: true } });
+    const sar = amount.eq(totalShown) ? money(total) : toBase(amount, currency, rate);
+    return { currency, amount, rate, sar, boxAccountId: acc.id, method: PaymentMethod.CUSTOMER_ACCOUNT } satisfies Tender;
+  }
+
+  // ------------------------------------------------------ returns at the till ---
+
+  /** A sale found by its number, with what can still be returned of each line. */
+  async findSale(number: string) {
+    const order = await this.prisma.order.findUnique({ where: { number: number.trim().toUpperCase() }, select: { id: true } });
+    if (!order) throw new NotFoundException('Sale not found');
+    const r = await this.receipt(order.id);
+    const pending = await this.prisma.salesReturnItem.groupBy({
+      by: ['orderItemId'],
+      where: { salesReturn: { orderId: order.id, status: { in: ['REQUESTED', 'APPROVED'] } } },
+      _sum: { quantity: true },
     });
-    return this.receipt(orderId);
+    return {
+      ...r,
+      items: r.items.map((i) => ({ ...i, returnableQty: i.quantity - i.returnedQty - (pending.find((p) => p.orderItemId === i.id)?._sum.quantity ?? 0) })),
+    };
+  }
+
+  /**
+   * Return (and optionally exchange) at the till, all in one transaction:
+   *  1. the returned pieces go back on the shelf and the sale is credited;
+   *  2. without new items, the money goes back to the cashier's drawer or the customer's account;
+   *  3. with new items, their sale is paid first from the returned value, the customer pays any
+   *     difference with the usual tenders, and anything left over is paid out (or kept as credit).
+   */
+  async returnOrExchange(dto: PosReturnDto, cashierId: string) {
+    await this.treasury.ensureCashierBoxes(cashierId);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({ where: { id: dto.orderId } });
+      if (!order) throw new NotFoundException('Sale not found');
+      const walkIn = order.customerId === (await this.walkInId(tx));
+      if (dto.refundTo === 'ACCOUNT' && walkIn) throw new BadRequestException('Pick a named customer to keep the refund as credit');
+
+      const returnId = await this.returns.createIn(
+        tx,
+        order.id,
+        { reason: dto.reason ?? (dto.newItems?.length ? 'استبدال من الكاشير' : 'مرتجع من الكاشير'), items: dto.items.map((i) => ({ orderItemId: i.orderItemId, quantity: i.quantity })) },
+        'APPROVED',
+        cashierId,
+      );
+      const lines = await tx.salesReturnItem.findMany({ where: { salesReturnId: returnId }, select: { id: true, orderItemId: true } });
+      await this.returns.receiveIn(
+        tx,
+        returnId,
+        { items: lines.map((l) => ({ itemId: l.id, restock: dto.items.find((i) => i.orderItemId === l.orderItemId)?.restock ?? true })) },
+        cashierId,
+      );
+
+      const exchange = !!dto.newItems?.length;
+      const refundCurrency = dto.refundCurrency ?? order.currency;
+      // A sale bought on credit is credited back to the account, never paid out in cash.
+      const keepOnAccount = exchange || dto.refundTo === 'ACCOUNT' || order.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT;
+      // A credit sale's return just lowers what the customer owes; otherwise money is handed back.
+      const refunded = keepOnAccount
+        ? await this.returns.refundIn(tx, returnId, { method: PaymentMethod.CUSTOMER_ACCOUNT, currency: order.currency }, cashierId, { allowNothing: true })
+        : await this.returns.refundIn(
+            tx,
+            returnId,
+            {
+              method: PaymentMethod.CASH,
+              currency: refundCurrency,
+              accountId: (await this.treasury.defaultBox(tx, refundCurrency, { userId: cashierId })).accountId,
+            },
+            cashierId,
+            { allowNothing: true },
+          );
+
+      let saleId: string | null = null;
+      let leftover = refunded.currencyAmount;
+      if (exchange) {
+        saleId = await this.sellIn(
+          tx,
+          {
+            items: dto.newItems!,
+            currency: order.currency,
+            saleType: 'CASH',
+            customerId: order.customerId,
+            payments: dto.payments,
+            paymentMethod: dto.paymentMethod,
+            reference: dto.reference,
+            changeCurrency: dto.changeCurrency,
+            note: `Exchange for ${order.number}`,
+            fromAccountMax: refunded.currencyAmount,
+          },
+          cashierId,
+        );
+        const used = await tx.payment.aggregate({ where: { orderId: saleId, method: PaymentMethod.CUSTOMER_ACCOUNT }, _sum: { currencyAmount: true } });
+        leftover = refunded.currencyAmount.sub(dec(used._sum.currencyAmount));
+        // What the new pieces did not use is handed back, unless the customer keeps it as credit.
+        if (leftover.gt(0) && dto.refundTo !== 'ACCOUNT' && order.paymentMethod !== PaymentMethod.CUSTOMER_ACCOUNT) await this.payOutCredit(tx, order.customerId, order.currency, leftover, refundCurrency, cashierId, order.number);
+      }
+      return { returnId, saleId, refunded, leftover };
+    });
+    return {
+      return: await this.returns.get(result.returnId),
+      sale: result.saleId ? await this.receipt(result.saleId) : null,
+      /** Value of the returned goods paid back / credited (SAR and in the sale's currency). */
+      refunded: result.refunded,
+      /** For an exchange: returned value not used by the new items (in the sale's currency). */
+      leftover: result.leftover,
+    };
+  }
+
+  /** Hands credit held on the customer's account back as cash from the cashier's drawer. */
+  private async payOutCredit(tx: Tx, customerId: string, currency: string, amount: Decimal, cashCurrency: string, cashierId: string, ref: string) {
+    const rate = await this.currencies.rate(currency, tx);
+    const sar = toBase(amount, currency, rate);
+    const cashRate = cashCurrency === currency ? rate : await this.currencies.rate(cashCurrency, tx);
+    const cash = toCurrency(sar, cashCurrency, cashRate);
+    const box = await this.treasury.defaultBox(tx, cashCurrency, { userId: cashierId });
+    const acc = await tx.account.findUniqueOrThrow({ where: { systemKey: 'CUSTOMER_ACCOUNTS' }, select: { id: true } });
+    await this.ledger.post(tx, {
+      description: `Exchange difference paid back for ${ref}`,
+      sourceType: 'CUSTOMER_PAYMENT',
+      userId: cashierId,
+      lines: [
+        ...(await this.treasury.moneyLines(tx, { account: { id: acc.id }, customerId, currency, amount, sar })),
+        ...(await this.treasury.moneyLines(tx, { account: { id: box.accountId }, currency: cashCurrency, amount: cash.neg(), sar: sar.neg() })),
+      ],
+    });
   }
 
   /** What the till prints: lines, totals in the invoice currency, tenders and change. */
@@ -387,14 +547,14 @@ export class PosService {
   }
 
   /** Converts each handed-over amount to SAR; an exact settlement of what is left maps to it exactly. */
-  private async tenders(tx: Tx, dto: PosSaleDto, cashierId: string, invoiceCurrency: string, invoiceRate: Decimal, total: Decimal) {
+  private async tenders(tx: Tx, dto: PosSaleDto, cashierId: string, invoiceCurrency: string, invoiceRate: Decimal, total: Decimal, alreadyPaid: Decimal = ZERO) {
     const tenders: Tender[] = [];
     for (const p of dto.payments ?? []) {
       const amount = inCurrency(p.amount, p.currency);
       if (amount.isZero()) continue;
       if (!dec(p.amount).eq(amount)) throw new BadRequestException(`${p.currency} amounts cannot have that many decimals`);
       const cur = p.currency === invoiceCurrency ? { rate: invoiceRate } : await this.currencies.requireActive(p.currency, tx);
-      const left = total.sub(sum(tenders.map((t) => t.sar)));
+      const left = total.sub(alreadyPaid).sub(sum(tenders.map((t) => t.sar)));
       const sar = left.gt(0) && amount.eq(toCurrency(left, p.currency, cur.rate)) ? money(left) : toBase(amount, p.currency, cur.rate);
       // Cash lands in the cashier's drawer; a transfer / deposit slip in the bank box of that currency.
       const method = (p.method ?? dto.paymentMethod) === 'BANK_TRANSFER' ? PaymentMethod.BANK_TRANSFER : PaymentMethod.CASH;

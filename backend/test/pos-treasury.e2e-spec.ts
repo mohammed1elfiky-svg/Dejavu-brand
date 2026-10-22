@@ -204,6 +204,70 @@ describe('POS, treasury & wallet (e2e)', () => {
     await assertBooksAgree();
   });
 
+  it('takes a return at the till: stock back, money back from the drawer', async () => {
+    const sale = await http
+      .post('/admin/pos/sales', { items: [{ variantId: product.variants[0].id, quantity: 2 }], saleType: 'CASH', payments: [{ currency: 'SAR', amount: '200' }] }, cashier)
+      .expect(201);
+    const found = await http.get(`/admin/pos/sales/by-number/${sale.body.number}`, cashier).expect(200);
+    expect(found.body.items[0].returnableQty).toBe(2);
+    const stockBefore = await prisma.stockLevel.findFirstOrThrow({ where: { variantId: product.variants[0].id } });
+    const drawerBefore = Number((await drawer('SAR')).balance);
+    const ret = await http
+      .post('/admin/pos/returns', { orderId: sale.body.id, items: [{ orderItemId: found.body.items[0].id, quantity: 1 }], refundTo: 'CASH' }, cashier)
+      .expect(201);
+    expect(ret.body.return.status).toBe('REFUNDED');
+    expect(ret.body.refunded.sar).toBe('100');
+    expect(Number((await drawer('SAR')).balance)).toBe(drawerBefore - 100);
+    const stockAfter = await prisma.stockLevel.findFirstOrThrow({ where: { variantId: product.variants[0].id } });
+    expect(stockAfter.onHand).toBe(stockBefore.onHand + 1);
+    const again = await http.get(`/admin/pos/sales/by-number/${sale.body.number}`, cashier).expect(200);
+    expect(again.body.items[0].returnableQty).toBe(1);
+    await http.post('/admin/pos/returns', { orderId: sale.body.id, items: [{ orderItemId: found.body.items[0].id, quantity: 2 }] }, cashier).expect(422);
+    await assertBooksAgree();
+  });
+
+  it('exchanges one size for another and settles only the difference', async () => {
+    // Sell size 35 at 100; customer swaps it for 2 × size 36 (200): pays 100 more.
+    const sale = await http
+      .post('/admin/pos/sales', { items: [{ variantId: product.variants[0].id, quantity: 1 }], saleType: 'CASH', payments: [{ currency: 'SAR', amount: '100' }] }, cashier)
+      .expect(201);
+    const drawerBefore = Number((await drawer('SAR')).balance);
+    const ex = await http
+      .post(
+        '/admin/pos/returns',
+        {
+          orderId: sale.body.id,
+          items: [{ orderItemId: sale.body.items[0].id, quantity: 1 }],
+          newItems: [{ variantId: product.variants[1].id, quantity: 2 }],
+          payments: [{ currency: 'SAR', amount: '100' }],
+        },
+        cashier,
+      )
+      .expect(201);
+    expect(ex.body.sale).toMatchObject({ grandTotal: '200', paymentStatus: 'PAID' });
+    expect(ex.body.sale.payments.map((p: { method: string; amount: string }) => [p.method, p.amount])).toEqual([
+      ['CUSTOMER_ACCOUNT', '100'],
+      ['CASH', '100'],
+    ]);
+    expect(Number((await drawer('SAR')).balance)).toBe(drawerBefore + 100);
+    // Walk-in account nets to zero.
+    const walkIn = await prisma.customer.findUniqueOrThrow({ where: { code: 'CUS-WALKIN' } });
+    const bal = await prisma.customerAccountEntry.aggregate({ where: { customerId: walkIn.id, currency: 'SAR' }, _sum: { amount: true } });
+    expect(Number(bal._sum.amount ?? 0)).toBe(0);
+
+    // The other way round: swap 2 × 36 (200) for 1 × 35 (100): 100 back in cash.
+    const back = await http
+      .post(
+        '/admin/pos/returns',
+        { orderId: ex.body.sale.id, items: [{ orderItemId: ex.body.sale.items[0].id, quantity: 2 }], newItems: [{ variantId: product.variants[0].id, quantity: 1 }] },
+        cashier,
+      )
+      .expect(201);
+    expect(back.body.leftover).toBe('100');
+    expect(Number((await drawer('SAR')).balance)).toBe(drawerBefore);
+    await assertBooksAgree();
+  });
+
   it('keeps cashiers to their own drawers; managers see and withdraw from all of them', async () => {
     await http.get('/admin/cash-boxes', cashier).expect(403);
     const all = await http.get('/admin/cash-boxes', admin).expect(200);
@@ -217,7 +281,8 @@ describe('POS, treasury & wallet (e2e)', () => {
     await http.post('/admin/cash-transfers', { fromBoxId: yerDrawer.id, toBoxId: yerSafe.id, amount: '999999' }, cashier).expect(422);
     await http.post('/admin/cash-transfers', { fromBoxId: yerDrawer.id, toBoxId: yerSafe.id, amount: '7000' }, cashier).expect(201);
     expect((await drawer('YER')).balance).toBe('14200');
-    await http.post('/admin/cash-transfers', { fromBoxId: (await drawer('SAR')).id, toBoxId: sarSafe.id, amount: '100' }, admin).expect(201);
+    const sarDrawer = await drawer('SAR');
+    await http.post('/admin/cash-transfers', { fromBoxId: sarDrawer.id, toBoxId: sarSafe.id, amount: sarDrawer.balance }, admin).expect(201);
     expect((await drawer('SAR')).balance).toBe('0');
     await assertBooksAgree();
   });

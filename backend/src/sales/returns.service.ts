@@ -15,6 +15,7 @@ import { StockService } from '../inventory/stock.service';
 import { returnMessage } from '../notifications/messages';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
+import { BASE_CURRENCY, toCurrency } from '../common/currency.service';
 import { CreateReturnDto, ReceiveReturnDto, RefundReturnDto, ReturnsQueryDto } from './dto/sales.dto';
 import { PaymentsService } from './payments.service';
 import { getSetting } from './settings';
@@ -87,10 +88,15 @@ export class ReturnsService {
   }
 
   private async create(orderId: string, dto: CreateReturnDto, status: ReturnStatus, userId: string | null) {
+    return this.prisma.$transaction((tx) => this.createIn(tx, orderId, dto, status, userId));
+  }
+
+  /** Creates a return inside the caller's transaction (the till's quick return). */
+  async createIn(tx: Tx, orderId: string, dto: CreateReturnDto, status: ReturnStatus, userId: string | null) {
     if (new Set(dto.items.map((i) => i.orderItemId)).size !== dto.items.length) {
       throw new BadRequestException('Each item may appear only once');
     }
-    return this.prisma.$transaction(async (tx) => {
+    {
       const order = await this.lockOrder(tx, orderId);
       if (!RETURNABLE.includes(order.status)) {
         throw new UnprocessableEntityException('Only delivered orders can be returned');
@@ -130,7 +136,7 @@ export class ReturnsService {
       });
       await this.audit.log({ userId, action: 'CREATE', entityType: 'SalesReturn', entityId: ret.id, after: dto }, tx);
       return ret.id;
-    });
+    }
   }
 
   // -------------------------------------------------------------- reading ---
@@ -214,7 +220,13 @@ export class ReturnsService {
   }
 
   async receive(id: string, dto: ReceiveReturnDto, userId: string) {
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction((tx) => this.receiveIn(tx, id, dto, userId));
+    return this.get(id);
+  }
+
+  /** Books the goods back in (stock and ledger) inside the caller's transaction. */
+  async receiveIn(tx: Tx, id: string, dto: ReceiveReturnDto, userId: string) {
+    {
       const ret = await this.lock(tx, id);
       if (ret.status !== ReturnStatus.APPROVED) throw new BadRequestException('Approve the return before receiving the goods');
       const order = await this.lockOrder(tx, ret.orderId);
@@ -277,23 +289,38 @@ export class ReturnsService {
       });
       await this.notifyCustomer(tx, ret, 'received');
       await this.audit.log({ userId, action: 'UPDATE', entityType: 'SalesReturn', entityId: id, after: { received: true, refund } }, tx);
-    });
-    return this.get(id);
+    }
   }
 
   async refund(id: string, dto: RefundReturnDto, userId: string) {
-    await this.prisma.$transaction(async (tx) => {
-      const ret = await this.lock(tx, id);
-      if (ret.status !== ReturnStatus.RECEIVED) throw new BadRequestException('Only received returns can be refunded');
-      const order = await this.lockOrder(tx, ret.orderId);
-      const amount = this.refundDue(order, ret);
-      if (!amount.gt(0)) {
-        throw new UnprocessableEntityException('Nothing to refund: the return already reduced what the customer owes');
-      }
-      await this.payments.refundReturn(tx, order, { ...dto, amount, reason: `Return ${ret.number}` }, userId);
-      await tx.salesReturn.update({ where: { id }, data: { status: ReturnStatus.REFUNDED, resolvedAt: new Date() } });
-    });
+    await this.prisma.$transaction((tx) => this.refundIn(tx, id, dto, userId));
     return this.get(id);
+  }
+
+  /**
+   * Pays a received return back inside the caller's transaction. With [currency] (the
+   * order's own) the amount is handed over in it. Returns what was refunded (SAR and in
+   * the currency), or zero when the return only reduced what the customer owed.
+   */
+  async refundIn(tx: Tx, id: string, dto: RefundReturnDto & { currency?: string }, userId: string, opts: { allowNothing?: boolean } = {}) {
+    const ret = await this.lock(tx, id);
+    if (ret.status !== ReturnStatus.RECEIVED) throw new BadRequestException('Only received returns can be refunded');
+    const order = await this.lockOrder(tx, ret.orderId);
+    const amount = this.refundDue(order, ret);
+    if (!amount.gt(0)) {
+      if (opts.allowNothing) return { sar: ZERO, currencyAmount: ZERO };
+      throw new UnprocessableEntityException('Nothing to refund: the return already reduced what the customer owes');
+    }
+    const foreign = dto.currency && dto.currency === order.currency && order.currency !== BASE_CURRENCY;
+    const given = foreign ? toCurrency(amount, order.currency, order.exchangeRate) : amount;
+    const { payment } = await this.payments.refundReturn(
+      tx,
+      order,
+      { ...dto, amount: given, currency: foreign ? order.currency : undefined, reason: `Return ${ret.number}` },
+      userId,
+    );
+    await tx.salesReturn.update({ where: { id }, data: { status: ReturnStatus.REFUNDED, resolvedAt: new Date() } });
+    return { sar: dec(payment.amount).neg(), currencyAmount: dec(payment.currencyAmount ?? payment.amount).neg() };
   }
 
   /** Cash owed back: what was paid beyond the order's value after returns, capped at this return. */

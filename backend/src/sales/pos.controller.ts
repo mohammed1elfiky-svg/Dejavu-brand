@@ -4,7 +4,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import { startOfBusinessDay } from '../common/utils/dates';
 import { CustomersService } from './customers.service';
-import { PosArrangeDto, PosLookupQueryDto, PosProductsQueryDto, PosSaleDto, QuickCustomerDto } from './dto/pos.dto';
+import { PosArrangeDto, PosLookupQueryDto, PosProductsQueryDto, PosReturnDto, PosSaleDto, QuickCustomerDto } from './dto/pos.dto';
 import { PosService } from './pos.service';
 
 @ApiTags('Admin · POS')
@@ -42,6 +42,20 @@ export class AdminPosController {
   @Post('sales')
   sell(@Body() dto: PosSaleDto, @CurrentUser() u: AuthPrincipal) {
     return this.pos.sell(dto, u.id);
+  }
+
+  /** Finds a sale by its number (receipt), with what can still be returned of each line. */
+  @RequirePermissions('pos.sell')
+  @Get('sales/by-number/:number')
+  findSale(@Param('number') number: string) {
+    return this.pos.findSale(number);
+  }
+
+  /** Return, or exchange for other pieces, settling the difference. */
+  @RequirePermissions('pos.sell')
+  @Post('returns')
+  returnOrExchange(@Body() dto: PosReturnDto, @CurrentUser() u: AuthPrincipal) {
+    return this.pos.returnOrExchange(dto, u.id);
   }
 
   @RequirePermissions('pos.sell')

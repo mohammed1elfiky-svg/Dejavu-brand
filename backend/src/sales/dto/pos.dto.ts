@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { IsAmount, IsCurrencyCode } from '../../common/decorators/validation.decorators';
 
 export class PosItemDto {
@@ -79,6 +79,11 @@ export class PosSaleDto {
   @IsIn(['CASH', 'BANK_TRANSFER'])
   paymentMethod?: 'CASH' | 'BANK_TRANSFER';
 
+  @ApiPropertyOptional({ example: '5000', description: "Pay this much (invoice currency) from the customer's own credit first" })
+  @IsOptional()
+  @IsAmount()
+  fromAccount?: string;
+
   @ApiPropertyOptional({ description: 'Transfer or deposit slip number' })
   @IsOptional()
   @IsString()
@@ -137,4 +142,78 @@ export class QuickCustomerDto {
   @MinLength(6)
   @MaxLength(20)
   phone: string;
+}
+
+export class PosReturnItemDto {
+  @ApiProperty()
+  @IsUUID()
+  orderItemId: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  quantity: number;
+
+  @ApiPropertyOptional({ default: true, description: 'false when the piece is damaged and cannot be sold again' })
+  @IsOptional()
+  @IsBoolean()
+  restock?: boolean;
+}
+
+export class PosReturnDto {
+  @ApiProperty({ description: 'The sale being returned (any delivered or till order)' })
+  @IsUUID()
+  orderId: string;
+
+  @ApiProperty({ type: [PosReturnItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => PosReturnItemDto)
+  @ArrayMinSize(1)
+  items: PosReturnItemDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  @ApiPropertyOptional({ enum: ['CASH', 'ACCOUNT'], default: 'CASH', description: "Money back from the drawer, or kept as the customer's credit" })
+  @IsOptional()
+  @IsIn(['CASH', 'ACCOUNT'])
+  refundTo?: 'CASH' | 'ACCOUNT';
+
+  @ApiPropertyOptional({ description: "Currency cash is handed back in: SAR or the sale's currency" })
+  @IsOptional()
+  @IsCurrencyCode()
+  refundCurrency?: string;
+
+  @ApiPropertyOptional({ type: [PosItemDto], description: 'Exchange: the pieces taken instead' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PosItemDto)
+  @ArrayMaxSize(200)
+  newItems?: PosItemDto[];
+
+  @ApiPropertyOptional({ type: [PosTenderDto], description: 'Exchange: what the customer pays on top' })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PosTenderDto)
+  @ArrayMaxSize(10)
+  payments?: PosTenderDto[];
+
+  @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER'] })
+  @IsOptional()
+  @IsIn(['CASH', 'BANK_TRANSFER'])
+  paymentMethod?: 'CASH' | 'BANK_TRANSFER';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsCurrencyCode()
+  changeCurrency?: string;
 }

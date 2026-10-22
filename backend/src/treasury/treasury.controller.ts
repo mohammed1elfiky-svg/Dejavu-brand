@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query, Delete } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public, RequirePermissions, StaffOnly } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -16,6 +16,7 @@ import {
   RejectTopUpDto,
   TopUpRequestDto,
   TopUpsQueryDto,
+  UpdateTopUpRequestDto,
   TransfersQueryDto,
   UpdateBankAccountDto,
   UpdateCashBoxDto,
@@ -212,5 +213,18 @@ export class StoreWalletController {
   @Post('top-ups')
   request(@CurrentUser() u: AuthPrincipal, @Body() dto: TopUpRequestDto) {
     return this.wallet.request(u.id, dto);
+  }
+
+  /** Change a request while it is still under review. */
+  @Patch('top-ups/:id')
+  updateRequest(@CurrentUser() u: AuthPrincipal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTopUpRequestDto) {
+    return this.wallet.updateRequest(u.id, id, dto);
+  }
+
+  /** Withdraw a request while it is still under review. */
+  @Delete('top-ups/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteRequest(@CurrentUser() u: AuthPrincipal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.wallet.deleteRequest(u.id, id);
   }
 }

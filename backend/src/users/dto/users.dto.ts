@@ -14,6 +14,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { UserStatus } from '../../generated/prisma/client';
+import { PHONE_REGEX } from '../../auth/dto/auth.dto';
 
 export class CreateUserDto {
   @ApiProperty()
@@ -22,13 +23,16 @@ export class CreateUserDto {
   @MaxLength(100)
   name: string;
 
-  @ApiProperty()
-  @IsEmail()
-  email: string;
-
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Optional; employees sign in with their mobile number' })
   @IsOptional()
-  @IsString()
+  @Transform(({ value }) => (value === '' ? undefined : value))
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional({ example: '777123456', description: 'Mobile number the employee signs in with' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.replace(/[\s-]/g, '') : value))
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
   phone?: string;
 
   @ApiPropertyOptional({ example: 'ahmed', description: 'Short login name (lowercase letters, digits, . _ -)' })
@@ -73,9 +77,10 @@ export class UpdateUserDto {
   @MaxLength(100)
   name?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '777123456' })
   @IsOptional()
-  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.replace(/[\s-]/g, '') : value))
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
   phone?: string;
 
   @ApiPropertyOptional({ example: 'ahmed', description: 'Short login name (lowercase letters, digits, . _ -)' })

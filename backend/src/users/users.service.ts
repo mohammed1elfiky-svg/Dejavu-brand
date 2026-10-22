@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
+import { normalizePhone } from '../auth/dto/auth.dto';
 import { hashPassword } from '../auth/password';
 import { TokenService } from '../auth/token.service';
 import { AuditService } from '../common/audit.service';
@@ -69,14 +70,16 @@ export class UsersService {
   async createUser(dto: CreateUserDto, actorId: string) {
     await this.assertRolesExist(dto.roleIds);
     if (!dto.roleIds.length && !dto.permissions?.length) throw new BadRequestException('Give the employee a role or some permissions');
+    if (!dto.phone && !dto.email && !dto.username) throw new BadRequestException('Enter the mobile number the employee signs in with');
     await this.assertUsernameFree(dto.username);
+    await this.assertPhoneFree(dto.phone);
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           name: dto.name.trim(),
-          email: dto.email.toLowerCase(),
+          email: dto.email?.toLowerCase() ?? null,
           username: dto.username ?? null,
-          phone: dto.phone,
+          phone: dto.phone ? normalizePhone(dto.phone) : null,
           passwordHash: await hashPassword(dto.password),
           roles: { create: dto.roleIds.map((roleId) => ({ roleId })) },
         },
@@ -135,6 +138,12 @@ export class UsersService {
     if (boxIds.length) await tx.cashBoxAccess.createMany({ data: boxIds.map((cashBoxId) => ({ userId, cashBoxId })) });
   }
 
+  private async assertPhoneFree(phone: string | undefined, exceptId?: string) {
+    if (!phone) return;
+    const taken = await this.prisma.user.findFirst({ where: { phone: normalizePhone(phone), id: exceptId ? { not: exceptId } : undefined } });
+    if (taken) throw new ConflictException('This mobile number is already used by another employee');
+  }
+
   private async assertUsernameFree(username: string | null | undefined, exceptId?: string) {
     if (!username) return;
     const taken = await this.prisma.user.findFirst({ where: { OR: [{ username }, { email: username }], id: exceptId ? { not: exceptId } : undefined } });
@@ -148,6 +157,7 @@ export class UsersService {
     }
     if (dto.roleIds) await this.assertRolesExist(dto.roleIds);
     await this.assertUsernameFree(dto.username, id);
+    await this.assertPhoneFree(dto.phone, id);
 
     const user = await this.prisma.$transaction(async (tx) => {
       const losesAdmin =
@@ -170,7 +180,7 @@ export class UsersService {
         data: {
           name: dto.name?.trim(),
           username: dto.username === undefined ? undefined : dto.username,
-          phone: dto.phone,
+          phone: dto.phone ? normalizePhone(dto.phone) : undefined,
           status: dto.status,
           passwordHash: dto.password ? await hashPassword(dto.password) : undefined,
         },

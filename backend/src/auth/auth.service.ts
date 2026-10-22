@@ -4,7 +4,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
 import { SequenceService } from '../common/sequence.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, StaffLoginDto } from './dto/auth.dto';
+import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, PHONE_REGEX, StaffLoginDto } from './dto/auth.dto';
 import { hashPassword, verifyPassword } from './password';
 import { TokenService } from './token.service';
 
@@ -22,8 +22,12 @@ export class AuthService {
   // ---------------------------------------------------------------- staff ---
 
   async staffLogin(dto: StaffLoginDto) {
-    const login = dto.email.trim().toLowerCase();
-    const user = await this.prisma.user.findFirst({ where: { OR: [{ email: login }, { username: login }] } });
+    const login = (dto.phone ?? dto.email ?? '').trim().toLowerCase();
+    if (!login) throw new UnauthorizedException(INVALID_CREDENTIALS);
+    const phone = PHONE_REGEX.test(login.replace(/[\s-]/g, '')) ? normalizePhone(login.replace(/[\s-]/g, '')) : null;
+    const user = await this.prisma.user.findFirst({
+      where: { OR: [...(phone ? [{ phone }] : []), { email: login }, { username: login }] },
+    });
     const ok = await verifyPassword(dto.password, user?.passwordHash);
     if (!user || !ok) throw new UnauthorizedException(INVALID_CREDENTIALS);
     if (user.status !== UserStatus.ACTIVE) throw new UnauthorizedException('Account is not active');

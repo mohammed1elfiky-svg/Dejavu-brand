@@ -237,6 +237,8 @@ export class TopUpRequestDto {
   note?: string;
 }
 
+export class UpdateTopUpRequestDto extends PartialType(TopUpRequestDto) {}
+
 export class TopUpsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: TopUpStatus })
   @IsOptional()

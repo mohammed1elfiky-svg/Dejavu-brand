@@ -76,6 +76,23 @@ describe('Staff access & merchants (e2e)', () => {
     expect(roles.body.some((r: { name: string }) => r.name.startsWith('user_'))).toBe(false);
   });
 
+  it('adds an employee with only a mobile number, who signs in with it', async () => {
+    const phone = `77${String(Date.now()).slice(-7)}`;
+    const roles = (await http.get('/admin/roles', admin).expect(200)).body;
+    const cashierRole = roles.find((r: { name: string }) => r.name === 'cashier');
+    await http.post('/admin/users', { name: 'بدون هاتف', password: 'Phone!2026', roleIds: [cashierRole.id] }, admin).expect(400);
+    await http.post('/admin/users', { name: 'هاتف خطأ', phone: '12345', password: 'Phone!2026', roleIds: [cashierRole.id] }, admin).expect(400);
+    const created = (await http.post('/admin/users', { name: 'كاشير بالجوال', phone: `+967${phone}`, password: 'Phone!2026', roleIds: [cashierRole.id] }, admin).expect(201)).body;
+    expect(created).toMatchObject({ phone, email: null });
+    await http.post('/admin/users', { name: 'مكرر', phone, password: 'Phone!2026', roleIds: [cashierRole.id] }, admin).expect(409);
+
+    const login = await http.post('/auth/staff/login', { phone, password: 'Phone!2026' }).expect(200);
+    await http.get('/admin/pos/products', login.body.accessToken).expect(200);
+    await http.post('/auth/staff/login', { phone: `00967${phone}`, password: 'Phone!2026' }).expect(200);
+    await http.post('/auth/staff/login', { email: phone, password: 'Phone!2026' }).expect(200); // older apps
+    await http.post('/auth/staff/login', { phone, password: 'wrong-pass' }).expect(401);
+  });
+
   it('gives merchants wholesale prices less their discount, everywhere', async () => {
     const shopper = await customerToken(app, 'تاجر الجملة');
     await http.patch(`/admin/customers/${shopper.customerId}`, { isMerchant: true, merchantDiscount: '10', creditLimit: '100' }, admin).expect(200);

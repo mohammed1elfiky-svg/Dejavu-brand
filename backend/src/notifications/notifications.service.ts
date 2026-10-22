@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppType, NotificationType } from '../generated/prisma/client';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
 import { paginated } from '../common/dto/pagination.dto';
+import { dec } from '../common/utils/money';
 import { Env } from '../config/env';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { FcmClient, parseServiceAccount } from './fcm.client';
@@ -190,6 +191,56 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   async markAllRead(customerId: string) {
     await this.prisma.notification.updateMany({ where: { customerId, readAt: null }, data: { readAt: new Date() } });
     return { unread: 0 };
+  }
+
+  // --------------------------------------------------------- staff alerts ---
+
+  /**
+   * What staff should be told about since [since]: new app orders (orders.update_status)
+   * and top-up requests to review (wallet.manage). The admin app polls this, so alerts
+   * reach staff even without Firebase push.
+   */
+  async staffAlerts(p: AuthPrincipal, since?: Date) {
+    const from = since ?? new Date(Date.now() - 24 * 3600_000);
+    const can = (perm: string) => p.permissions.includes(perm);
+    const [orders, topUps] = await Promise.all([
+      can('orders.update_status')
+        ? this.prisma.order.findMany({
+            where: { channel: 'ONLINE', placedAt: { gt: from } },
+            orderBy: { placedAt: 'desc' },
+            take: 20,
+            select: { id: true, number: true, grandTotal: true, currency: true, exchangeRate: true, placedAt: true, customer: { select: { name: true } } },
+          })
+        : [],
+      can('wallet.manage')
+        ? this.prisma.walletTopUp.findMany({
+            where: { status: 'PENDING', createdAt: { gt: from } },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+            select: { id: true, number: true, amount: true, currency: true, createdAt: true, customer: { select: { name: true } } },
+          })
+        : [],
+    ]);
+    const alerts = [
+      ...orders.map((o) => ({
+        id: `order:${o.id}`,
+        kind: 'ORDER' as const,
+        title: 'طلب جديد 🛍️',
+        body: `${o.number} من ${o.customer.name}`,
+        data: { orderId: o.id },
+        at: o.placedAt,
+      })),
+      ...topUps.map((t) => ({
+        id: `topup:${t.id}`,
+        kind: 'TOP_UP' as const,
+        title: 'طلب شحن رصيد جديد',
+        body: `${t.number} · ${t.customer.name} · ${dec(t.amount).toFixed()} ${t.currency}`,
+        data: { topUpId: t.id },
+        at: t.createdAt,
+      })),
+    ].sort((a, b) => b.at.getTime() - a.at.getTime());
+    const pendingTopUps = can('wallet.manage') ? await this.prisma.walletTopUp.count({ where: { status: 'PENDING' } }) : 0;
+    return { now: new Date(), alerts, pendingTopUps };
   }
 
   // ------------------------------------------------------------- devices ---

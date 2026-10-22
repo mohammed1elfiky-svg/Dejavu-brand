@@ -106,6 +106,48 @@ export class WalletService {
     return topUp;
   }
 
+  /** The customer corrects a request still under review (amount, slip, bank…). */
+  async updateRequest(
+    customerId: string,
+    id: string,
+    dto: Partial<{ currency: string; amount: string; receiptFileId: string; bankAccountId?: string; reference?: string; note?: string }>,
+  ) {
+    const t = await this.pendingOf(customerId, id);
+    const currency = dto.currency ?? t.currency;
+    if (dto.currency) await this.currencies.requireActive(currency, this.prisma, { customerApp: true });
+    const amount = inCurrency(dto.amount ?? t.amount, currency);
+    if (!amount.gt(0)) throw new UnprocessableEntityException('Amount must be greater than zero');
+    if (dto.receiptFileId) {
+      const file = await this.prisma.storedFile.findUnique({ where: { id: dto.receiptFileId }, select: { customerId: true } });
+      if (!file || file.customerId !== customerId) throw new NotFoundException('Upload the deposit receipt first');
+    }
+    if (dto.bankAccountId) {
+      const bank = await this.prisma.storeBankAccount.findUnique({ where: { id: dto.bankAccountId } });
+      if (!bank || !bank.isActive) throw new NotFoundException('Bank account not found');
+    }
+    // Still pending at write time (staff may be reviewing it right now).
+    const res = await this.prisma.walletTopUp.updateMany({
+      where: { id, customerId, status: TopUpStatus.PENDING },
+      data: { ...dto, currency, amount },
+    });
+    if (!res.count) throw new ConflictException('This request was already reviewed');
+    return this.prisma.walletTopUp.findUniqueOrThrow({ where: { id }, select: topUpSelect });
+  }
+
+  /** The customer withdraws a request still under review. */
+  async deleteRequest(customerId: string, id: string) {
+    await this.pendingOf(customerId, id);
+    const res = await this.prisma.walletTopUp.deleteMany({ where: { id, customerId, status: TopUpStatus.PENDING } });
+    if (!res.count) throw new ConflictException('This request was already reviewed');
+  }
+
+  private async pendingOf(customerId: string, id: string) {
+    const t = await this.prisma.walletTopUp.findFirst({ where: { id, customerId } });
+    if (!t) throw new NotFoundException('Request not found');
+    if (t.status !== TopUpStatus.PENDING) throw new ConflictException('Only requests under review can be changed');
+    return t;
+  }
+
   async customerRequests(customerId: string) {
     return this.prisma.walletTopUp.findMany({ where: { customerId }, select: topUpSelect, orderBy: { createdAt: 'desc' }, take: 50 });
   }

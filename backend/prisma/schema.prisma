@@ -262,9 +262,11 @@ enum AuditAction {
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   name         String
-  email        String     @unique
-  /// Optional short login name (staff can sign in with it instead of the email).
+  /// Optional; staff sign in with their mobile number (or username).
+  email        String?    @unique
+  /// Optional short login name (staff can sign in with it instead of the phone).
   username     String?    @unique
+  /// Mobile number used to sign in, stored normalised (e.g. 777123456 / 0512345678).
   phone        String?    @unique
   passwordHash String     @map("password_hash")
   status       UserStatus @default(ACTIVE)

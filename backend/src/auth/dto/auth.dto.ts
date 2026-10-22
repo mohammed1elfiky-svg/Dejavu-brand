@@ -6,11 +6,19 @@ import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLengt
 export const PHONE_REGEX = /^(?:(?:\+967|00967)?7[01378]\d{7}|(?:\+966|0)5\d{8}|(?:\+20|0)1[0125]\d{8})$/;
 
 export class StaffLoginDto {
-  @ApiProperty({ example: 'admin@dejavu.local', description: 'Email or username' })
+  @ApiPropertyOptional({ example: '777123456', description: 'Mobile number (or username) the employee signs in with' })
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(120)
-  email: string;
+  phone?: string;
+
+  @ApiPropertyOptional({ description: 'Older apps: email, username or mobile number' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  email?: string;
 
   @ApiProperty()
   @IsString()

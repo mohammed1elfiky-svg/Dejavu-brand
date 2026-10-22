@@ -70,7 +70,7 @@ export class SystemService {
     const mainEmail = process.env.SEED_ADMIN_EMAIL || 'admin@dejavu.local';
     const kept = await tx.user.findMany({
       where: people ? { OR: [{ id: userId }, { email: mainEmail }] } : {},
-      select: { id: true, email: true },
+      select: { id: true, email: true, phone: true, name: true },
     });
     const keepIds = kept.map((u) => u.id);
     const goneUsers = await tx.user.findMany({ where: { id: { notIn: keepIds } }, select: { id: true } });
@@ -124,6 +124,6 @@ export class SystemService {
       create: { key: 'system.wipedAt', value: new Date().toISOString() },
     });
 
-    return { dryRun, scope, deleted, keptUsers: people ? kept.map((u) => u.email) : [] };
+    return { dryRun, scope, deleted, keptUsers: people ? kept.map((u) => u.email ?? u.phone ?? u.name) : [] };
   }
 }

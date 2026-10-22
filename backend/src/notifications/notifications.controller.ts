@@ -93,3 +93,17 @@ export class AdminDevicesController {
     await this.notifications.unregisterDevice(u, dto.token);
   }
 }
+
+@ApiTags('Admin · Notifications')
+@StaffOnly()
+@Controller('admin/alerts')
+export class StaffAlertsController {
+  constructor(private readonly notifications: NotificationsService) {}
+
+  /** New app orders and top-up requests since [since] (ISO time), newest first. */
+  @Get()
+  alerts(@CurrentUser() u: AuthPrincipal, @Query('since') since?: string) {
+    const at = since ? new Date(since) : undefined;
+    return this.notifications.staffAlerts(u, at && !Number.isNaN(at.getTime()) ? at : undefined);
+  }
+}

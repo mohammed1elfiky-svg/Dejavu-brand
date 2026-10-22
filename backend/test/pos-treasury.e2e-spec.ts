@@ -155,6 +155,29 @@ describe('POS, treasury & wallet (e2e)', () => {
     await http.post('/admin/pos/sales', { items, saleType: 'CREDIT', payments: [] }, cashier).expect(400);
   });
 
+  it('takes a bank transfer at the till into the bank box, with its slip number', async () => {
+    const bank = (await http.get('/admin/cash-boxes?kind=BANK&currency=SAR', admin).expect(200)).body[0];
+    const before = Number(bank.balance);
+    const sale = await http
+      .post(
+        '/admin/pos/sales',
+        {
+          items: [{ variantId: product.variants[1].id, quantity: 1 }],
+          saleType: 'CASH',
+          paymentMethod: 'BANK_TRANSFER',
+          reference: 'SLIP-77',
+          payments: [{ currency: 'SAR', amount: '100' }],
+        },
+        cashier,
+      )
+      .expect(201);
+    expect(sale.body).toMatchObject({ paymentMethod: 'BANK_TRANSFER', paymentStatus: 'PAID' });
+    expect(sale.body.payments[0]).toMatchObject({ method: 'BANK_TRANSFER', gatewayPayload: { reference: 'SLIP-77' } });
+    const after = (await http.get('/admin/cash-boxes?kind=BANK&currency=SAR', admin).expect(200)).body.find((b: { id: string }) => b.id === bank.id);
+    expect(Number(after.balance)).toBe(before + 100);
+    await assertBooksAgree();
+  });
+
   it('sells on credit to a customer account in YER and takes the debt back at the till', async () => {
     const customer = await http.post('/admin/pos/customers', { name: 'عميل آجل', phone: `77${run.slice(-7).replace(/\D/g, '1').padStart(7, '1')}` }, cashier);
     expect(customer.status).toBe(201);

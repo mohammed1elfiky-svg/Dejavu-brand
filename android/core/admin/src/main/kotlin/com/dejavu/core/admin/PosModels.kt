@@ -60,7 +60,14 @@ data class PosArrangeRequest(val productIds: List<String>)
 data class PosItem(val variantId: String, val quantity: Int)
 
 @Serializable
-data class PosTender(val currency: Currency, val amount: String)
+data class PosTender(
+    val currency: Currency,
+    val amount: String,
+    /** CASH (drawer) or BANK_TRANSFER (bank box); the sale's [PosSaleRequest.paymentMethod] by default. */
+    val method: String? = null,
+    /** Bank box a transfer went to; the first bank box of the currency by default. */
+    val bankBoxId: String? = null,
+)
 
 @Serializable
 enum class SaleType { CASH, CREDIT }
@@ -81,6 +88,10 @@ data class PosSaleRequest(
     val payments: List<PosTender> = emptyList(),
     val changeCurrency: Currency? = null,
     val note: String? = null,
+    /** CASH, or BANK_TRANSFER for a transfer / deposit slip. */
+    val paymentMethod: String? = null,
+    /** Transfer or deposit slip number. */
+    val reference: String? = null,
 )
 
 @Serializable

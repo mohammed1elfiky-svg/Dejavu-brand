@@ -59,6 +59,7 @@ interface Tender {
   rate: Decimal;
   sar: Decimal;
   boxAccountId: string;
+  method: PaymentMethod;
 }
 
 /**
@@ -209,7 +210,12 @@ export class PosService {
           cashierId,
           status: OrderStatus.COMPLETED,
           paymentStatus: PaymentStatus.PAID,
-          paymentMethod: owed.gt(0) && paid.isZero() ? PaymentMethod.CUSTOMER_ACCOUNT : PaymentMethod.CASH,
+          paymentMethod:
+            owed.gt(0) && paid.isZero()
+              ? PaymentMethod.CUSTOMER_ACCOUNT
+              : tenders.every((t) => t.method === PaymentMethod.BANK_TRANSFER)
+                ? PaymentMethod.BANK_TRANSFER
+                : PaymentMethod.CASH,
           currency: invoiceCurrency.code,
           exchangeRate: rate,
           shippingAddress: { channel: 'POS' },
@@ -282,7 +288,10 @@ export class PosService {
       const payments: Prisma.PaymentCreateManyInput[] = [];
       for (const t of tenders) {
         lines.push(...(await this.treasury.moneyLines(tx, { account: { id: t.boxAccountId }, currency: t.currency, amount: t.amount, sar: t.sar })));
-        payments.push(await this.payment(tx, order.id, PaymentMethod.CASH, t.boxAccountId, t.currency, t.amount, t.rate, t.sar));
+        payments.push({
+          ...(await this.payment(tx, order.id, t.method, t.boxAccountId, t.currency, t.amount, t.rate, t.sar)),
+          ...(t.method === PaymentMethod.BANK_TRANSFER && dto.reference ? { gatewayPayload: { reference: dto.reference } } : {}),
+        });
       }
       if (change.gt(0)) {
         const box = await this.treasury.defaultBox(tx, changeCurrency, { userId: cashierId });
@@ -382,10 +391,24 @@ export class PosService {
       const cur = p.currency === invoiceCurrency ? { rate: invoiceRate } : await this.currencies.requireActive(p.currency, tx);
       const left = total.sub(sum(tenders.map((t) => t.sar)));
       const sar = left.gt(0) && amount.eq(toCurrency(left, p.currency, cur.rate)) ? money(left) : toBase(amount, p.currency, cur.rate);
-      const box = await this.treasury.defaultBox(tx, p.currency, { userId: cashierId });
-      tenders.push({ currency: p.currency, amount, rate: cur.rate, sar, boxAccountId: box.accountId });
+      // Cash lands in the cashier's drawer; a transfer / deposit slip in the bank box of that currency.
+      const method = (p.method ?? dto.paymentMethod) === 'BANK_TRANSFER' ? PaymentMethod.BANK_TRANSFER : PaymentMethod.CASH;
+      const box =
+        method === PaymentMethod.BANK_TRANSFER
+          ? p.bankBoxId
+            ? await this.bankBox(tx, p.bankBoxId, p.currency)
+            : await this.treasury.defaultBox(tx, p.currency, { kind: 'BANK' })
+          : await this.treasury.defaultBox(tx, p.currency, { userId: cashierId });
+      tenders.push({ currency: p.currency, amount, rate: cur.rate, sar, boxAccountId: box.accountId, method });
     }
     return tenders;
+  }
+
+  private async bankBox(tx: Tx, id: string, currency: string) {
+    const box = await tx.cashBox.findUnique({ where: { id } });
+    if (!box || !box.isActive || box.kind === 'CASHIER') throw new NotFoundException('Bank account not found');
+    if (box.currency !== currency) throw new UnprocessableEntityException(`${box.name} holds ${box.currency}, not ${currency}`);
+    return box;
   }
 
   private async payment(

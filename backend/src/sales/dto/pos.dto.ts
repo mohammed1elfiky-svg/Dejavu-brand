@@ -23,6 +23,16 @@ export class PosTenderDto {
   @ApiProperty({ example: '14000', description: 'Amount handed over, in that currency' })
   @IsAmount()
   amount: string;
+
+  @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER'], description: "Defaults to the sale's paymentMethod" })
+  @IsOptional()
+  @IsIn(['CASH', 'BANK_TRANSFER'])
+  method?: 'CASH' | 'BANK_TRANSFER';
+
+  @ApiPropertyOptional({ description: 'Bank box the transfer went to; the first bank box of the currency by default' })
+  @IsOptional()
+  @IsUUID()
+  bankBoxId?: string;
 }
 
 export class PosSaleDto {
@@ -63,6 +73,17 @@ export class PosSaleDto {
   @Type(() => PosTenderDto)
   @ArrayMaxSize(10)
   payments?: PosTenderDto[];
+
+  @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER'], default: 'CASH', description: 'Cash into the drawer, or a bank transfer / deposit slip' })
+  @IsOptional()
+  @IsIn(['CASH', 'BANK_TRANSFER'])
+  paymentMethod?: 'CASH' | 'BANK_TRANSFER';
+
+  @ApiPropertyOptional({ description: 'Transfer or deposit slip number' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
 
   @ApiPropertyOptional({ example: 'YER', description: 'Currency the change is given in; the invoice currency by default' })
   @IsOptional()

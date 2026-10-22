@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.wallet
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,7 +113,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.graphics.BitmapFactory
 
 // ------------------------------------------------------------------ helpers ---
 
@@ -291,11 +291,16 @@ class TopUpViewModel(
         receiptFor = fileId
         _receipt.value = Load.Loading
         viewModelScope.launch {
-            _receipt.value = repo.receipt(fileId).mapCatching { bytes ->
-                withContext(Dispatchers.Default) {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() ?: error("تعذّر عرض صورة السند")
-                }
-            }.toLoad()
+            val bytes = repo.receipt(fileId)
+            _receipt.value = bytes.fold(
+                onSuccess = { data ->
+                    val image = withContext(Dispatchers.Default) {
+                        runCatching { BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap() }.getOrNull()
+                    }
+                    if (image != null) Load.Ready(image) else Load.Failed("تعذّر عرض صورة السند")
+                },
+                onFailure = { Result.failure<ImageBitmap>(it).toLoad() },
+            )
         }
     }
 

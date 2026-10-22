@@ -1,8 +1,13 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.dejavu.admin.ui.finance
 
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -707,6 +712,21 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
             _busy.value = false
         }
     }
+
+    /** A balance from before the system ([owes] = the customer owes the store). */
+    fun openingBalance(currency: Currency, amount: String, owes: Boolean, note: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            repo.openingBalance(id, currency, amount, owes, note).orSay()?.let {
+                say("تم تسجيل الرصيد الافتتاحي ${Money.plain(Money.parse(amount), currency)}")
+                done()
+                _account.value = repo.customerAccount(id).toLoad()
+                repo.customer(id).onSuccess { c -> _state.value = Load.Ready(c) }
+            }
+            _busy.value = false
+        }
+    }
 }
 
 @Composable
@@ -718,8 +738,10 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     val busy by vm.busy.collectAsStateWithLifecycle()
     val canCollect = adminContainer().session.can(Perm.POS_SELL)
     val canEdit = adminContainer().session.can(Perm.CUSTOMERS_WRITE)
+    val canOpening = adminContainer().session.can("journal.write")
     val snackbar = remember { SnackbarHostState() }
     var collecting by remember { mutableStateOf(false) }
+    var opening by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -728,6 +750,11 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     if (collecting) {
         CollectDialog(currencies, onDismiss = { collecting = false }) { currency, amount ->
             vm.collect(currency, amount) { collecting = false }
+        }
+    }
+    if (opening) {
+        OpeningBalanceDialog(currencies, busy, onDismiss = { opening = false }) { currency, amount, owes, note ->
+            vm.openingBalance(currency, amount, owes, note) { opening = false }
         }
     }
 
@@ -769,7 +796,15 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                         )
                     }
                 }
-                item { CustomerAccountCard(account, canCollect = canCollect && !busy, onRetry = vm::loadAccount, onCollect = { collecting = true }) }
+                item {
+                    CustomerAccountCard(
+                        account,
+                        canCollect = canCollect && !busy,
+                        onRetry = vm::loadAccount,
+                        onCollect = { collecting = true },
+                        onOpening = if (canOpening) ({ opening = true }) else null,
+                    )
+                }
                 item { Text("آخر الطلبات", style = MaterialTheme.typography.titleSmall) }
                 if (c.orders.isEmpty()) item { Text("لا توجد طلبات بعد", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 items(c.orders, key = { it.id }) { o ->
@@ -861,13 +896,22 @@ private fun MerchantCard(
 
 /** Balances per currency on the customer's account (+ they owe the store, − the store holds their money). */
 @Composable
-private fun CustomerAccountCard(state: Load<CustomerAccount>, canCollect: Boolean, onRetry: () -> Unit, onCollect: () -> Unit) {
+private fun CustomerAccountCard(
+    state: Load<CustomerAccount>,
+    canCollect: Boolean,
+    onRetry: () -> Unit,
+    onCollect: () -> Unit,
+    onOpening: (() -> Unit)? = null,
+) {
     InfoCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("حساب العميل", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (canCollect) {
                 Button(onClick = onCollect) { Text("تحصيل دفعة") }
             }
+        }
+        if (onOpening != null) {
+            OutlinedButton(onClick = onOpening, modifier = Modifier.fillMaxWidth()) { Text("رصيد افتتاحي") }
         }
         when (state) {
             Load.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
@@ -944,6 +988,69 @@ private fun CollectDialog(currencies: List<Currency>, onDismiss: () -> Unit, onC
         },
         confirmButton = {
             TextButton(onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString()) }, enabled = value != null) { Text("تحصيل") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
+}
+
+/** Balance the customer had before the system: in a currency, owed by them or held for them. */
+@Composable
+private fun OpeningBalanceDialog(
+    currencies: List<Currency>,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (currency: Currency, amount: String, owes: Boolean, note: String) -> Unit,
+) {
+    var currency by remember { mutableStateOf(currencies.firstOrNull() ?: Currency.SAR) }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var owes by rememberSaveable { mutableStateOf(true) }
+    var note by rememberSaveable { mutableStateOf("") }
+    val value = validAmount(amount, currency)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("رصيد افتتاحي") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("العملة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    currencies.forEach { c -> FilterChip(selected = c == currency, onClick = { currency = c }, label = { Text(c.nameAr) }) }
+                }
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = decimalInput(it) },
+                    label = { Text("المبلغ (${currency.symbol})") },
+                    isError = amount.isNotBlank() && value == null,
+                    supportingText = if (currency.decimals == 0) ({ Text("بدون كسور") }) else null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("الاتجاه", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+                listOf(true to "العميل مدين للمحل", false to "رصيد دائن للعميل").forEach { (o, text) ->
+                    Row(Modifier.fillMaxWidth().clickable { owes = o }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = owes == o, onClick = { owes = o })
+                        Text(text)
+                    }
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(255) },
+                    label = { Text("ملاحظة (اختياري)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "يُسجَّل رصيد ما قبل النظام بقيد افتتاحي دون أي حركة على الصناديق.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString(), owes, note.trim()) },
+                enabled = value != null && !busy,
+            ) { Text("تسجيل") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )

@@ -186,7 +186,7 @@ data class PosCustomer(
     val creditLimit: String? = null,
 )
 
-private fun AdminCustomerSummary.toPos() =
+internal fun AdminCustomerSummary.toPos() =
     PosCustomer(id, name, phone, code, isMerchant = isMerchant, merchantDiscount = merchantDiscount, creditLimit = creditLimit)
 
 /** One amount handed over at the till, typed in [currency]. */
@@ -1528,7 +1528,7 @@ private fun RateRow(row: CurrencyRate, vm: PosViewModel) {
 // ----------------------------------------------------------------- dialogs ---
 
 @Composable
-private fun QuickCustomerDialog(onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {
+internal fun QuickCustomerDialog(onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
     val valid = name.trim().length >= 2 && phone.count { it.isDigit() } >= 6

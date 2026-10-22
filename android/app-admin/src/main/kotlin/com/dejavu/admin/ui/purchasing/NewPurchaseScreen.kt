@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -57,6 +59,7 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import com.dejavu.core.ui.theme.OutlinedTextField
+import com.dejavu.core.ui.theme.OutlinedButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -70,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -97,8 +101,12 @@ import com.dejavu.admin.ui.pos.validAmount
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.core.admin.AdminCategory
 import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.LedgerAccount
+import com.dejavu.core.admin.LocalNewProduct
+import com.dejavu.core.admin.LocalNewVariant
 import com.dejavu.core.admin.PosProduct
 import com.dejavu.core.admin.PosRepository
 import com.dejavu.core.admin.PosVariant
@@ -115,6 +123,7 @@ import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
+import com.dejavu.core.ui.media.rememberImagePicker
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -127,6 +136,33 @@ import java.math.RoundingMode
 data class PurchaseLine(val product: PosProduct, val variant: PosVariant, val qty: Int, val cost: String = "") {
     val unitCost: BigDecimal? get() = validAmount(cost, Currency.SAR)
     val lineTotal: BigDecimal get() = (unitCost ?: BigDecimal.ZERO).multiply(BigDecimal(qty)).setScale(2, RoundingMode.HALF_UP)
+}
+
+/** A product bought for the first time: created (SKU number + barcodes) when the invoice is issued. */
+data class NewPurchaseItem(
+    val nameAr: String,
+    val categoryId: String,
+    val categoryName: String,
+    /** Selling price, SAR. */
+    val basePrice: String,
+    /** Purchase cost per piece, SAR. */
+    val cost: String,
+    val imageUrl: String?,
+    val variants: List<LocalNewVariant>,
+    val key: String = "new:" + System.nanoTime(),
+) {
+    val pieces: Int get() = variants.sumOf { it.quantity }
+    val unitCost: BigDecimal? get() = validAmount(cost, Currency.SAR)
+    val lineTotal: BigDecimal get() = (unitCost ?: BigDecimal.ZERO).multiply(BigDecimal(pieces)).setScale(2, RoundingMode.HALF_UP)
+
+    fun toRequest() = LocalNewProduct(
+        categoryId = categoryId,
+        nameAr = nameAr.trim(),
+        basePrice = validAmount(basePrice, Currency.SAR)?.stripTrailingZeros()?.toPlainString() ?: basePrice,
+        unitCost = unitCost?.stripTrailingZeros()?.toPlainString() ?: cost,
+        variants = variants,
+        imageUrl = imageUrl,
+    )
 }
 
 /** How the supplier is paid now. */
@@ -146,6 +182,7 @@ class NewPurchaseViewModel(
     private val pos: PosRepository,
     private val purchasing: PurchasingRepository,
     private val finance: FinanceRepository,
+    private val inventory: InventoryRepository,
 ) : BaseViewModel() {
     var products by mutableStateOf<Load<List<PosProduct>>>(Load.Loading)
         private set
@@ -153,6 +190,14 @@ class NewPurchaseViewModel(
         private set
 
     var lines by mutableStateOf<List<PurchaseLine>>(emptyList())
+        private set
+
+    /** Products not in the app yet, added with "+ صنف جديد". */
+    var newItems by mutableStateOf<List<NewPurchaseItem>>(emptyList())
+        private set
+    var categories by mutableStateOf<List<Pair<AdminCategory, Int>>>(emptyList())
+        private set
+    var uploading by mutableStateOf(false)
         private set
 
     var supplier by mutableStateOf<Supplier?>(null)
@@ -185,6 +230,12 @@ class NewPurchaseViewModel(
         load()
         searchSuppliers("")
         viewModelScope.launch { accounts = finance.cashAccounts() }
+        loadCategories()
+    }
+
+    fun loadCategories() {
+        if (categories.isNotEmpty()) return
+        viewModelScope.launch { inventory.categories().getOrNull()?.let { categories = it } }
     }
 
     // ---- products
@@ -271,7 +322,29 @@ class NewPurchaseViewModel(
 
     fun clear() {
         lines = emptyList()
+        newItems = emptyList()
         error = null
+    }
+
+    // ---- new products
+
+    /** Adds [item], or replaces the one with the same key (edit). */
+    fun saveNewItem(item: NewPurchaseItem) {
+        error = null
+        newItems = if (newItems.any { it.key == item.key }) newItems.map { if (it.key == item.key) item else it } else newItems + item
+    }
+
+    fun removeNewItem(key: String) {
+        error = null
+        newItems = newItems.filterNot { it.key == key }
+    }
+
+    fun upload(bytes: ByteArray, then: (String) -> Unit) {
+        uploading = true
+        viewModelScope.launch {
+            inventory.uploadImage(bytes).orSay()?.let { then(it.url) }
+            uploading = false
+        }
     }
 
     // ---- supplier
@@ -329,13 +402,16 @@ class NewPurchaseViewModel(
 
     // ---- totals
 
-    val pieces: Int get() = lines.sumOf { it.qty }
-    val subtotal: BigDecimal get() = lines.fold(BigDecimal.ZERO) { acc, l -> acc.add(l.lineTotal) }
+    val pieces: Int get() = lines.sumOf { it.qty } + newItems.sumOf { it.pieces }
+    val itemCount: Int get() = lines.size + newItems.size
+    val isEmpty: Boolean get() = lines.isEmpty() && newItems.isEmpty()
+    val subtotal: BigDecimal
+        get() = newItems.fold(lines.fold(BigDecimal.ZERO) { acc, l -> acc.add(l.lineTotal) }) { acc, n -> acc.add(n.lineTotal) }
     val shippingValue: BigDecimal get() = shipping.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 } ?: BigDecimal.ZERO
     val grandTotal: BigDecimal get() = subtotal.add(shippingValue).setScale(2, RoundingMode.HALF_UP)
 
     val shippingValid: Boolean get() = shipping.isBlank() || validAmount(shipping, Currency.SAR) != null
-    val costsValid: Boolean get() = lines.all { it.unitCost != null }
+    val costsValid: Boolean get() = lines.all { it.unitCost != null } && newItems.all { it.unitCost != null }
     val payAmountValid: Boolean
         get() = pay == PurchasePay.ON_ACCOUNT || payAmount.isBlank() ||
             validAmount(payAmount, Currency.SAR)?.let { it <= grandTotal } == true
@@ -343,7 +419,7 @@ class NewPurchaseViewModel(
     /** Why the invoice cannot be issued yet; null when it can. */
     val blocker: String?
         get() = when {
-            lines.isEmpty() -> "أضف أصنافاً من الشبكة أو امسح الباركود"
+            isEmpty -> "أضف أصنافاً من الشبكة أو امسح الباركود أو أضف صنفاً جديداً"
             supplier == null -> "اختر المورد"
             !costsValid -> "أدخل تكلفة الوحدة لكل صنف"
             !shippingValid -> "تكلفة الشحن غير صحيحة"
@@ -359,6 +435,7 @@ class NewPurchaseViewModel(
         val request = QuickPurchaseRequest(
             supplierId = s.id,
             items = lines.map { QuickPurchaseItem(it.variant.id, it.qty, it.unitCost!!.stripTrailingZeros().toPlainString()) },
+            newProducts = newItems.map { it.toRequest() },
             supplierInvoiceNo = invoiceNo.trim().ifBlank { null },
             shippingCost = validAmount(shipping, Currency.SAR)?.stripTrailingZeros()?.toPlainString(),
             note = note.trim().ifBlank { null },
@@ -374,6 +451,7 @@ class NewPurchaseViewModel(
                 { po ->
                     say("تم إصدار فاتورة الشراء ${po.number}")
                     lines = emptyList()
+                    newItems = emptyList()
                     created(po.id)
                 },
                 { e -> error = e.userMessage() },
@@ -388,11 +466,13 @@ class NewPurchaseViewModel(
 /** Till-style purchase: product grid on one side, the supplier's invoice on the other. */
 @Composable
 fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
-    val vm = adminViewModel { NewPurchaseViewModel(it.pos, it.purchasing, it.finance) }
+    val vm = adminViewModel { NewPurchaseViewModel(it.pos, it.purchasing, it.finance, it.inventory) }
     val snackbar = remember { SnackbarHostState() }
     var picking by remember { mutableStateOf<PosProduct?>(null) }
     var showInvoice by rememberSaveable { mutableStateOf(false) }
     var newSupplier by remember { mutableStateOf(false) }
+    var addingNew by remember { mutableStateOf(false) }
+    var editingNew by remember { mutableStateOf<NewPurchaseItem?>(null) }
     CollectMessages(vm, snackbar)
     val scan = rememberBarcodeScanner { code -> vm.scan(code) { picking = it } }
     val onCreated: (String) -> Unit = { id ->
@@ -404,6 +484,7 @@ fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
         contentWindowInsets = WindowInsets(0),
         topBar = {
             BackTopBar("فاتورة شراء جديدة", onBack) {
+                TextButton(onClick = { vm.loadCategories(); addingNew = true }) { Text("+ صنف جديد") }
                 TextButton(onClick = scan) { Text("باركود") }
             }
         },
@@ -445,7 +526,7 @@ fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
                             }
                         }
                     }
-                    if (!wide && vm.lines.isNotEmpty()) {
+                    if (!wide && !vm.isEmpty) {
                         InvoiceBar(vm) { showInvoice = true }
                     }
                 }
@@ -456,7 +537,14 @@ fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
                         )
-                        InvoiceContent(vm, onNewSupplier = { newSupplier = true }, onCreated = onCreated, modifier = Modifier.weight(1f))
+                        InvoiceContent(
+                            vm,
+                            onNewSupplier = { newSupplier = true },
+                            onCreated = onCreated,
+                            onAddNew = { vm.loadCategories(); addingNew = true },
+                            onEditNew = { editingNew = it },
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
@@ -478,6 +566,8 @@ fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
                 vm,
                 onNewSupplier = { newSupplier = true },
                 onCreated = onCreated,
+                onAddNew = { vm.loadCategories(); addingNew = true },
+                onEditNew = { editingNew = it },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(),
             )
         }
@@ -485,6 +575,13 @@ fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
 
     if (newSupplier) {
         QuickSupplierDialog(onDismiss = { newSupplier = false }) { name, phone -> vm.createSupplier(name, phone) }
+    }
+
+    if (addingNew) {
+        NewProductDialog(vm, initial = null, onDismiss = { addingNew = false })
+    }
+    editingNew?.let { item ->
+        NewProductDialog(vm, initial = item, onDismiss = { editingNew = null })
     }
 }
 
@@ -538,7 +635,7 @@ private fun InvoiceBar(vm: NewPurchaseViewModel, onOpen: () -> Unit) {
             Icon(Icons.Filled.ShoppingCart, contentDescription = null, tint = Lux.GoldDeep)
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("${vm.lines.size} صنف · ${vm.pieces} قطعة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+                Text("${vm.itemCount} صنف · ${vm.pieces} قطعة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
                 Text(sar(vm.grandTotal), style = MaterialTheme.typography.titleLarge, color = Lux.GoldDeep)
             }
             LuxButton("فاتورة الشراء ←", onClick = onOpen, modifier = Modifier.width(170.dp))
@@ -595,7 +692,14 @@ private fun PurchaseVariantPicker(p: PosProduct, vm: NewPurchaseViewModel, onDis
 // ----------------------------------------------------------------- invoice ---
 
 @Composable
-private fun InvoiceContent(vm: NewPurchaseViewModel, onNewSupplier: () -> Unit, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun InvoiceContent(
+    vm: NewPurchaseViewModel,
+    onNewSupplier: () -> Unit,
+    onCreated: (String) -> Unit,
+    onAddNew: () -> Unit,
+    onEditNew: (NewPurchaseItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         Column(modifier) {
             Column(
@@ -606,17 +710,32 @@ private fun InvoiceContent(vm: NewPurchaseViewModel, onNewSupplier: () -> Unit, 
 
                 // ---- lines
                 Section {
-                    if (vm.lines.isEmpty()) {
-                        Text("الفاتورة فارغة. اختر المنتجات من الشبكة أو امسح الباركود.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    if (vm.isEmpty) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "الفاتورة فارغة. اختر المنتجات من الشبكة أو امسح الباركود.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Lux.InkSoft,
+                                modifier = Modifier.weight(1f),
+                            )
+                            SmallLink("+ صنف جديد", onClick = onAddNew)
+                        }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("الأصناف (${vm.pieces} قطعة)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                            SmallLink("+ صنف جديد", onClick = onAddNew)
                             SmallLink("تفريغ", onClick = vm::clear)
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            vm.newItems.forEachIndexed { i, n ->
+                                key(n.key) {
+                                    if (i > 0) HorizontalDivider(color = Lux.Hairline)
+                                    NewItemRow(n, onEdit = { onEditNew(n) }, onRemove = { vm.removeNewItem(n.key) })
+                                }
+                            }
                             vm.lines.forEachIndexed { i, l ->
                                 key(l.variant.id) {
-                                    if (i > 0) HorizontalDivider(color = Lux.Hairline)
+                                    if (i > 0 || vm.newItems.isNotEmpty()) HorizontalDivider(color = Lux.Hairline)
                                     LineRow(l, vm)
                                 }
                             }
@@ -675,7 +794,7 @@ private fun InvoiceContent(vm: NewPurchaseViewModel, onNewSupplier: () -> Unit, 
 
                 // ---- totals
                 Section {
-                    CompactRow("عدد الأصناف", "${vm.lines.size}")
+                    CompactRow("عدد الأصناف", "${vm.itemCount}")
                     CompactRow("عدد القطع", "${vm.pieces}")
                     CompactRow("قيمة البضاعة", sar(vm.subtotal))
                     if (vm.shippingValue.signum() > 0) CompactRow("الشحن", sar(vm.shippingValue))
@@ -688,7 +807,7 @@ private fun InvoiceContent(vm: NewPurchaseViewModel, onNewSupplier: () -> Unit, 
                         val rest = vm.grandTotal.subtract(paid).max(BigDecimal.ZERO)
                         CompactRow("المدفوع الآن", sar(paid.min(vm.grandTotal)))
                         if (rest.signum() > 0) CompactRow("المتبقي على الحساب", sar(rest), Lux.GoldDeep)
-                    } else if (vm.lines.isNotEmpty()) {
+                    } else if (!vm.isEmpty) {
                         CompactRow("على حساب المورد", sar(vm.grandTotal), Lux.GoldDeep)
                     }
                 }
@@ -813,7 +932,7 @@ private fun SupplierSection(vm: NewPurchaseViewModel, onNewSupplier: () -> Unit)
                         value = vm.supplierQuery,
                         onValueChange = { vm.searchSuppliers(it); open = true },
                         placeholder = "ابحث عن المورد بالاسم أو الهاتف",
-                        isError = vm.lines.isNotEmpty(),
+                        isError = !vm.isEmpty,
                         trailing = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(20.dp)) },
                         modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
                     )
@@ -880,7 +999,263 @@ private fun PaymentSection(vm: NewPurchaseViewModel) {
     }
 }
 
+/** A product bought for the first time, tagged "جديد"; edited or removed like any other line. */
+@Composable
+private fun NewItemRow(n: NewPurchaseItem, onEdit: () -> Unit, onRemove: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (n.imageUrl != null) {
+                    AsyncImage(model = n.imageUrl, contentDescription = n.nameAr, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Text(n.nameAr.take(1), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        n.nameAr,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(Lux.GoldBrush).padding(horizontal = 8.dp, vertical = 1.dp),
+                    ) { Text("جديد", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+                }
+                val price = validAmount(n.basePrice, Currency.SAR) ?: BigDecimal.ZERO
+                Text(
+                    "${n.categoryName} · بيع ${sar(price)} · " +
+                        n.variants.joinToString("، ") { v -> listOfNotNull(v.size, v.color).joinToString(" ").ifBlank { "قطعة" } + " ×${v.quantity}" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Lux.InkSoft,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            SmallLink("تعديل", onClick = onEdit)
+            SmallIcon(Icons.Filled.Delete, "حذف", tint = MaterialTheme.colorScheme.error, onClick = onRemove)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${n.pieces} قطعة × ${n.unitCost?.let { sar(it) } ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (n.unitCost == null) MaterialTheme.colorScheme.error else Lux.InkSoft,
+                modifier = Modifier.weight(1f),
+            )
+            Text(sar(n.lineTotal), style = MaterialTheme.typography.labelLarge, color = Lux.GoldDeep)
+        }
+    }
+}
+
 // ----------------------------------------------------------------- dialogs ---
+
+/** One size / colour row of a new product. */
+private data class NewVariantRow(val size: String = "", val color: String = "", val qty: String = "1", val barcode: String = "")
+
+/** "صنف جديد": photo, name, category, sale price and cost (SAR), then sizes / colours / quantities with optional barcodes. */
+@Composable
+private fun NewProductDialog(vm: NewPurchaseViewModel, initial: NewPurchaseItem?, onDismiss: () -> Unit) {
+    var name by rememberSaveable { mutableStateOf(initial?.nameAr.orEmpty()) }
+    var categoryId by rememberSaveable { mutableStateOf(initial?.categoryId) }
+    var basePrice by rememberSaveable { mutableStateOf(initial?.basePrice.orEmpty()) }
+    var cost by rememberSaveable { mutableStateOf(initial?.cost.orEmpty()) }
+    var imageUrl by rememberSaveable { mutableStateOf(initial?.imageUrl) }
+    var pickingCategory by remember { mutableStateOf(false) }
+    val rows = remember {
+        mutableStateListOf<NewVariantRow>().apply {
+            if (initial == null || initial.variants.isEmpty()) {
+                add(NewVariantRow())
+            } else {
+                initial.variants.forEach { v -> add(NewVariantRow(v.size.orEmpty(), v.color.orEmpty(), v.quantity.toString(), v.barcode.orEmpty())) }
+            }
+        }
+    }
+    var scanRow by remember { mutableStateOf<Int?>(null) }
+    val scanner = rememberBarcodeScanner { code ->
+        scanRow?.let { i -> if (i in rows.indices) rows[i] = rows[i].copy(barcode = code.take(64)) }
+        scanRow = null
+    }
+    val picker = rememberImagePicker(maxSide = 1200) { bytes -> vm.upload(bytes) { imageUrl = it } }
+    val category = vm.categories.firstOrNull { it.first.id == categoryId }?.first
+    val categoryName = category?.nameAr ?: initial?.takeIf { it.categoryId == categoryId }?.categoryName
+    val parsed = rows.map { r ->
+        LocalNewVariant(
+            size = r.size.trim().ifBlank { null },
+            color = r.color.trim().ifBlank { null },
+            barcode = r.barcode.trim().ifBlank { null },
+            quantity = r.qty.toIntOrNull() ?: 0,
+        )
+    }
+    val barcodes = parsed.mapNotNull { it.barcode }
+    val problem = when {
+        name.trim().length < 2 -> "اكتب اسم الصنف"
+        categoryId == null || categoryName == null -> "اختر القسم"
+        validAmount(basePrice, Currency.SAR) == null -> "أدخل سعر البيع"
+        validAmount(cost, Currency.SAR) == null -> "أدخل تكلفة الشراء للقطعة"
+        parsed.any { it.quantity !in 1..MAX_QTY } -> "أدخل كمية صحيحة لكل مقاس / لون"
+        parsed.map { it.size to it.color }.toSet().size != parsed.size -> "المقاس واللون مكرران في أكثر من سطر"
+        barcodes.toSet().size != barcodes.size -> "الباركود مكرر"
+        else -> null
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "صنف جديد" else "تعديل الصنف الجديد") },
+        text = {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Lux.Champagne),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val url = imageUrl
+                        if (url != null) {
+                            AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Text(name.trim().take(1).ifBlank { "+" }, style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        OutlinedButton(onClick = picker.fromGallery, enabled = !vm.uploading) {
+                            if (vm.uploading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text(if (imageUrl == null) "صورة الصنف" else "تغيير الصورة")
+                        }
+                        if (imageUrl != null) TextButton(onClick = { imageUrl = null }) { Text("إزالة الصورة", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+                OutlinedTextField(value = name, onValueChange = { name = it.take(200) }, label = { Text("اسم الصنف") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { vm.loadCategories(); pickingCategory = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(categoryName?.let { "القسم: $it" } ?: "اختر القسم")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = basePrice,
+                        onValueChange = { basePrice = decimalInput(it).take(14) },
+                        label = { Text("سعر البيع (ر.س)") },
+                        isError = basePrice.isNotBlank() && validAmount(basePrice, Currency.SAR) == null,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = cost,
+                        onValueChange = { cost = decimalInput(it).take(14) },
+                        label = { Text("تكلفة القطعة (ر.س)") },
+                        isError = cost.isNotBlank() && validAmount(cost, Currency.SAR) == null,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text("المقاسات والألوان والكميات", style = MaterialTheme.typography.labelLarge)
+                rows.forEachIndexed { i, r ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (i > 0) HorizontalDivider(color = Lux.Hairline)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = r.size,
+                                onValueChange = { rows[i] = r.copy(size = it.take(30)) },
+                                label = { Text("المقاس") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                value = r.color,
+                                onValueChange = { rows[i] = r.copy(color = it.take(40)) },
+                                label = { Text("اللون") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                value = r.qty,
+                                onValueChange = { rows[i] = r.copy(qty = it.filter { c -> c.isDigit() }.take(6)) },
+                                label = { Text("الكمية") },
+                                isError = (r.qty.toIntOrNull() ?: 0) !in 1..MAX_QTY,
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(0.8f),
+                            )
+                            if (rows.size > 1) {
+                                IconButton(onClick = { rows.removeAt(i) }) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = r.barcode,
+                            onValueChange = { rows[i] = r.copy(barcode = it.trim().take(64)) },
+                            label = { Text("باركود المصنع (اختياري)") },
+                            supportingText = if (r.barcode.isBlank()) ({ Text("فارغ = يولّد النظام باركوداً") }) else null,
+                            trailingIcon = {
+                                TextButton(onClick = {
+                                    scanRow = i
+                                    scanner()
+                                }) { Text("مسح") }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                TextButton(onClick = { rows += NewVariantRow() }) { Text("+ مقاس / لون آخر") }
+                val pieces = parsed.sumOf { it.quantity.coerceAtLeast(0) }
+                val unit = validAmount(cost, Currency.SAR)
+                if (unit != null && pieces > 0) {
+                    CompactRow("الإجمالي ($pieces قطعة)", sar(unit.multiply(BigDecimal(pieces))), Lux.GoldDeep)
+                }
+                Text(
+                    "يُنشأ الصنف برقم SKU وباركود عند إصدار الفاتورة، ويُعرض للبيع بعد الاستلام.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Lux.InkSoft,
+                )
+                problem?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = problem == null && !vm.uploading,
+                onClick = {
+                    val cid = categoryId
+                    if (problem == null && cid != null && categoryName != null) {
+                        val item = NewPurchaseItem(
+                            nameAr = name.trim(),
+                            categoryId = cid,
+                            categoryName = categoryName,
+                            basePrice = basePrice.trim(),
+                            cost = cost.trim(),
+                            imageUrl = imageUrl,
+                            variants = parsed,
+                        )
+                        vm.saveNewItem(if (initial != null) item.copy(key = initial.key) else item)
+                        onDismiss()
+                    }
+                },
+            ) { Text(if (initial == null) "إضافة للفاتورة" else "حفظ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
+    if (pickingCategory) {
+        AlertDialog(
+            onDismissRequest = { pickingCategory = false },
+            title = { Text("القسم") },
+            text = {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
+                    if (vm.categories.isEmpty()) Text("لا توجد أقسام بعد")
+                    vm.categories.forEach { (c, depth) ->
+                        Text(
+                            "${"   ".repeat(depth)}${c.nameAr}",
+                            modifier = Modifier.fillMaxWidth().clickable { pickingCategory = false; categoryId = c.id }.padding(vertical = 10.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickingCategory = false }) { Text("إغلاق") } },
+        )
+    }
+}
 
 @Composable
 private fun QuickSupplierDialog(onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {

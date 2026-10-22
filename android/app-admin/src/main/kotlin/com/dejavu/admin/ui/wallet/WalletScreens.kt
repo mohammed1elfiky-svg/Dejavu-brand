@@ -91,6 +91,7 @@ import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.TreasuryRepository
+import com.dejavu.admin.ui.treasury.BoxAvatar
 import com.dejavu.core.admin.WalletAdminRepository
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
@@ -541,7 +542,8 @@ private fun ApproveDialog(t: AdminTopUp, vm: TopUpViewModel, onDismiss: () -> Un
                         b.value.forEach { box ->
                             Row(Modifier.fillMaxWidth().clickable { boxId = box.id }, verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = box.id == boxId, onClick = { boxId = box.id })
-                                Column(Modifier.weight(1f)) {
+                                BoxAvatar(box, 32.dp)
+                                Column(Modifier.weight(1f).padding(start = 8.dp)) {
                                     Text(box.name)
                                     Text(
                                         "${box.kind.label} · الرصيد ${Money.plain(Money.parse(box.balance), cur)}",

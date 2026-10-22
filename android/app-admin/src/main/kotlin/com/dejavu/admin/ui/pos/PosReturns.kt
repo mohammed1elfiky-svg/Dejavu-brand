@@ -64,6 +64,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -504,9 +505,12 @@ class PosReturnViewModel(
 @Composable
 fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val vm = adminViewModel { PosReturnViewModel(it.pos, it.finance) }
+    val free = adminViewModel { PosFreeReturnViewModel(it.pos, it.finance) }
     val snackbar = remember { SnackbarHostState() }
     var picking by remember { mutableStateOf<PosProduct?>(null) }
+    var noInvoice by rememberSaveable { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
+    CollectMessages(free, snackbar)
     val scanReceipt = rememberBarcodeScanner { code -> vm.find(code) }
     val scanProduct = rememberBarcodeScanner { code -> vm.scan(code) { picking = it } }
 
@@ -514,10 +518,13 @@ fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn
         contentWindowInsets = WindowInsets(0),
         topBar = {
             BackTopBar("مرتجع / استبدال", onBack) {
-                if (vm.sale != null && vm.exchange) {
-                    TextButton(onClick = scanProduct) { Text("باركود صنف") }
-                } else {
-                    TextButton(onClick = scanReceipt) { Text("مسح الفاتورة") }
+                // Without an invoice the barcode links sit in each section instead.
+                if (!noInvoice) {
+                    if (vm.sale != null && vm.exchange) {
+                        TextButton(onClick = scanProduct) { Text("باركود صنف") }
+                    } else {
+                        TextButton(onClick = scanReceipt) { Text("مسح الفاتورة") }
+                    }
                 }
             }
         },
@@ -525,23 +532,35 @@ fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn
     ) { padding ->
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
             Column(Modifier.padding(padding).fillMaxSize()) {
-                Column(
-                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (vm.busy || vm.finding) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    FindSection(vm, scanReceipt)
-                    vm.sale?.let { s ->
-                        SaleSection(s, vm)
-                        ModeSection(vm)
-                        if (vm.exchange) {
-                            ExchangeSection(vm, onScan = scanProduct, onPick = { picking = it })
-                        } else {
-                            RefundSection(vm)
+                    RChip("بالفاتورة", selected = !noInvoice) { noInvoice = false }
+                    RChip("بدون فاتورة", selected = noInvoice) { noInvoice = true }
+                }
+                if (noInvoice) {
+                    FreeReturnContent(free, Modifier.weight(1f).fillMaxWidth())
+                } else {
+                    Column(
+                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (vm.busy || vm.finding) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        FindSection(vm, scanReceipt)
+                        vm.sale?.let { s ->
+                            SaleSection(s, vm)
+                            ModeSection(vm)
+                            if (vm.exchange) {
+                                ExchangeSection(vm, onScan = scanProduct, onPick = { picking = it })
+                            } else {
+                                RefundSection(vm)
+                            }
                         }
                     }
+                    if (vm.sale != null) SubmitBar(vm)
                 }
-                if (vm.sale != null) SubmitBar(vm)
             }
         }
     }
@@ -559,14 +578,14 @@ fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn
 // ---------------------------------------------------------------- sections ---
 
 @Composable
-private fun RSection(content: @Composable ColumnScope.() -> Unit) {
+internal fun RSection(content: @Composable ColumnScope.() -> Unit) {
     GlassCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), elevation = 4.dp, contentPadding = 12.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
     }
 }
 
 @Composable
-private fun RChip(text: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun RChip(text: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
         onClick = onClick,
@@ -577,7 +596,7 @@ private fun RChip(text: String, selected: Boolean, enabled: Boolean = true, onCl
 }
 
 @Composable
-private fun RLink(text: String, onClick: () -> Unit) {
+internal fun RLink(text: String, onClick: () -> Unit) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
@@ -588,7 +607,7 @@ private fun RLink(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RRow(label: String, value: String, valueColor: Color = Color.Unspecified, strong: Boolean = false) {
+internal fun RRow(label: String, value: String, valueColor: Color = Color.Unspecified, strong: Boolean = false) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         val style = if (strong) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall
         Text(label, style = style)
@@ -597,7 +616,7 @@ private fun RRow(label: String, value: String, valueColor: Color = Color.Unspeci
 }
 
 @Composable
-private fun RStep(text: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun RStep(text: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
         Modifier.size(28.dp).clip(CircleShape).background(if (enabled) Lux.GoldLight else Lux.Champagne)
             .clickable(enabled = enabled, onClick = onClick),
@@ -606,7 +625,7 @@ private fun RStep(text: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RField(
+internal fun RField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -644,7 +663,7 @@ private fun RField(
 }
 
 @Composable
-private fun Thumb(name: String, image: String? = null) {
+internal fun Thumb(name: String, image: String? = null) {
     Box(
         Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne),
         contentAlignment = Alignment.Center,
@@ -943,21 +962,25 @@ private fun ExchangeLineRow(l: CartLine, vm: PosReturnViewModel, cur: Currency, 
 }
 
 @Composable
-private fun TenderFields(vm: PosReturnViewModel) {
+private fun TenderFields(vm: PosReturnViewModel) = TenderFields(vm.tenders, vm::setTender, vm::fillRemaining)
+
+/** Amounts the customer pays on top, one field per currency, each with an "المتبقي" filler. */
+@Composable
+internal fun TenderFields(tenders: List<TenderInput>, onChange: (Int, String) -> Unit, onFill: (Int) -> Unit) {
     Text("المدفوع من العميل", style = MaterialTheme.typography.labelLarge)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        vm.tenders.forEachIndexed { i, tender ->
+        tenders.forEachIndexed { i, tender ->
             val c = tender.currency
             Column(Modifier.weight(1f)) {
                 RField(
                     value = tender.amount,
-                    onValueChange = { vm.setTender(i, it) },
+                    onValueChange = { onChange(i, it) },
                     placeholder = if (c.decimals == 0) "${c.nameAr} بدون كسور" else c.nameAr,
                     isError = tender.amount.isNotBlank() && validAmount(tender.amount, c) == null,
                     trailing = { Text(c.symbol, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                RLink("المتبقي") { vm.fillRemaining(i) }
+                RLink("المتبقي") { onFill(i) }
             }
         }
     }
@@ -996,19 +1019,30 @@ private fun SubmitBar(vm: PosReturnViewModel) {
 private fun hexColor(hex: String?): Color? = hex?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
 
 @Composable
-private fun ExchangeVariantPicker(p: PosProduct, vm: PosReturnViewModel, onDismiss: () -> Unit, onPick: (PosVariant) -> Unit) {
-    val cur = vm.saleCurrency
-    val rate = vm.currentRate
+private fun ExchangeVariantPicker(p: PosProduct, vm: PosReturnViewModel, onDismiss: () -> Unit, onPick: (PosVariant) -> Unit) =
+    VariantSheet(p, vm.saleCurrency, vm.currentRate, left = { v -> v.available - vm.inLines(v.id) }, onDismiss = onDismiss, onPick = onPick)
+
+/** Colour / size picker; [left] = pieces still available (null = any piece can be picked, e.g. a returned one). */
+@Composable
+internal fun VariantSheet(
+    p: PosProduct,
+    cur: Currency,
+    rate: BigDecimal,
+    left: ((PosVariant) -> Int)?,
+    onDismiss: () -> Unit,
+    onPick: (PosVariant) -> Unit,
+) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Lux.Pearl) {
         Text(p.nameAr, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 16.dp))
         Text("اختر اللون والمقاس", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft, modifier = Modifier.padding(horizontal = 16.dp))
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(p.variants, key = { it.id }) { v ->
-                val left = v.available - vm.inLines(v.id)
-                GlassCard(Modifier.fillMaxWidth().alpha(if (left > 0) 1f else 0.5f), elevation = 4.dp, contentPadding = 0.dp) {
+                val limit = left?.invoke(v)
+                val ok = limit == null || limit > 0
+                GlassCard(Modifier.fillMaxWidth().alpha(if (ok) 1f else 0.5f), elevation = 4.dp, contentPadding = 0.dp) {
                     Row(
-                        Modifier.fillMaxWidth().clickable(enabled = left > 0) { onPick(v) }.padding(12.dp),
+                        Modifier.fillMaxWidth().clickable(enabled = ok) { onPick(v) }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         val swatch = hexColor(v.colorHex)
@@ -1019,9 +1053,13 @@ private fun ExchangeVariantPicker(p: PosProduct, vm: PosReturnViewModel, onDismi
                         Column(Modifier.weight(1f)) {
                             Text(v.title, style = MaterialTheme.typography.titleSmall)
                             Text(
-                                if (left > 0) "متاح $left" else "غير متوفر",
+                                when {
+                                    limit == null -> listOfNotNull(v.sku, "بالمخزون ${v.available}").joinToString(" · ")
+                                    limit > 0 -> "متاح $limit"
+                                    else -> "غير متوفر"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (left > 0) Lux.InkSoft else MaterialTheme.colorScheme.error,
+                                color = if (ok) Lux.InkSoft else MaterialTheme.colorScheme.error,
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {

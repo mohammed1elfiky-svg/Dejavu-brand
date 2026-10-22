@@ -2,6 +2,7 @@
 
 package com.dejavu.admin.ui.treasury
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,18 +16,22 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,6 +46,7 @@ import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,14 +57,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import coil3.compose.AsyncImage
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.pos.LuxButton
@@ -72,6 +84,7 @@ import com.dejavu.core.admin.CashBoxEntry
 import com.dejavu.core.admin.CashBoxKind
 import com.dejavu.core.admin.CashTransfer
 import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.TreasuryRepository
@@ -86,6 +99,7 @@ import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDateTime
+import com.dejavu.core.ui.media.rememberImagePicker
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -146,6 +160,10 @@ internal fun BoxSelector(label: String, options: List<CashBox>, selected: CashBo
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
+                if (selected != null) {
+                    BoxAvatar(selected, 26.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     selected?.let { "${it.name} · ${it.shownBalance}" } ?: if (options.isEmpty()) "لا توجد صناديق متاحة" else "اختر",
                     Modifier.weight(1f),
@@ -157,6 +175,7 @@ internal fun BoxSelector(label: String, options: List<CashBox>, selected: CashBo
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 options.forEach { b ->
                     DropdownMenuItem(
+                        leadingIcon = { BoxAvatar(b, 32.dp) },
                         text = {
                             Column {
                                 Text(b.name)
@@ -194,13 +213,84 @@ private fun AmountField(value: String, onChange: (String) -> Unit, label: String
 
 private fun BigDecimal.plainAmount(): String = stripTrailingZeros().toPlainString()
 
+/** Symbols a box can carry instead of (or under) a picture. */
+internal val BoxIcons = listOf("💵", "💴", "💶", "💷", "💰", "🏦", "🏧", "💳", "🪙", "🧾", "📦", "🔒", "⭐")
+
+private val CashBoxKind.defaultIcon: String
+    get() = when (this) {
+        CashBoxKind.CASHIER -> "💵"
+        CashBoxKind.VAULT -> "🔒"
+        CashBoxKind.BANK -> "🏦"
+    }
+
+/** The box's picture (round), else its symbol, else the default one of its kind. */
+@Composable
+internal fun BoxAvatar(box: CashBox, size: Dp = 40.dp) =
+    BoxAvatar(box.icon, box.imageUrl, box.kind, box.name, size)
+
+@Composable
+internal fun BoxAvatar(icon: String?, imageUrl: String?, kind: CashBoxKind, name: String, size: Dp = 40.dp) {
+    Box(Modifier.size(size).clip(CircleShape).background(Lux.Champagne), contentAlignment = Alignment.Center) {
+        if (!imageUrl.isNullOrBlank()) {
+            AsyncImage(model = imageUrl, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.size(size))
+        } else {
+            Text(icon?.takeIf { it.isNotBlank() } ?: kind.defaultIcon, fontSize = (size.value * 0.5f).sp)
+        }
+    }
+}
+
+/** Symbol grid plus an optional uploaded picture for a box. */
+@Composable
+private fun BoxLookEditor(
+    icon: String,
+    imageUrl: String,
+    kind: CashBoxKind,
+    name: String,
+    uploading: Boolean,
+    onIcon: (String) -> Unit,
+    onUpload: (ByteArray) -> Unit,
+    onRemoveImage: () -> Unit,
+) {
+    val picker = rememberImagePicker(maxSide = 600) { onUpload(it) }
+    Text("الرمز", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(selected = icon.isBlank(), onClick = { onIcon("") }, label = { Text("بدون") })
+        BoxIcons.forEach { e ->
+            FilterChip(selected = icon == e, onClick = { onIcon(e) }, label = { Text(e, fontSize = 18.sp) })
+        }
+    }
+    Text("الصورة (اختياري)", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        BoxAvatar(icon.ifBlank { null }, imageUrl.ifBlank { null }, kind, name, 56.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedButton(onClick = picker.fromGallery, enabled = !uploading) {
+                if (uploading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                else Text(if (imageUrl.isBlank()) "رفع صورة" else "تغيير الصورة")
+            }
+            if (imageUrl.isNotBlank()) TextButton(onClick = onRemoveImage, enabled = !uploading) { Text("إزالة الصورة", color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
 // -------------------------------------------------------------- boxes list ---
 
 class CashBoxesViewModel(
     private val treasury: TreasuryRepository,
     private val finance: FinanceRepository,
+    private val inventory: InventoryRepository,
     private val manager: Boolean,
 ) : BaseViewModel() {
+    private val _uploading = MutableStateFlow(false)
+    val uploading = _uploading.asStateFlow()
+
+    fun upload(bytes: ByteArray, then: (String) -> Unit) {
+        _uploading.value = true
+        viewModelScope.launch {
+            inventory.uploadImage(bytes).orSay()?.let { then(it.url) }
+            _uploading.value = false
+        }
+    }
+
     private val _state = MutableStateFlow<Load<List<CashBox>>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _safes = MutableStateFlow<List<CashBox>>(emptyList())
@@ -230,11 +320,11 @@ class CashBoxesViewModel(
         }
     }
 
-    fun create(name: String, kind: CashBoxKind, currency: Currency, done: () -> Unit) {
+    fun create(name: String, kind: CashBoxKind, currency: Currency, icon: String, imageUrl: String, done: () -> Unit) {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            treasury.create(name, kind, currency).orSay()?.let {
+            treasury.create(name, kind, currency, icon, imageUrl).orSay()?.let {
                 say("تمت إضافة ${it.name}")
                 done()
                 _state.value = treasury.all().toLoad()
@@ -248,11 +338,12 @@ class CashBoxesViewModel(
 @Composable
 fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox: (String) -> Unit, openExchange: () -> Unit) {
     val manager = session.can(Perm.CASHBOXES_MANAGE)
-    val vm = adminViewModel(key = "boxes:$manager") { CashBoxesViewModel(it.treasury, it.finance, manager) }
+    val vm = adminViewModel(key = "boxes:$manager") { CashBoxesViewModel(it.treasury, it.finance, it.inventory, manager) }
     val state by vm.state.collectAsStateWithLifecycle()
     val safes by vm.safes.collectAsStateWithLifecycle()
     val rates by vm.rates.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val uploading by vm.uploading.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var transferring by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
@@ -319,8 +410,8 @@ fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox:
                 ) { from, to, amount, toAmount, note -> vm.transfer(from, to, amount, toAmount, note) { transferring = false } }
             }
             if (creating) {
-                CreateBoxDialog(rates.map { it.first }, onDismiss = { creating = false }) { name, kind, currency ->
-                    vm.create(name, kind, currency) { creating = false }
+                CreateBoxDialog(rates.map { it.first }, uploading, vm::upload, onDismiss = { creating = false }) { name, kind, currency, icon, imageUrl ->
+                    vm.create(name, kind, currency, icon, imageUrl) { creating = false }
                 }
             }
         }
@@ -360,6 +451,8 @@ private fun BoxCard(b: CashBox, showOwner: Boolean, onClick: () -> Unit) {
     GlassCard(Modifier.fillMaxWidth(), contentPadding = 0.dp) {
         Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                BoxAvatar(b, 44.dp)
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(b.name, style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -449,15 +542,23 @@ private fun TransferDialog(
 }
 
 @Composable
-private fun CreateBoxDialog(currencies: List<Currency>, onDismiss: () -> Unit, onCreate: (String, CashBoxKind, Currency) -> Unit) {
+private fun CreateBoxDialog(
+    currencies: List<Currency>,
+    uploading: Boolean,
+    upload: (ByteArray, (String) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+    onCreate: (name: String, kind: CashBoxKind, currency: Currency, icon: String, imageUrl: String) -> Unit,
+) {
     var name by rememberSaveable { mutableStateOf("") }
     var kind by rememberSaveable { mutableStateOf(CashBoxKind.VAULT) }
     var currency by remember { mutableStateOf(currencies.firstOrNull() ?: Currency.SAR) }
+    var icon by rememberSaveable { mutableStateOf("") }
+    var imageUrl by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("إضافة خزينة أو حساب بنكي") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it.take(100) }, label = { Text("الاسم") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Text("النوع", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -469,16 +570,60 @@ private fun CreateBoxDialog(currencies: List<Currency>, onDismiss: () -> Unit, o
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     currencies.forEach { c -> FilterChip(selected = c == currency, onClick = { currency = c }, label = { Text(c.nameAr) }) }
                 }
+                BoxLookEditor(
+                    icon = icon,
+                    imageUrl = imageUrl,
+                    kind = kind,
+                    name = name,
+                    uploading = uploading,
+                    onIcon = { icon = it },
+                    onUpload = { bytes -> upload(bytes) { imageUrl = it } },
+                    onRemoveImage = { imageUrl = "" },
+                )
             }
         },
-        confirmButton = { TextButton(onClick = { onCreate(name.trim(), kind, currency) }, enabled = name.trim().length >= 2) { Text("إضافة") } },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name.trim(), kind, currency, icon, imageUrl) }, enabled = name.trim().length >= 2 && !uploading) { Text("إضافة") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
 }
 
 // --------------------------------------------------------------- one box ---
 
-class CashBoxViewModel(private val id: String, private val treasury: TreasuryRepository, private val manager: Boolean) : BaseViewModel() {
+class CashBoxViewModel(
+    private val id: String,
+    private val treasury: TreasuryRepository,
+    private val inventory: InventoryRepository,
+    private val manager: Boolean,
+) : BaseViewModel() {
+    private val _uploading = MutableStateFlow(false)
+    val uploading = _uploading.asStateFlow()
+    private val _saving = MutableStateFlow(false)
+    val saving = _saving.asStateFlow()
+
+    fun upload(bytes: ByteArray, then: (String) -> Unit) {
+        _uploading.value = true
+        viewModelScope.launch {
+            inventory.uploadImage(bytes).orSay()?.let { then(it.url) }
+            _uploading.value = false
+        }
+    }
+
+    /** [icon] / [imageUrl] "" remove them. */
+    fun save(name: String, isActive: Boolean, icon: String, imageUrl: String, done: () -> Unit) {
+        if (_saving.value) return
+        _saving.value = true
+        viewModelScope.launch {
+            treasury.update(id, name = name, isActive = isActive, icon = icon, imageUrl = imageUrl).orSay()?.let { b ->
+                say("تم حفظ ${b.name}")
+                done()
+                _box.value = findBox().toLoad()
+            }
+            _saving.value = false
+        }
+    }
+
     private val _box = MutableStateFlow<Load<CashBox>>(Load.Loading)
     val box = _box.asStateFlow()
     private val _entries = MutableStateFlow<List<CashBoxEntry>>(emptyList())
@@ -529,12 +674,15 @@ class CashBoxViewModel(private val id: String, private val treasury: TreasuryRep
 @Composable
 fun CashBoxScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val manager = session.can(Perm.CASHBOXES_MANAGE)
-    val vm = adminViewModel(key = "box:$id") { CashBoxViewModel(id, it.treasury, manager) }
+    val vm = adminViewModel(key = "box:$id") { CashBoxViewModel(id, it.treasury, it.inventory, manager) }
     val state by vm.box.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val loadingMore by vm.loadingMore.collectAsStateWithLifecycle()
+    val uploading by vm.uploading.collectAsStateWithLifecycle()
+    val saving by vm.saving.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    var editing by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -545,6 +693,9 @@ fun CashBoxScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit
         contentWindowInsets = WindowInsets(0),
         topBar = {
             BackTopBar((state as? Load.Ready)?.value?.name ?: "الصندوق", onBack) {
+                if (manager && state is Load.Ready) {
+                    IconButton(onClick = { editing = true }) { Icon(Icons.Filled.Edit, contentDescription = "تعديل") }
+                }
                 IconButton(onClick = vm::load) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") }
             }
         },
@@ -554,11 +705,16 @@ fun CashBoxScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
-                        Text(
-                            listOfNotNull(box.kind.label, box.currency.nameAr, box.user?.name, box.account?.code).joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Lux.InkSoft,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            BoxAvatar(box, 48.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                listOfNotNull(box.kind.label, box.currency.nameAr, box.user?.name, box.account?.code).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Lux.InkSoft,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text("الرصيد الحالي", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
                         Text(box.shownBalance, style = MaterialTheme.typography.headlineMedium, color = Lux.GoldDeep, fontWeight = FontWeight.Bold)
@@ -574,8 +730,55 @@ fun CashBoxScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit
                     item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth()) { Text("عرض المزيد") } }
                 }
             }
+            if (editing) {
+                EditBoxDialog(box, uploading, saving, vm::upload, onDismiss = { editing = false }) { name, active, icon, imageUrl ->
+                    vm.save(name, active, icon, imageUrl) { editing = false }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun EditBoxDialog(
+    box: CashBox,
+    uploading: Boolean,
+    saving: Boolean,
+    upload: (ByteArray, (String) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: (name: String, isActive: Boolean, icon: String, imageUrl: String) -> Unit,
+) {
+    var name by rememberSaveable(box.id) { mutableStateOf(box.name) }
+    var active by rememberSaveable(box.id) { mutableStateOf(box.isActive) }
+    var icon by rememberSaveable(box.id) { mutableStateOf(box.icon.orEmpty()) }
+    var imageUrl by rememberSaveable(box.id) { mutableStateOf(box.imageUrl.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تعديل ${box.kind.label}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it.take(100) }, label = { Text("الاسم") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("مفعّل", Modifier.weight(1f))
+                    Switch(checked = active, onCheckedChange = { active = it })
+                }
+                BoxLookEditor(
+                    icon = icon,
+                    imageUrl = imageUrl,
+                    kind = box.kind,
+                    name = name,
+                    uploading = uploading,
+                    onIcon = { icon = it },
+                    onUpload = { bytes -> upload(bytes) { imageUrl = it } },
+                    onRemoveImage = { imageUrl = "" },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim(), active, icon, imageUrl) }, enabled = name.trim().length >= 2 && !uploading && !saving) { Text("حفظ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
 }
 
 @Composable
@@ -610,7 +813,16 @@ class ExchangeViewModel(private val treasury: TreasuryRepository, private val fi
     val hasMore = _hasMore.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _exchangesOnly = MutableStateFlow(true)
+    val exchangesOnly = _exchangesOnly.asStateFlow()
     private var page = 1
+
+    fun showExchangesOnly(only: Boolean) {
+        if (_exchangesOnly.value == only) return
+        _exchangesOnly.value = only
+        _history.value = emptyList()
+        viewModelScope.launch { fetch(reset = true) }
+    }
 
     fun load() {
         if (_boxes.value !is Load.Ready) _boxes.value = Load.Loading
@@ -625,10 +837,12 @@ class ExchangeViewModel(private val treasury: TreasuryRepository, private val fi
 
     private suspend fun fetch(reset: Boolean) {
         val next = if (reset) 1 else page + 1
-        treasury.transfers(exchangesOnly = true, page = next).fold(
+        val only = _exchangesOnly.value
+        treasury.transfers(exchangesOnly = only, page = next).fold(
             { p ->
+                if (only != _exchangesOnly.value) return
                 page = next
-                _history.value = (if (reset) emptyList() else _history.value) + p.items.filter { it.isExchange }
+                _history.value = (if (reset) emptyList() else _history.value) + p.items.filter { !only || it.isExchange }
                 _hasMore.value = p.hasMore
             },
             { e -> say(e.userMessage()) },
@@ -655,6 +869,34 @@ class ExchangeViewModel(private val treasury: TreasuryRepository, private val fi
             _busy.value = false
         }
     }
+
+    fun cancel(t: CashTransfer, reason: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            treasury.cancelTransfer(t.id, reason).orSay()?.let {
+                say("تم إلغاء ${t.number}")
+                done()
+                _boxes.value = treasury.all().toLoad()
+                fetch(reset = true)
+            }
+            _busy.value = false
+        }
+    }
+
+    fun edit(t: CashTransfer, from: CashBox, to: CashBox, amount: String, toAmount: String?, note: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            treasury.editTransfer(t.id, from.id, to.id, amount, toAmount, note).orSay()?.let { n ->
+                say("تم تعديل ${t.number} وتسجيله برقم ${n.number}")
+                done()
+                _boxes.value = treasury.all().toLoad()
+                fetch(reset = true)
+            }
+            _busy.value = false
+        }
+    }
 }
 
 /** Selling one currency for another between two boxes, with the realised FX gain or loss. */
@@ -672,7 +914,10 @@ fun ExchangeScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val history by vm.history.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val exchangesOnly by vm.exchangesOnly.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cancellingId by rememberSaveable { mutableStateOf<String?>(null) }
     var fromId by rememberSaveable { mutableStateOf<String?>(null) }
     var toId by rememberSaveable { mutableStateOf<String?>(null) }
     var sold by rememberSaveable { mutableStateOf("") }
@@ -764,13 +1009,133 @@ fun ExchangeScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                         }
                     }
                 }
-                item { Text("آخر عمليات الصرف", style = MaterialTheme.typography.titleMedium) }
-                if (history.isEmpty()) item { Text("لا توجد عمليات صرف بعد", color = Lux.InkSoft) }
-                items(history, key = { it.id }) { t -> ExchangeRow(t) }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(if (exchangesOnly) "آخر عمليات الصرف" else "آخر التحويلات", style = MaterialTheme.typography.titleMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = exchangesOnly, onClick = { vm.showExchangesOnly(true) }, label = { Text("الصرف فقط") })
+                            FilterChip(selected = !exchangesOnly, onClick = { vm.showExchangesOnly(false) }, label = { Text("كل التحويلات") })
+                        }
+                    }
+                }
+                if (history.isEmpty()) item { Text(if (exchangesOnly) "لا توجد عمليات صرف بعد" else "لا توجد تحويلات بعد", color = Lux.InkSoft) }
+                items(history, key = { it.id }) { t ->
+                    ExchangeRow(
+                        t,
+                        onEdit = if (!t.isCancelled && !busy) ({ editingId = t.id }) else null,
+                        onCancel = if (!t.isCancelled && !busy) ({ cancellingId = t.id }) else null,
+                    )
+                }
                 if (hasMore) item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth()) { Text("عرض المزيد") } }
+            }
+
+            history.firstOrNull { it.id == editingId }?.let { t ->
+                EditTransferDialog(t, all, rates, onDismiss = { editingId = null }) { f, to2, amount, toAmount, n ->
+                    vm.edit(t, f, to2, amount, toAmount, n) { editingId = null }
+                }
+            }
+            history.firstOrNull { it.id == cancellingId }?.let { t ->
+                CancelTransferDialog(t, onDismiss = { cancellingId = null }) { reason ->
+                    vm.cancel(t, reason) { cancellingId = null }
+                }
             }
         }
     }
+}
+
+/** Corrects a transfer or exchange: prefilled with the old one; the server cancels it and records this. */
+@Composable
+private fun EditTransferDialog(
+    t: CashTransfer,
+    boxes: List<CashBox>,
+    rates: Map<Currency, BigDecimal>,
+    onDismiss: () -> Unit,
+    onConfirm: (from: CashBox, to: CashBox, amount: String, toAmount: String?, note: String) -> Unit,
+) {
+    // Boxes of the original transfer stay selectable even if they were stopped since.
+    val options = boxes.filter { it.isActive || it.id == t.fromBox.id || it.id == t.toBox.id }
+    var fromId by rememberSaveable(t.id) { mutableStateOf<String?>(t.fromBox.id) }
+    var toId by rememberSaveable(t.id) { mutableStateOf<String?>(t.toBox.id) }
+    var amount by rememberSaveable(t.id) { mutableStateOf(Money.parse(t.fromAmount).plainAmount()) }
+    var toAmount by rememberSaveable(t.id) { mutableStateOf(if (t.isExchange) Money.parse(t.toAmount).plainAmount() else "") }
+    var note by rememberSaveable(t.id) { mutableStateOf(t.note.orEmpty()) }
+    val from = options.firstOrNull { it.id == fromId }
+    val tos = options.filter { it.id != fromId }
+    val to = tos.firstOrNull { it.id == toId }
+    val exchange = from != null && to != null && from.currency != to.currency
+    val amountValue = from?.let { validAmount(amount, it.currency) }
+    val toValue = to?.let { validAmount(toAmount, it.currency) }
+    val valid = from != null && to != null && amountValue != null && (!exchange || toValue != null)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تعديل ${t.number}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("تُلغى العملية الأصلية وتُسجّل عملية جديدة بالقيم المعدّلة.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                BoxSelector("من صندوق", options, from) {
+                    fromId = it.id
+                    if (toId == it.id) toId = null
+                }
+                BoxSelector("إلى", tos, to) { toId = it.id }
+                if (from != null) AmountField(amount, { amount = it }, "المبلغ", from.currency)
+                if (exchange && from != null && to != null) {
+                    AmountField(toAmount, { toAmount = it }, "المبلغ المستلم", to.currency)
+                    val rFrom = rates[from.currency]
+                    val rTo = rates[to.currency]
+                    if (amountValue != null && rFrom != null && rTo != null) {
+                        TextButton(onClick = {
+                            toAmount = officialConvert(amountValue, from.currency, rFrom, to.currency, rTo).plainAmount()
+                        }) { Text("حسب السعر الرسمي") }
+                    }
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(255) },
+                    label = { Text("ملاحظة (اختياري)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (from != null && to != null && amountValue != null) {
+                        onConfirm(from, to, amountValue.plainAmount(), if (exchange) toValue?.plainAmount() else null, note.trim())
+                    }
+                },
+                enabled = valid,
+            ) { Text("حفظ التعديل") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
+}
+
+@Composable
+private fun CancelTransferDialog(t: CashTransfer, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var reason by rememberSaveable(t.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("إلغاء ${t.number}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "سيُعاد ${Money.plain(Money.parse(t.fromAmount), t.fromBox.currency)} إلى ${t.fromBox.name} ويُسحب " +
+                        "${Money.plain(Money.parse(t.toAmount), t.toBox.currency)} من ${t.toBox.name}، ويُعكس القيد.",
+                )
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { reason = it.take(255) },
+                    label = { Text("السبب (اختياري)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(reason.trim()) }) { Text("إلغاء العملية", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
 }
 
 @Composable
@@ -808,30 +1173,55 @@ private fun RateComparison(from: Currency, rFrom: BigDecimal, to: Currency, rTo:
 }
 
 @Composable
-private fun ExchangeRow(t: CashTransfer) {
+private fun ExchangeRow(t: CashTransfer, onEdit: (() -> Unit)?, onCancel: (() -> Unit)?) {
     val diff = Money.parse(t.fxDifference)
-    GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp) {
+    GlassCard(Modifier.fillMaxWidth().alpha(if (t.isCancelled) 0.55f else 1f), elevation = 4.dp, contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(t.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            if (t.isCancelled) {
+                Text(
+                    "ملغاة",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
             Text(formatDateTime(t.createdAt), style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
         }
         Text("${t.fromBox.name} ← ${t.toBox.name}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(Money.plain(Money.parse(t.fromAmount), t.fromBox.currency), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.width(6.dp))
-            Text("مقابل", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
-            Spacer(Modifier.width(6.dp))
-            Text(Money.plain(Money.parse(t.toAmount), t.toBox.currency), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+            if (t.isExchange) {
+                Spacer(Modifier.width(6.dp))
+                Text("مقابل", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                Spacer(Modifier.width(6.dp))
+                Text(Money.plain(Money.parse(t.toAmount), t.toBox.currency), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+            }
         }
-        if (diff.signum() != 0) {
-            SummaryRow(
-                if (diff.signum() > 0) "ربح فروق العملة" else "خسارة فروق العملة",
-                Money.formatBase(diff.abs().toPlainString()),
-                valueColor = if (diff.signum() > 0) Success else MaterialTheme.colorScheme.error,
-            )
-        } else {
-            Text("بدون فروق عملة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        if (t.isExchange) {
+            if (diff.signum() != 0) {
+                SummaryRow(
+                    if (diff.signum() > 0) "ربح صرف" else "خسارة صرف",
+                    Money.formatBase(diff.abs().toPlainString()),
+                    valueColor = if (diff.signum() > 0) Success else MaterialTheme.colorScheme.error,
+                )
+            } else {
+                Text("بدون فروق عملة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            }
         }
         t.note?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
+        if (t.isCancelled) {
+            val why = listOfNotNull(
+                t.cancelledAt?.let { "أُلغيت ${formatDateTime(it)}" },
+                t.cancelReason?.takeIf { it.isNotBlank() }?.let { "السبب: $it" },
+                "استُبدلت بعملية معدّلة".takeIf { t.replacedById != null },
+            )
+            Text(why.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        } else if (onEdit != null || onCancel != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (onEdit != null) TextButton(onClick = onEdit) { Text("تعديل") }
+                if (onCancel != null) TextButton(onClick = onCancel) { Text("حذف/إلغاء", color = MaterialTheme.colorScheme.error) }
+            }
+        }
     }
 }

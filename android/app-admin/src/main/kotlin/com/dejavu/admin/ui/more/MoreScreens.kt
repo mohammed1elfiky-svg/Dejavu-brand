@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -79,6 +80,7 @@ private val menu = listOf(
     MenuEntry(R.TOP_UPS, "طلبات شحن حسابات العملاء", "سندات الإيداع والموافقة أو الرفض", Icons.Filled.Email, listOf(Perm.WALLET_MANAGE)),
     MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ)),
     MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE)),
+    MenuEntry(R.STAFF, "الموظفون والصلاحيات", "إضافة الموظفين، كلمات المرور، الصلاحيات والصناديق", Icons.Filled.Person, listOf(Perm.USERS_MANAGE)),
     MenuEntry(R.BANK_ACCOUNTS, "الحسابات البنكية للمتجر", "تظهر للعملاء عند شحن الرصيد", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE)),
 )
 

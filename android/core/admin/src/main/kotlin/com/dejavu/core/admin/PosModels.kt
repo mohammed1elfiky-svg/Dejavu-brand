@@ -41,6 +41,8 @@ data class PosProduct(
     val skuNumber: Int? = null,
     val basePrice: String,
     val price: String = basePrice,
+    /** Price for merchant customers (SAR); null = they pay [price]. */
+    val wholesalePrice: String? = null,
     val posSortOrder: Int = 0,
     val category: CategoryName? = null,
     val imageUrl: String? = null,
@@ -328,3 +330,142 @@ data class CurrencyRequest(
     /** Initial rate (create only): units per 1 SAR. */
     val rate: String? = null,
 )
+
+// --------------------------------------------------------------- merchants ---
+
+@Serializable
+data class UpdateCustomerRequest(
+    val isMerchant: Boolean? = null,
+    val merchantDiscount: String? = null,
+    val creditLimit: String? = null,
+    val notes: String? = null,
+)
+
+// ------------------------------------------------------------------ staff ---
+
+@Serializable
+data class StaffRole(val id: String, val name: String, val description: String? = null, val isSystem: Boolean = false, val permissions: List<String> = emptyList())
+
+@Serializable
+data class PermissionDef(val id: String, val key: String, val module: String, val description: String? = null)
+
+@Serializable
+data class StaffUser(
+    val id: String,
+    val name: String,
+    val email: String,
+    val username: String? = null,
+    val phone: String? = null,
+    val status: String = "ACTIVE",
+    val lastLoginAt: String? = null,
+    val createdAt: String? = null,
+    val roles: List<RoleRef> = emptyList(),
+    /** Granted to this employee directly. */
+    val customPermissions: List<String> = emptyList(),
+    /** Everything they can do (roles + own). */
+    val permissions: List<String> = emptyList(),
+    /** Boxes they may use (empty = only their own drawers). */
+    val cashBoxIds: List<String> = emptyList(),
+) {
+    val isActive: Boolean get() = status == "ACTIVE"
+}
+
+@Serializable
+data class CreateStaffRequest(
+    val name: String,
+    val email: String,
+    val password: String,
+    val roleIds: List<String> = emptyList(),
+    val username: String? = null,
+    val phone: String? = null,
+    val permissions: List<String>? = null,
+    val cashBoxIds: List<String>? = null,
+)
+
+@Serializable
+data class UpdateStaffRequest(
+    val name: String? = null,
+    /** "" clears it. */
+    val username: String? = null,
+    val phone: String? = null,
+    val status: String? = null,
+    val password: String? = null,
+    val roleIds: List<String>? = null,
+)
+
+@Serializable
+data class PermissionsRequest(val permissions: List<String>)
+
+@Serializable
+data class CashBoxIdsRequest(val cashBoxIds: List<String>)
+
+/** Arabic names of the permission keys, for the staff screen (unknown keys show as-is). */
+object PermissionLabels {
+    val groups: List<Pair<String, List<Pair<String, String>>>> = listOf(
+        "الكاشير والصناديق" to listOf(
+            "pos.sell" to "البيع من الكاشير",
+            "cashboxes.manage" to "إدارة كل الصناديق والسحب منها",
+            "wallet.manage" to "مراجعة طلبات شحن الرصيد",
+        ),
+        "الطلبات والعملاء" to listOf(
+            "orders.read" to "عرض الطلبات",
+            "orders.update_status" to "تغيير حالة الطلبات",
+            "orders.cancel" to "إلغاء الطلبات",
+            "returns.manage" to "المرتجعات",
+            "customers.read" to "عرض العملاء",
+            "customers.write" to "تعديل العملاء (التجار)",
+            "coupons.manage" to "الكوبونات",
+            "promotions.manage" to "العروض والخصومات",
+        ),
+        "المنتجات والمخزون" to listOf(
+            "products.read" to "عرض المنتجات",
+            "products.write" to "إضافة وتعديل المنتجات",
+            "categories.write" to "التصنيفات",
+            "stock.read" to "عرض المخزون",
+            "stock.adjust" to "تعديل المخزون (تسويات)",
+            "stock.transfer" to "تحويل المخزون",
+            "stock.count" to "الجرد",
+        ),
+        "المشتريات والمصروفات" to listOf(
+            "suppliers.manage" to "الموردون",
+            "purchases.read" to "عرض المشتريات",
+            "purchases.write" to "إنشاء أوامر الشراء",
+            "purchases.receive" to "استلام المشتريات",
+            "payments.read" to "عرض المدفوعات",
+            "payments.record" to "تسجيل المدفوعات",
+            "supplier_payments.record" to "الدفع للموردين",
+            "expenses.read" to "عرض المصروفات",
+            "expenses.write" to "تسجيل المصروفات",
+            "expenses.approve" to "اعتماد المصروفات",
+        ),
+        "الحسابات والتقارير" to listOf(
+            "dashboard.view" to "لوحة المعلومات",
+            "reports.sales" to "تقارير المبيعات",
+            "reports.inventory" to "تقارير المخزون",
+            "reports.financial" to "التقارير المالية",
+            "accounts.manage" to "دليل الحسابات",
+            "journal.read" to "عرض القيود",
+            "journal.write" to "إنشاء القيود",
+            "journal.post" to "ترحيل القيود",
+            "journal.reverse" to "عكس القيود",
+            "periods.close" to "إقفال الفترات",
+        ),
+        "النظام" to listOf(
+            "users.manage" to "إدارة الموظفين",
+            "roles.manage" to "إدارة الأدوار",
+            "settings.manage" to "الإعدادات والعملات وأسعار الصرف",
+            "audit.read" to "سجل العمليات",
+            "notifications.send" to "إرسال الإشعارات",
+        ),
+    )
+
+    /** Ready-made sets for a new employee. */
+    val presets: List<Pair<String, List<String>>> = listOf(
+        "كاشير فقط" to listOf("pos.sell", "products.read", "stock.read", "customers.read", "customers.write"),
+        "أمين مخزن" to listOf("products.read", "products.write", "stock.read", "stock.adjust", "stock.transfer", "stock.count", "purchases.read", "purchases.receive"),
+        "مبيعات وطلبات" to listOf("dashboard.view", "orders.read", "orders.update_status", "returns.manage", "customers.read", "customers.write", "pos.sell", "products.read", "stock.read"),
+        "محاسب وتقارير" to listOf("dashboard.view", "reports.sales", "reports.financial", "reports.inventory", "journal.read", "payments.read", "expenses.read", "expenses.approve", "cashboxes.manage"),
+    )
+
+    fun label(key: String): String = groups.flatMap { it.second }.firstOrNull { it.first == key }?.second ?: key
+}

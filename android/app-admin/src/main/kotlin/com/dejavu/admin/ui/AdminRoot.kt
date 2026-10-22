@@ -83,6 +83,8 @@ import com.dejavu.admin.ui.orders.ReturnsScreen
 import com.dejavu.admin.ui.purchasing.PurchaseOrderScreen
 import com.dejavu.admin.ui.purchasing.PurchasingScreen
 import com.dejavu.admin.ui.pos.PosScreen
+import com.dejavu.admin.ui.staff.StaffEditScreen
+import com.dejavu.admin.ui.staff.StaffScreen
 import com.dejavu.admin.ui.promotions.PromotionEditScreen
 import com.dejavu.admin.ui.promotions.PromotionsScreen
 import com.dejavu.admin.ui.treasury.CashBoxScreen
@@ -130,6 +132,9 @@ object R {
     const val TOP_UPS = "top-ups"
     const val TOP_UP = "top-up/{id}"
     const val BANK_ACCOUNTS = "bank-accounts"
+    const val STAFF = "staff"
+    /** id "new" for a new employee. */
+    const val STAFF_EDIT = "staff/{id}"
 
     fun of(pattern: String, id: String) = pattern.replace("{id}", Uri.encode(id))
 }
@@ -247,6 +252,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }) }
             composable(R.TOP_UP) { e -> TopUpScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.BANK_ACCOUNTS) { BankAccountsScreen(session, back) }
+            composable(R.STAFF) { StaffScreen(back, open = { open(R.STAFF_EDIT, it) }) }
+            composable(R.STAFF_EDIT) { e -> StaffEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
         }
     }
 }
@@ -332,7 +339,7 @@ private fun LoginScreen() {
         Text("Dejavu", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
         Text("لوحة الإدارة — دخول الموظفين", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
-            value = email, onValueChange = { email = it; error = null }, label = { Text("البريد الإلكتروني") }, singleLine = true,
+            value = email, onValueChange = { email = it; error = null }, label = { Text("البريد الإلكتروني أو اسم المستخدم") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -346,12 +353,12 @@ private fun LoginScreen() {
                 busy = true
                 scope.launch {
                     container.session.login(email, password).onFailure {
-                        error = if ((it as? ApiException)?.isUnauthorized == true) "البريد الإلكتروني أو كلمة المرور غير صحيحة" else it.userMessage()
+                        error = if ((it as? ApiException)?.isUnauthorized == true) "بيانات الدخول أو كلمة المرور غير صحيحة" else it.userMessage()
                     }
                     busy = false
                 }
             },
-            enabled = !busy && email.contains('@') && password.isNotEmpty(),
+            enabled = !busy && email.isNotBlank() && password.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
         ) { if (busy) CircularProgressIndicator(strokeWidth = 2.dp) else Text("دخول") }
         TextButton(onClick = { showServer = true }) { Text("إعدادات الخادم: ${container.settings.baseUrl}") }

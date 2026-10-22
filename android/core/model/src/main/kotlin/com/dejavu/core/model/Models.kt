@@ -37,6 +37,9 @@ data class Customer(
     val email: String? = null,
     val loyaltyPoints: Int = 0,
     val phoneVerified: Boolean = false,
+    /** Merchant (wholesale) customer: wholesale prices and may order on credit. */
+    val isMerchant: Boolean = false,
+    val creditLimit: String? = null,
 )
 
 // --------------------------------------------------------------- catalog ---
@@ -98,6 +101,8 @@ data class StoreProduct(
     val variants: List<StoreVariant> = emptyList(),
     val inStock: Boolean,
     val promotion: PromotionTag? = null,
+    /** Prices shown are the merchant's wholesale prices. */
+    val merchantPrice: Boolean = false,
 ) {
     /** Photos to show for [color]: the ones tagged with it first, then the general ones. */
     fun imagesFor(color: String?): List<ProductImage> {
@@ -455,7 +460,15 @@ data class WalletBalance(val currency: Currency, val balance: String, val owed: 
 data class WalletEntry(val id: String, val currency: Currency, val amount: String, val note: String, val createdAt: String)
 
 @Serializable
-data class Wallet(val balances: List<WalletBalance> = emptyList(), val entries: List<WalletEntry> = emptyList()) {
+data class MerchantTerms(val discount: String = "0", val creditLimit: String? = null)
+
+@Serializable
+data class Wallet(
+    val balances: List<WalletBalance> = emptyList(),
+    val entries: List<WalletEntry> = emptyList(),
+    /** Set for merchants: they may pay "on account" (credit) up to [MerchantTerms.creditLimit]. */
+    val merchant: MerchantTerms? = null,
+) {
     fun available(currency: Currency): String = balances.firstOrNull { it.currency == currency }?.balance ?: "0"
 }
 

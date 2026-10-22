@@ -13,6 +13,7 @@ import com.dejavu.core.admin.PromotionRepository
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.admin.WalletAdminRepository
+import com.dejavu.core.admin.StaffRepository
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.StaffSessionRepository
 import com.dejavu.core.network.ApiClient
@@ -53,6 +54,7 @@ class AdminContainer(private val context: Context) {
     val treasury = TreasuryRepository(api)
     val wallet = WalletAdminRepository(api)
     val promotions = PromotionRepository(api)
+    val staff = StaffRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

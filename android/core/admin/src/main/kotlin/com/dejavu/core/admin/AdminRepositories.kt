@@ -48,6 +48,7 @@ object Perm {
     const val WALLET_MANAGE = "wallet.manage"
     const val PROMOTIONS_MANAGE = "promotions.manage"
     const val CUSTOMERS_WRITE = "customers.write"
+    const val USERS_MANAGE = "users.manage"
 }
 
 // ----------------------------------------------------------------- session ---
@@ -260,6 +261,9 @@ class FinanceRepository(private val api: AdminApi) {
     suspend fun customer(id: String) = apiCall { api.customer(id) }
     suspend fun customerAccount(id: String, page: Int = 1) = apiCall { api.customerAccount(id, page) }
 
+    /** Merchant flag, merchant discount (%) and credit limit (SAR, null = none). */
+    suspend fun updateCustomer(id: String, request: UpdateCustomerRequest) = apiCall { api.updateCustomer(id, request) }
+
     /** Money taken from a customer at the till: pays off their debt, any excess becomes wallet credit. */
     suspend fun customerReceipt(id: String, currency: Currency, amount: String, cashBoxId: String? = null, note: String? = null) =
         apiCall { api.customerReceipt(id, CustomerReceiptRequest(currency, amount.trim(), cashBoxId, note?.ifBlank { null })) }
@@ -275,6 +279,17 @@ class FinanceRepository(private val api: AdminApi) {
     suspend fun createCurrency(request: CurrencyRequest) = apiCall { api.createCurrency(request) }
     suspend fun updateCurrency(code: String, request: CurrencyRequest) = apiCall { api.updateCurrency(code, request) }
     suspend fun rateHistory(code: String) = apiCall { api.rateHistory(code) }
+}
+
+/** Employees: accounts, own permissions and the cash boxes they may use. */
+class StaffRepository(private val api: AdminApi) {
+    suspend fun list() = apiCall { api.staff() }
+    suspend fun get(id: String) = apiCall { api.staffUser(id) }
+    suspend fun create(request: CreateStaffRequest) = apiCall { api.createStaff(request) }
+    suspend fun update(id: String, request: UpdateStaffRequest) = apiCall { api.updateStaff(id, request) }
+    suspend fun setPermissions(id: String, keys: List<String>) = apiCall { api.setStaffPermissions(id, PermissionsRequest(keys)) }
+    suspend fun setBoxes(id: String, boxIds: List<String>) = apiCall { api.setStaffBoxes(id, CashBoxIdsRequest(boxIds)) }
+    suspend fun roles() = apiCall { api.roles() }
 }
 
 /** The till: products, scanning, sales and the cashier's shift. */

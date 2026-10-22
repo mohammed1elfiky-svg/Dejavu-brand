@@ -127,6 +127,17 @@ interface AdminApi {
     @GET("admin/customers/{id}/account") suspend fun customerAccount(@Path("id") id: String, @Query("page") page: Int = 1): CustomerAccount
     @POST("admin/customers/{id}/account/receipts") suspend fun customerReceipt(@Path("id") id: String, @Body body: CustomerReceiptRequest): AccountBalances
 
+    @PATCH("admin/customers/{id}") suspend fun updateCustomer(@Path("id") id: String, @Body body: UpdateCustomerRequest): AdminCustomerDetail
+
+    // staff
+    @GET("admin/users") suspend fun staff(@Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 100): Page<StaffUser>
+    @GET("admin/users/{id}") suspend fun staffUser(@Path("id") id: String): StaffUser
+    @POST("admin/users") suspend fun createStaff(@Body body: CreateStaffRequest): StaffUser
+    @PATCH("admin/users/{id}") suspend fun updateStaff(@Path("id") id: String, @Body body: UpdateStaffRequest): StaffUser
+    @PUT("admin/users/{id}/permissions") suspend fun setStaffPermissions(@Path("id") id: String, @Body body: PermissionsRequest): StaffUser
+    @PUT("admin/users/{id}/cash-boxes") suspend fun setStaffBoxes(@Path("id") id: String, @Body body: CashBoxIdsRequest): StaffUser
+    @GET("admin/roles") suspend fun roles(): List<StaffRole>
+
     // POS
     @GET("admin/pos/products") suspend fun posProducts(@Query("q") query: String? = null, @Query("categoryId") categoryId: String? = null): List<PosProduct>
     @GET("admin/pos/lookup") suspend fun posLookup(@Query("code") code: String): PosLookup

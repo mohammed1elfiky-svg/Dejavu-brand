@@ -365,6 +365,8 @@ data class AdminProduct(
     val status: ProductStatus,
     val basePrice: String,
     val compareAtPrice: String? = null,
+    /** Price for merchant customers, SAR. */
+    val wholesalePrice: String? = null,
     val isFeatured: Boolean = false,
     val category: CategoryName,
     val images: List<ImageUrl> = emptyList(),
@@ -379,6 +381,7 @@ data class AdminProduct(
 data class UpdateProductRequest(
     val status: ProductStatus? = null,
     val basePrice: String? = null,
+    val wholesalePrice: String? = null,
     val costPrice: String? = null,
     val compareAtPrice: String? = null,
     val isFeatured: Boolean? = null,
@@ -435,6 +438,7 @@ data class CreateProductRequest(
     val basePrice: String,
     val variants: List<NewVariantRequest>,
     val costPrice: String? = null,
+    val wholesalePrice: String? = null,
     val descriptionAr: String? = null,
     val compareAtPrice: String? = null,
     val status: ProductStatus? = null,
@@ -745,6 +749,12 @@ data class AdminCustomerSummary(
     val email: String? = null,
     val createdAt: String,
     @SerialName("_count") val count: OrdersCount? = null,
+    /** Merchant (wholesale) customer. */
+    val isMerchant: Boolean = false,
+    /** Extra percent off wholesale prices. */
+    val merchantDiscount: String = "0",
+    /** Most the merchant may owe, SAR (null = no limit). */
+    val creditLimit: String? = null,
 ) {
     @Serializable data class OrdersCount(val orders: Int)
 }
@@ -759,6 +769,10 @@ data class AdminCustomerDetail(
     val ledgerBalance: String,
     val lifetime: Lifetime,
     val orders: List<Order> = emptyList(),
+    val isMerchant: Boolean = false,
+    val merchantDiscount: String = "0",
+    val creditLimit: String? = null,
+    val notes: String? = null,
 ) {
     @Serializable data class Lifetime(val orders: Int, val spent: String)
     @Serializable data class Order(val id: String, val number: String, val status: OrderStatus, val grandTotal: String, val placedAt: String)

@@ -508,8 +508,9 @@ export class UpdateCustomerDto {
   @IsAmount()
   merchantDiscount?: string;
 
-  @ApiPropertyOptional({ example: '5000', nullable: true, description: 'Most the merchant may owe, SAR; null = no limit' })
+  @ApiPropertyOptional({ example: '5000', nullable: true, description: 'Most the merchant may owe, SAR; null or "" = no limit' })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
   @ValidateIf((_, v) => v !== null)
   @IsAmount()
   creditLimit?: string | null;

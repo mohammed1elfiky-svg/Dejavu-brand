@@ -35,6 +35,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,6 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -60,6 +62,8 @@ import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.pos.decimalInput
 import com.dejavu.admin.ui.pos.validAmount
 import com.dejavu.admin.ui.treasury.sourceLabel
+import com.dejavu.admin.ui.theme.GoldPill
+import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.AdminCustomerDetail
 import com.dejavu.core.admin.AdminCustomerSummary
@@ -74,6 +78,7 @@ import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.ReportSection
 import com.dejavu.core.admin.SalesReport
 import com.dejavu.core.admin.StaffSession
+import com.dejavu.core.admin.UpdateCustomerRequest
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
@@ -535,7 +540,10 @@ fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
                         ) {
                             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(c.name, style = MaterialTheme.typography.titleSmall)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(c.name, style = MaterialTheme.typography.titleSmall)
+                                        if (c.isMerchant) MerchantBadge()
+                                    }
                                     Text("${c.code} · ${c.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 c.count?.let { Text("${it.orders} طلب", style = MaterialTheme.typography.labelMedium) }
@@ -579,6 +587,42 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
         viewModelScope.launch { _account.value = repo.customerAccount(id).toLoad() }
     }
 
+    /** Merchant flag, extra discount (%) and credit limit (SAR, "" = no limit). */
+    fun saveMerchant(isMerchant: Boolean, discount: String, creditLimit: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            val request = if (!isMerchant) {
+                UpdateCustomerRequest(isMerchant = false)
+            } else {
+                UpdateCustomerRequest(
+                    isMerchant = true,
+                    merchantDiscount = discount.trim().ifBlank { "0" },
+                    // The server treats "" as "no limit".
+                    creditLimit = creditLimit.trim(),
+                )
+            }
+            repo.updateCustomer(id, request).fold(
+                { c ->
+                    _state.value = Load.Ready(c)
+                    say(if (c.isMerchant) "تم حفظ حساب التاجر" else "تم إلغاء حساب التاجر")
+                    done()
+                },
+                { e ->
+                    val m = e.message.orEmpty()
+                    say(
+                        when {
+                            "Merchant discount must be between" in m -> "خصم التاجر يجب أن يكون بين 0 و 99.99%"
+                            "walk-in customer cannot be changed" in m -> "لا يمكن تعديل العميل النقدي"
+                            else -> e.userMessage()
+                        },
+                    )
+                },
+            )
+            _busy.value = false
+        }
+    }
+
     /** Money taken from the customer at the till: settles their debt, any excess becomes wallet credit. */
     fun collect(currency: Currency, amount: String, done: () -> Unit) {
         if (_busy.value) return
@@ -603,6 +647,7 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     val currencies by vm.currencies.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val canCollect = adminContainer().session.can(Perm.POS_SELL)
+    val canEdit = adminContainer().session.can(Perm.CUSTOMERS_WRITE)
     val snackbar = remember { SnackbarHostState() }
     var collecting by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
@@ -625,8 +670,16 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     InfoCard {
-                        Text(c.name, style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(c.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                            if (c.isMerchant) MerchantBadge()
+                        }
                         Text(listOfNotNull(c.code, c.phone, c.email).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (canEdit || c.isMerchant) {
+                    item(key = "merchant:${c.isMerchant}:${c.merchantDiscount}:${c.creditLimit}") {
+                        MerchantCard(c, canEdit = canEdit, busy = busy) { merchant, discount, limit, done -> vm.saveMerchant(merchant, discount, limit, done) }
                     }
                 }
                 item {
@@ -665,6 +718,73 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MerchantBadge() {
+    GoldPill { Text("تاجر", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+}
+
+private fun plainNumber(v: String?): String = v?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString().orEmpty()
+
+/** Merchant (wholesale) account: wholesale prices less [AdminCustomerDetail.merchantDiscount], buying on credit up to the limit. */
+@Composable
+private fun MerchantCard(
+    c: AdminCustomerDetail,
+    canEdit: Boolean,
+    busy: Boolean,
+    onSave: (isMerchant: Boolean, discount: String, creditLimit: String, done: () -> Unit) -> Unit,
+) {
+    var merchant by rememberSaveable { mutableStateOf(c.isMerchant) }
+    var discount by rememberSaveable { mutableStateOf(plainNumber(c.merchantDiscount).takeIf { it != "0" }.orEmpty()) }
+    var limit by rememberSaveable { mutableStateOf(plainNumber(c.creditLimit)) }
+    val discountValue = discount.trim().toBigDecimalOrNull()
+    val discountOk = discount.isBlank() || (discountValue != null && discountValue.signum() >= 0 && discountValue < BigDecimal(100) && discountValue.stripTrailingZeros().scale() <= 2)
+    val limitValue = limit.trim().toBigDecimalOrNull()
+    val limitOk = limit.isBlank() || (limitValue != null && limitValue.signum() >= 0 && limitValue.stripTrailingZeros().scale() <= 2)
+    val changed = merchant != c.isMerchant ||
+        (discountValue ?: BigDecimal.ZERO).compareTo(c.merchantDiscount.toBigDecimalOrNull() ?: BigDecimal.ZERO) != 0 ||
+        plainNumber(limit.trim()) != plainNumber(c.creditLimit)
+
+    InfoCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("حساب تاجر", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (c.isMerchant) MerchantBadge()
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("تاجر (أسعار الجملة والبيع الآجل)", Modifier.weight(1f))
+            Switch(checked = merchant, onCheckedChange = { merchant = it }, enabled = canEdit && !busy)
+        }
+        if (merchant) {
+            OutlinedTextField(
+                value = discount,
+                onValueChange = { discount = decimalInput(it).take(6) },
+                label = { Text("خصم إضافي على سعر التاجر (%)") },
+                isError = !discountOk,
+                enabled = canEdit && !busy,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = limit,
+                onValueChange = { limit = decimalInput(it).take(14) },
+                label = { Text("حد الائتمان (ر.س)") },
+                placeholder = { Text("بدون حد") },
+                supportingText = { Text(if (limit.isBlank()) "فارغ = بدون حد للبيع الآجل" else "أقصى مبلغ يمكن أن يكون مستحقاً على التاجر") },
+                isError = !limitOk,
+                enabled = canEdit && !busy,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else if (c.isMerchant) {
+            Text("سيعود العميل لأسعار البيع العادية ولن يستطيع الشراء بالآجل", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        }
+        if (canEdit && changed) {
+            Button(onClick = { onSave(merchant, discount, limit) {} }, enabled = !busy && discountOk && limitOk) { Text("حفظ") }
         }
     }
 }

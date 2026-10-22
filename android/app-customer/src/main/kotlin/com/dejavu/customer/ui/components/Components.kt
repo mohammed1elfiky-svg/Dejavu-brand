@@ -57,6 +57,7 @@ fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier =
             Text(product.nameAr, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             val cheapest = product.variants.minByOrNull { Money.parse(it.price) }
+            if (product.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Gold)
             PriceText(cheapest?.price ?: product.basePrice, cheapest?.compareAtPrice ?: product.compareAtPrice)
         }
     }

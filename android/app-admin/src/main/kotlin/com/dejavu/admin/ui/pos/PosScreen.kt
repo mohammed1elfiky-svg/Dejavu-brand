@@ -10,6 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,6 +41,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
@@ -52,7 +59,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -63,6 +69,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -71,7 +79,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,15 +92,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
-import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
@@ -116,6 +128,7 @@ import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Currency
+import com.dejavu.core.model.CurrencyRate
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.ui.BaseViewModel
@@ -138,11 +151,30 @@ import java.math.RoundingMode
 // ------------------------------------------------------------------ model ---
 
 data class CartLine(val product: PosProduct, val variant: PosVariant, val qty: Int) {
-    /** SAR, prices already include any running promotion. */
+    /** SAR shelf total, prices already include any running promotion. */
     val lineTotal: BigDecimal get() = Money.parse(variant.price).multiply(BigDecimal(qty))
+
+    /** SAR unit price for [buyer] (merchants get wholesale / merchant discount). */
+    fun unitPrice(buyer: PosCustomer?): BigDecimal = buyerPrice(product, variant, buyer)
+
+    /** SAR line total for [buyer]. */
+    fun lineTotal(buyer: PosCustomer?): BigDecimal = unitPrice(buyer).multiply(BigDecimal(qty))
 }
 
-data class PosCustomer(val id: String, val name: String, val phone: String?, val code: String?)
+data class PosCustomer(
+    val id: String,
+    val name: String,
+    val phone: String?,
+    val code: String?,
+    val isMerchant: Boolean = false,
+    /** Extra percent off for merchants. */
+    val merchantDiscount: String = "0",
+    /** Most the merchant may owe, SAR; null = no limit. */
+    val creditLimit: String? = null,
+)
+
+private fun AdminCustomerSummary.toPos() =
+    PosCustomer(id, name, phone, code, isMerchant = isMerchant, merchantDiscount = merchantDiscount, creditLimit = creditLimit)
 
 /** One amount handed over at the till, typed in [currency]. */
 data class TenderInput(val currency: Currency, val amount: String)
@@ -162,6 +194,18 @@ class PosTotals(
 private val HUNDRED = BigDecimal(100)
 
 private fun money(v: BigDecimal): BigDecimal = v.setScale(2, RoundingMode.HALF_UP)
+
+/**
+ * Mirror of the server's `buyerPrice` (catalog/promotions.ts): merchants pay the product's
+ * wholesale price (or the promoted shelf price when none) less their merchant discount.
+ */
+internal fun buyerPrice(product: PosProduct, variant: PosVariant, buyer: PosCustomer?): BigDecimal {
+    val shelf = Money.parse(variant.price)
+    if (buyer?.isMerchant != true) return shelf
+    val base = product.wholesalePrice?.toBigDecimalOrNull() ?: shelf
+    val off = (buyer.merchantDiscount.toBigDecimalOrNull() ?: BigDecimal.ZERO).max(BigDecimal.ZERO).min(HUNDRED)
+    return base.multiply(HUNDRED.subtract(off)).divide(HUNDRED, 2, RoundingMode.HALF_UP)
+}
 
 /** A typed amount that is positive and has no more decimals than [currency] allows; null otherwise. */
 internal fun validAmount(text: String, currency: Currency): BigDecimal? =
@@ -187,9 +231,10 @@ fun computeTotals(
     discountValue: String,
     tenders: List<TenderInput>,
     changeCurrency: Currency,
+    buyer: PosCustomer? = null,
 ): PosTotals {
     val rate = rates[invoice] ?: BigDecimal.ONE
-    val subtotal = money(cart.fold(BigDecimal.ZERO) { acc, l -> acc.add(l.lineTotal) })
+    val subtotal = money(cart.fold(BigDecimal.ZERO) { acc, l -> acc.add(l.lineTotal(buyer)) })
     val value = discountValue.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
     val discount = when {
         value == null -> BigDecimal.ZERO
@@ -244,6 +289,11 @@ class PosViewModel(
         private set
     var rates by mutableStateOf(mapOf(Currency.SAR to BigDecimal.ONE))
         private set
+    /** Active non-base currencies (with or without a rate), for the quick rate editor. */
+    var rateRows by mutableStateOf<List<CurrencyRate>>(emptyList())
+        private set
+    var rateBusy by mutableStateOf(false)
+        private set
 
     var cart by mutableStateOf<List<CartLine>>(emptyList())
         private set
@@ -294,7 +344,7 @@ class PosViewModel(
     }
 
     val totals: PosTotals
-        get() = computeTotals(cart, currency, rates, discountType, discountValue, tenders, changeCurrency ?: currency)
+        get() = computeTotals(cart, currency, rates, discountType, discountValue, tenders, changeCurrency ?: currency, customer)
 
     fun rateOf(c: Currency): BigDecimal? = rates[c]
 
@@ -321,11 +371,12 @@ class PosViewModel(
         )
     }
 
-    private fun loadCurrencies() {
+    fun loadCurrencies() {
         viewModelScope.launch {
             finance.activeCurrencies().fold(
                 { cs ->
                     val ordered = cs.register()
+                    rateRows = cs.currencies.filter { !Currency.of(it.code.code).isBase }
                     val found = mutableMapOf(Currency.SAR to BigDecimal.ONE)
                     cs.currencies.forEach { cr ->
                         val c = Currency.of(cr.code.code)
@@ -340,6 +391,23 @@ class PosViewModel(
                 },
                 { say(it.userMessage()) },
             )
+        }
+    }
+
+    /** Saves a new rate (units per 1 SAR) and reloads the till's currencies; [done] gets an error or null. */
+    fun saveRate(c: Currency, rate: String, done: (String?) -> Unit) {
+        if (rateBusy) return
+        rateBusy = true
+        viewModelScope.launch {
+            finance.setRate(c, rate, note = "من شاشة الكاشير").fold(
+                {
+                    say("تم تحديث سعر ${c.nameAr}")
+                    loadCurrencies()
+                    done(null)
+                },
+                { e -> done(e.userMessage()) },
+            )
+            rateBusy = false
         }
     }
 
@@ -420,7 +488,7 @@ class PosViewModel(
         val t = tenders.getOrNull(index) ?: return
         val r = rates[t.currency] ?: return
         val others = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = "") else x }
-        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: currency).owed
+        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: currency, customer).owed
         val amount = if (owed.signum() > 0) Money.convert(owed, t.currency, r).stripTrailingZeros().toPlainString() else ""
         tenders = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = amount) else x }
         checkoutError = null
@@ -549,6 +617,8 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
     var picking by remember { mutableStateOf<PosProduct?>(null) }
     var showCheckout by rememberSaveable { mutableStateOf(false) }
     var newCustomer by remember { mutableStateOf(false) }
+    val canEditRates = session.can(Perm.SETTINGS_MANAGE)
+    var editRates by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     val scan = rememberBarcodeScanner { code -> vm.scan(code) { picking = it } }
 
@@ -570,6 +640,11 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
                             arranging = !arranging
                         }) {
                             Icon(Icons.Filled.Menu, contentDescription = "ترتيب المنتجات", tint = if (arranging) Lux.Gold else Lux.Ink)
+                        }
+                    }
+                    if (canEditRates) {
+                        IconButton(onClick = { vm.loadCurrencies(); editRates = true }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "تعديل سعر الصرف")
                         }
                     }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
@@ -626,7 +701,13 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
                         )
-                        CheckoutContent(vm, onNewCustomer = { newCustomer = true }, modifier = Modifier.weight(1f))
+                        CheckoutContent(
+                            vm,
+                            canEditRates = canEditRates,
+                            onNewCustomer = { newCustomer = true },
+                            onEditRates = { editRates = true },
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
@@ -644,16 +725,24 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit) {
         val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(onDismissRequest = { showCheckout = false }, sheetState = sheet, containerColor = Lux.Pearl) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("الفاتورة والدفع", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text("الفاتورة والدفع", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 IconButton(onClick = { showCheckout = false }) { Icon(Icons.Filled.Close, contentDescription = "إغلاق") }
             }
-            CheckoutContent(vm, onNewCustomer = { newCustomer = true }, modifier = Modifier.fillMaxWidth().fillMaxHeight())
+            CheckoutContent(
+                vm,
+                canEditRates = canEditRates,
+                onNewCustomer = { newCustomer = true },
+                onEditRates = { editRates = true },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+            )
         }
     }
 
     if (newCustomer) {
         QuickCustomerDialog(onDismiss = { newCustomer = false }) { name, phone -> vm.quickCustomer(name, phone) }
     }
+
+    if (editRates && canEditRates) RatesDialog(vm, onDismiss = { editRates = false })
 
     vm.receipt?.let { r -> ReceiptDialog(r, onNewSale = vm::newSale) }
 
@@ -863,8 +952,97 @@ private fun VariantPicker(p: PosProduct, vm: PosViewModel, onDismiss: () -> Unit
 
 // ---------------------------------------------------------------- checkout ---
 
+/** Tight card used by the checkout so the whole form fits one phone screen. */
 @Composable
-private fun CheckoutContent(vm: PosViewModel, onNewCustomer: () -> Unit, modifier: Modifier = Modifier) {
+private fun Section(content: @Composable ColumnScope.() -> Unit) {
+    GlassCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), elevation = 4.dp, contentPadding = 10.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+    }
+}
+
+/** Small selectable chip (30dp high). */
+@Composable
+private fun SmallChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(text, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+        modifier = Modifier.height(30.dp),
+    )
+}
+
+/** Small gold text link. */
+@Composable
+private fun SmallLink(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (enabled) Lux.GoldDeep else Lux.InkSoft,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 6.dp, vertical = 3.dp),
+    )
+}
+
+/** Small clickable icon (no 48dp touch-target padding). */
+@Composable
+private fun SmallIcon(icon: ImageVector, description: String, tint: Color = Lux.InkSoft, onClick: () -> Unit) {
+    Box(
+        Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp)) }
+}
+
+/** ~40dp outlined text field with a placeholder instead of a floating label. */
+@Composable
+private fun CompactField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(12.dp)
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Lux.Ink),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        interactionSource = interaction,
+        cursorBrush = SolidColor(Lux.GoldDeep),
+        modifier = modifier.height(40.dp),
+    ) { inner ->
+        OutlinedTextFieldDefaults.DecorationBox(
+            value = value,
+            innerTextField = inner,
+            enabled = true,
+            singleLine = true,
+            visualTransformation = VisualTransformation.None,
+            interactionSource = interaction,
+            isError = isError,
+            placeholder = { Text(placeholder, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft, maxLines = 1) },
+            trailingIcon = trailing,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            container = {
+                OutlinedTextFieldDefaults.Container(enabled = true, isError = isError, interactionSource = interaction, shape = shape)
+            },
+        )
+    }
+}
+
+/** Gold "تاجر" badge. */
+@Composable
+private fun MerchantBadge() {
+    Box(
+        Modifier.clip(RoundedCornerShape(50)).background(Lux.GoldBrush).padding(horizontal = 8.dp, vertical = 1.dp),
+    ) { Text("تاجر", color = Color.White, style = MaterialTheme.typography.labelSmall) }
+}
+
+@Composable
+private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustomer: () -> Unit, onEditRates: () -> Unit, modifier: Modifier = Modifier) {
     val t = vm.totals
     val inv = vm.currency
     val rate = vm.rateOf(inv) ?: BigDecimal.ONE
@@ -880,111 +1058,103 @@ private fun CheckoutContent(vm: PosViewModel, onNewCustomer: () -> Unit, modifie
     val canSell = vm.cart.isNotEmpty() && !vm.busy && discountValid && tendersValid &&
         (if (credit) vm.customer != null else t.owed.signum() == 0)
 
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
     Column(modifier) {
-    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (vm.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+    Column(
+        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-        // ---- lines
-        if (vm.cart.isEmpty()) {
-            item { Text("السلة فارغة. اختر المنتجات من الشبكة أو امسح الباركود.", color = Lux.InkSoft) }
-        }
-        items(vm.cart, key = { it.variant.id }) { l ->
-            GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(l.product.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "${l.variant.title} · ${Money.format(Money.parse(l.variant.price), inv, rate)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Lux.InkSoft,
-                        )
-                    }
-                    Text(inInvoice(l.lineTotal), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StepButton("−", enabled = true) { vm.setQty(l.variant.id, l.qty - 1) }
-                    Text("${l.qty}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
-                    StepButton("+", enabled = l.qty < l.variant.available) { vm.setQty(l.variant.id, l.qty + 1) }
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { vm.setQty(l.variant.id, 0) }) {
-                        Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error)
-                    }
+        // ---- lines (own scroll, capped so the form stays visible)
+        Section {
+            if (vm.cart.isEmpty()) {
+                Text("السلة فارغة. اختر المنتجات من الشبكة أو امسح الباركود.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            } else {
+                Text("الأصناف (${vm.cart.sumOf { it.qty }})", style = MaterialTheme.typography.labelLarge)
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    vm.cart.forEach { l -> key(l.variant.id) { CartLineRow(l, vm, inv, rate) } }
                 }
             }
         }
 
-        // ---- currency and sale type
-        item {
-            InfoCard {
-                Text("عملة الفاتورة", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    vm.currencies.forEach { c ->
-                        FilterChip(selected = c == inv, onClick = { vm.currency = c; vm.checkoutError = null }, label = { Text("${c.nameAr} (${c.symbol})") })
-                    }
+        // ---- currency, sale type and rates
+        Section {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                vm.currencies.forEach { c ->
+                    SmallChip(c.symbol, selected = c == inv) { vm.currency = c; vm.checkoutError = null }
                 }
-                if (!inv.isBase) {
-                    Text("1 ر.س = ${Money.plain(rate, inv)}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
-                }
-                Spacer(Modifier.height(4.dp))
-                Text("نوع البيع", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !credit, onClick = { vm.saleType = SaleType.CASH; vm.checkoutError = null }, label = { Text("نقداً") })
-                    FilterChip(selected = credit, onClick = { vm.saleType = SaleType.CREDIT; vm.checkoutError = null }, label = { Text("آجل") })
+                Spacer(Modifier.width(6.dp))
+                SmallChip("نقداً", selected = !credit) { vm.saleType = SaleType.CASH; vm.checkoutError = null }
+                SmallChip("آجل", selected = credit) { vm.saleType = SaleType.CREDIT; vm.checkoutError = null }
+            }
+            val rateLine = vm.currencies.filter { !it.isBase }.mapNotNull { c -> vm.rateOf(c)?.let { "${Money.plain(it, c)}" } }
+            if (rateLine.isNotEmpty() || canEditRates) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (rateLine.isEmpty()) "لا توجد أسعار صرف" else "1 ر.س = ${rateLine.joinToString(" · ")}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Lux.InkSoft,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (canEditRates) SmallLink("تعديل السعر", onClick = onEditRates)
                 }
             }
         }
 
         // ---- customer
-        item { CustomerSection(vm, credit, onNewCustomer) }
+        CustomerSection(vm, credit, onNewCustomer)
 
-        // ---- discount
-        item {
-            InfoCard {
-                Text("خصم على الفاتورة", style = MaterialTheme.typography.titleSmall)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = vm.discountType == DiscountType.PERCENT, onClick = { vm.discountType = DiscountType.PERCENT }, label = { Text("%") })
-                    FilterChip(selected = vm.discountType == DiscountType.AMOUNT, onClick = { vm.discountType = DiscountType.AMOUNT }, label = { Text("مبلغ") })
-                    OutlinedTextField(
-                        value = vm.discountValue,
-                        onValueChange = { vm.discountValue = decimalInput(it) },
-                        label = { Text(if (vm.discountType == DiscountType.PERCENT) "النسبة %" else "المبلغ (${inv.symbol})") },
-                        isError = !discountValid,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+        // ---- discount and totals
+        Section {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("خصم", style = MaterialTheme.typography.labelLarge)
+                SmallChip("%", selected = vm.discountType == DiscountType.PERCENT) { vm.discountType = DiscountType.PERCENT }
+                SmallChip("مبلغ", selected = vm.discountType == DiscountType.AMOUNT) { vm.discountType = DiscountType.AMOUNT }
+                CompactField(
+                    value = vm.discountValue,
+                    onValueChange = { vm.discountValue = decimalInput(it) },
+                    placeholder = if (vm.discountType == DiscountType.PERCENT) "النسبة %" else "المبلغ (${inv.symbol})",
+                    isError = !discountValid,
+                    keyboardType = KeyboardType.Decimal,
+                    modifier = Modifier.weight(1f),
+                )
             }
-        }
-
-        // ---- totals
-        item {
-            InfoCard {
-                SummaryRow("المجموع", inInvoice(t.subtotal))
-                if (t.discount.signum() > 0) SummaryRow("الخصم", "− ${inInvoice(t.discount)}", valueColor = MaterialTheme.colorScheme.error)
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("الإجمالي", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    GoldPill { Text(inInvoice(t.total), color = Color.White, style = MaterialTheme.typography.titleMedium) }
+            CompactRow("المجموع", inInvoice(t.subtotal))
+            if (t.discount.signum() > 0) CompactRow("الخصم", "− ${inInvoice(t.discount)}", MaterialTheme.colorScheme.error)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("الإجمالي", style = MaterialTheme.typography.titleSmall)
+                    if (!inv.isBase) Text("يعادل ${Money.formatBase(t.total.toPlainString())}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
                 }
-                if (!inv.isBase) Text("يعادل ${Money.formatBase(t.total.toPlainString())}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                Box(
+                    Modifier.clip(RoundedCornerShape(50)).background(Lux.GoldBrush).padding(horizontal = 12.dp, vertical = 4.dp),
+                ) { Text(inInvoice(t.total), color = Color.White, style = MaterialTheme.typography.titleSmall) }
             }
         }
 
         // ---- how the money comes in, then the amounts
-        item { PayMethodSection(vm) }
-        item { TendersSection(vm, t, credit) }
+        Section {
+            PayMethodSection(vm)
+            HorizontalDivider(color = Lux.Hairline)
+            TendersSection(vm, t, credit)
+        }
     }
     // ---- submit (always visible)
-    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentPadding = 12.dp) {
-        vm.checkoutError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 6.dp)) }
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), contentPadding = 10.dp) {
+        vm.checkoutError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp)) }
         val hint = when {
             vm.cart.isEmpty() -> "أضف منتجات أولاً"
             credit && vm.customer == null -> "اختر حساب العميل للبيع الآجل"
             !credit && t.owed.signum() > 0 -> "المتبقي ${inInvoice(t.owed)} — أكمل المبلغ أو اختر آجل"
             else -> null
         }
-        hint?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp)) }
+        hint?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp)) }
         LuxButton(
             if (vm.busy) "جارٍ الحفظ…" else "إتمام الفاتورة · ${inInvoice(t.total)}",
             onClick = vm::sell,
@@ -993,41 +1163,98 @@ private fun CheckoutContent(vm: PosViewModel, onNewCustomer: () -> Unit, modifie
         )
     }
     }
+    }
+}
+
+/** One label/value line in small type. */
+@Composable
+private fun CompactRow(label: String, value: String, valueColor: Color = Color.Unspecified) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodySmall)
+        Text(value, style = MaterialTheme.typography.bodySmall, color = valueColor)
+    }
+}
+
+/** Thumbnail, name + variant, unit price, qty stepper, line total and delete, in one row. */
+@Composable
+private fun CartLineRow(l: CartLine, vm: PosViewModel, inv: Currency, rate: BigDecimal) {
+    val buyer = vm.customer
+    val unit = l.unitPrice(buyer)
+    val shelf = Money.parse(l.variant.price)
+    val merchantPrice = buyer?.isMerchant == true && unit.compareTo(shelf) != 0
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne),
+            contentAlignment = Alignment.Center,
+        ) {
+            val image = l.variant.imageUrl ?: l.product.imageUrl
+            if (image != null) {
+                AsyncImage(model = image, contentDescription = l.product.nameAr, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Text(l.product.nameAr.take(1), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${l.product.nameAr} · ${l.variant.title}",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(Money.format(unit, inv, rate), style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, maxLines = 1)
+                if (merchantPrice) {
+                    Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Lux.GoldDeep, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+            }
+        }
+        StepButton("−", enabled = true) { vm.setQty(l.variant.id, l.qty - 1) }
+        Text("${l.qty}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+        StepButton("+", enabled = l.qty < l.variant.available) { vm.setQty(l.variant.id, l.qty + 1) }
+        Text(
+            Money.format(l.lineTotal(buyer), inv, rate),
+            style = MaterialTheme.typography.labelLarge,
+            color = Lux.GoldDeep,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.widthIn(min = 64.dp).padding(start = 6.dp),
+        )
+        SmallIcon(Icons.Filled.Delete, "حذف", tint = MaterialTheme.colorScheme.error) { vm.setQty(l.variant.id, 0) }
+    }
 }
 
 @Composable
 private fun PayMethodSection(vm: PosViewModel) {
-    InfoCard {
-        Text("طريقة الدفع", style = MaterialTheme.typography.titleSmall)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PayMethod.entries.forEach { m ->
-                FilterChip(selected = vm.payMethod == m, onClick = { vm.payMethod = m; vm.checkoutError = null }, label = { Text(m.label) })
-            }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        PayMethod.entries.forEach { m ->
+            SmallChip(m.label, selected = vm.payMethod == m) { vm.payMethod = m; vm.checkoutError = null }
         }
-        if (vm.payMethod != PayMethod.CASH) {
-            OutlinedTextField(
-                value = vm.reference,
-                onValueChange = { vm.reference = it.take(100) },
-                label = { Text(if (vm.payMethod == PayMethod.DEPOSIT) "رقم سند الإيداع" else "رقم الحوالة / المرجع") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            // One bank account per currency being paid in.
-            val used = vm.tenders.filter { it.amount.isNotBlank() }.map { it.currency }.ifEmpty { listOf(vm.currency) }.distinct()
-            used.forEach { c ->
-                val options = vm.banks.filter { it.currency == c }
-                if (options.isEmpty()) {
-                    Text("لا يوجد حساب بنكي بعملة ${c.nameAr}؛ أضفه من الصناديق والخزائن", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                } else {
-                    Text("الحساب البنكي (${c.nameAr})", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
-                    val chosen = vm.bankFor[c] ?: options.first().id
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        options.forEach { b -> FilterChip(selected = b.id == chosen, onClick = { vm.pickBank(c, b.id) }, label = { Text(b.name) }) }
-                    }
+    }
+    if (vm.payMethod != PayMethod.CASH) {
+        CompactField(
+            value = vm.reference,
+            onValueChange = { vm.reference = it.take(100) },
+            placeholder = if (vm.payMethod == PayMethod.DEPOSIT) "رقم سند الإيداع" else "رقم الحوالة / المرجع",
+            modifier = Modifier.fillMaxWidth(),
+        )
+        // One bank account per currency being paid in.
+        val used = vm.tenders.filter { it.amount.isNotBlank() }.map { it.currency }.ifEmpty { listOf(vm.currency) }.distinct()
+        used.forEach { c ->
+            val options = vm.banks.filter { it.currency == c }
+            if (options.isEmpty()) {
+                Text("لا يوجد حساب بنكي بعملة ${c.nameAr}؛ أضفه من الصناديق والخزائن", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            } else {
+                val chosen = vm.bankFor[c] ?: options.first().id
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("بنك ${c.symbol}:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
+                    options.forEach { b -> SmallChip(b.name, selected = b.id == chosen) { vm.pickBank(c, b.id) } }
                 }
             }
-        } else {
-            Text("يدخل المبلغ في صندوقك بعملته، ويُصرف الباقي منه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
         }
     }
 }
@@ -1035,30 +1262,40 @@ private fun PayMethodSection(vm: PosViewModel) {
 @Composable
 private fun StepButton(text: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.size(34.dp).clip(CircleShape).background(if (enabled) Lux.GoldLight else Lux.Champagne)
+        Modifier.size(26.dp).clip(CircleShape).background(if (enabled) Lux.GoldLight else Lux.Champagne)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Text(text, style = MaterialTheme.typography.titleMedium, color = if (enabled) Lux.Ink else Lux.InkSoft) }
+    ) { Text(text, style = MaterialTheme.typography.titleSmall, color = if (enabled) Lux.Ink else Lux.InkSoft) }
 }
 
 @Composable
 private fun CustomerSection(vm: PosViewModel, credit: Boolean, onNewCustomer: () -> Unit) {
-    InfoCard {
-        Text(if (credit) "العميل (مطلوب للبيع الآجل)" else "العميل (اختياري)", style = MaterialTheme.typography.titleSmall)
+    Section {
         val c = vm.customer
         if (c != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Person, contentDescription = null, tint = Lux.GoldDeep)
-                Spacer(Modifier.width(8.dp))
+                Icon(Icons.Filled.Person, contentDescription = null, tint = Lux.GoldDeep, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(c.name, style = MaterialTheme.typography.titleSmall)
-                    Text(listOfNotNull(c.code, c.phone).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(c.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (c.isMerchant) MerchantBadge()
+                    }
+                    Text(listOfNotNull(c.code, c.phone).joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, maxLines = 1)
                 }
-                IconButton(onClick = vm::clearCustomer) { Icon(Icons.Filled.Close, contentDescription = "إزالة العميل") }
+                SmallIcon(Icons.Filled.Close, "إزالة العميل", onClick = vm::clearCustomer)
+            }
+            if (c.isMerchant) {
+                val off = c.merchantDiscount.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
+                val parts = listOfNotNull(
+                    off?.let { "خصم التاجر ${it.stripTrailingZeros().toPlainString()}%" },
+                    c.creditLimit?.takeIf { it.isNotBlank() }?.let { "حد الائتمان ${Money.formatBase(it)}" },
+                )
+                if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Lux.GoldDeep)
             }
             vm.customerBalances.filter { Money.parse(it.balance).signum() != 0 }.forEach { b ->
                 val v = Money.parse(b.balance)
-                SummaryRow(
+                CompactRow(
                     if (v.signum() > 0) "مستحق على العميل" else "رصيد للعميل",
                     Money.plain(v.abs(), b.currency),
                     valueColor = if (v.signum() > 0) MaterialTheme.colorScheme.error else Success,
@@ -1066,37 +1303,41 @@ private fun CustomerSection(vm: PosViewModel, credit: Boolean, onNewCustomer: ()
             }
         } else {
             var open by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(expanded = open, onExpandedChange = { e -> open = e; if (e) vm.searchCustomers(vm.customerQuery) }) {
-                OutlinedTextField(
-                    value = vm.customerQuery,
-                    onValueChange = { vm.searchCustomers(it); open = true },
-                    label = { Text("حساب العميل") },
-                    placeholder = { Text("اختر أو ابحث بالاسم أو الهاتف") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
-                )
-                ExposedDropdownMenu(expanded = open && vm.customerResults.isNotEmpty(), onDismissRequest = { open = false }) {
-                    vm.customerResults.forEach { r ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(r.name, style = MaterialTheme.typography.bodyMedium)
-                                    Text("${r.code} · ${r.phone}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
-                                }
-                            },
-                            onClick = {
-                                open = false
-                                vm.pickCustomer(PosCustomer(r.id, r.name, r.phone, r.code))
-                            },
-                        )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ExposedDropdownMenuBox(
+                    expanded = open,
+                    onExpandedChange = { e -> open = e; if (e) vm.searchCustomers(vm.customerQuery) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    CompactField(
+                        value = vm.customerQuery,
+                        onValueChange = { vm.searchCustomers(it); open = true },
+                        placeholder = if (credit) "العميل (مطلوب للآجل) — ابحث بالاسم أو الهاتف" else "العميل (اختياري) — ابحث بالاسم أو الهاتف",
+                        isError = credit,
+                        trailing = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+                    )
+                    ExposedDropdownMenu(expanded = open && vm.customerResults.isNotEmpty(), onDismissRequest = { open = false }) {
+                        vm.customerResults.forEach { r ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(r.name, style = MaterialTheme.typography.bodyMedium)
+                                            if (r.isMerchant) MerchantBadge()
+                                        }
+                                        Text("${r.code} · ${r.phone}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                                    }
+                                },
+                                onClick = {
+                                    open = false
+                                    vm.pickCustomer(r.toPos())
+                                },
+                            )
+                        }
                     }
                 }
-            }
-            TextButton(onClick = onNewCustomer) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("عميل جديد")
+                SmallLink("+ عميل جديد", onClick = onNewCustomer)
             }
         }
     }
@@ -1107,69 +1348,72 @@ private fun TendersSection(vm: PosViewModel, t: PosTotals, credit: Boolean) {
     val inv = vm.currency
     val rate = vm.rateOf(inv) ?: BigDecimal.ONE
     var adding by remember { mutableStateOf(false) }
-    InfoCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("المدفوع", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            val more = vm.currencies.filter { c -> vm.tenders.none { it.currency == c } }
-            if (more.isNotEmpty()) {
-                Box {
-                    IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, contentDescription = "إضافة عملة دفع") }
-                    DropdownMenu(expanded = adding, onDismissRequest = { adding = false }) {
-                        more.forEach { c ->
-                            DropdownMenuItem(text = { Text("${c.nameAr} (${c.symbol})") }, onClick = {
-                                vm.addTender(c)
-                                adding = false
-                            })
-                        }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("المدفوع", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        val more = vm.currencies.filter { c -> vm.tenders.none { it.currency == c } }
+        if (more.isNotEmpty()) {
+            Box {
+                SmallLink("+ عملة", onClick = { adding = true })
+                DropdownMenu(expanded = adding, onDismissRequest = { adding = false }) {
+                    more.forEach { c ->
+                        DropdownMenuItem(text = { Text("${c.nameAr} (${c.symbol})") }, onClick = {
+                            vm.addTender(c)
+                            adding = false
+                        })
                     }
                 }
             }
         }
-        val defaults = setOf(Currency.SAR, Currency.YER)
-        vm.tenders.forEachIndexed { i, tender ->
-            val c = tender.currency
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = tender.amount,
-                    onValueChange = { vm.setTender(i, it) },
-                    label = { Text("${c.nameAr} (${c.symbol})") },
-                    isError = tender.amount.isNotBlank() && validAmount(tender.amount, c) == null,
-                    supportingText = if (c.decimals == 0) ({ Text("بدون كسور") }) else null,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = { vm.fillRemaining(i) }) { Text("المتبقي") }
-                if (c !in defaults) {
-                    IconButton(onClick = { vm.removeTender(i) }) { Icon(Icons.Filled.Close, contentDescription = "حذف") }
-                }
-            }
-        }
-        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-        val others = vm.currencies.filter { it != inv }
-        when {
-            t.owed.signum() > 0 -> {
-                SummaryRow(
-                    if (credit) "على حساب العميل" else "المتبقي",
-                    Money.format(t.owed, inv, rate),
-                    strong = true,
-                    valueColor = if (credit) Lux.GoldDeep else MaterialTheme.colorScheme.error,
-                )
-                Equivalents(t.owed, others, vm)
-            }
-            t.change.signum() > 0 -> {
-                val changeCur = vm.changeCurrency ?: inv
-                SummaryRow("الباقي للعميل", Money.plain(t.changeAmount, changeCur), strong = true, valueColor = Success)
-                Equivalents(t.change, vm.currencies.filter { it != changeCur }, vm)
-                Text("عملة الباقي", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    vm.currencies.forEach { c ->
-                        FilterChip(selected = c == changeCur, onClick = { vm.changeCurrency = c }, label = { Text(c.nameAr) })
+    }
+    val defaults = setOf(Currency.SAR, Currency.YER)
+    // Two tender fields per row (SAR and YER side by side by default).
+    vm.tenders.withIndex().chunked(2).forEach { pair ->
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            pair.forEach { (i, tender) ->
+                val c = tender.currency
+                Column(Modifier.weight(1f)) {
+                    CompactField(
+                        value = tender.amount,
+                        onValueChange = { vm.setTender(i, it) },
+                        placeholder = if (c.decimals == 0) "${c.nameAr} (${c.symbol}) بدون كسور" else "${c.nameAr} (${c.symbol})",
+                        isError = tender.amount.isNotBlank() && validAmount(tender.amount, c) == null,
+                        keyboardType = KeyboardType.Decimal,
+                        trailing = { Text(c.symbol, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SmallLink("المتبقي") { vm.fillRemaining(i) }
+                        Spacer(Modifier.weight(1f))
+                        if (c !in defaults) SmallLink("حذف") { vm.removeTender(i) }
                     }
                 }
             }
-            vm.cart.isNotEmpty() -> SummaryRow("المتبقي", Money.format(BigDecimal.ZERO, inv, rate), strong = true, valueColor = Success)
+            if (pair.size == 1) Spacer(Modifier.weight(1f))
         }
+    }
+    val others = vm.currencies.filter { it != inv }
+    when {
+        t.owed.signum() > 0 -> {
+            CompactRow(
+                if (credit) "على حساب العميل" else "المتبقي",
+                Money.format(t.owed, inv, rate),
+                valueColor = if (credit) Lux.GoldDeep else MaterialTheme.colorScheme.error,
+            )
+            Equivalents(t.owed, others, vm)
+        }
+        t.change.signum() > 0 -> {
+            val changeCur = vm.changeCurrency ?: inv
+            CompactRow("الباقي للعميل", Money.plain(t.changeAmount, changeCur), valueColor = Success)
+            Equivalents(t.change, vm.currencies.filter { it != changeCur }, vm)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("عملة الباقي:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
+                vm.currencies.forEach { c -> SmallChip(c.symbol, selected = c == changeCur) { vm.changeCurrency = c } }
+            }
+        }
+        vm.cart.isNotEmpty() -> CompactRow("المتبقي", Money.format(BigDecimal.ZERO, inv, rate), valueColor = Success)
     }
 }
 
@@ -1177,7 +1421,61 @@ private fun TendersSection(vm: PosViewModel, t: PosTotals, credit: Boolean) {
 private fun Equivalents(amountSar: BigDecimal, currencies: List<Currency>, vm: PosViewModel) {
     val shown = currencies.mapNotNull { c -> vm.rateOf(c)?.let { Money.format(amountSar, c, it) } }
     if (shown.isNotEmpty()) {
-        Text("يعادل: ${shown.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        Text("يعادل: ${shown.joinToString(" · ")}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+    }
+}
+
+/** Quick exchange-rate editor for managers: units per 1 SAR, up to 6 decimals, saved one currency at a time. */
+@Composable
+private fun RatesDialog(vm: PosViewModel, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("أسعار الصرف") },
+        text = {
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("كم وحدة تساوي 1 ر.س؟ يُطبَّق على الفواتير الجديدة فقط.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    if (vm.rateRows.isEmpty()) Text("لا توجد عملات أخرى مفعّلة", style = MaterialTheme.typography.bodyMedium)
+                    vm.rateRows.forEach { row -> key(row.code.code) { RateRow(row, vm) } }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
+    )
+}
+
+@Composable
+private fun RateRow(row: CurrencyRate, vm: PosViewModel) {
+    val c = Currency.of(row.code.code)
+    val current = row.rate?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString().orEmpty()
+    var text by remember(current) { mutableStateOf(current) }
+    var status by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    val value = text.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 && it.stripTrailingZeros().scale() <= 6 }
+    val changed = value != null && value.compareTo(current.toBigDecimalOrNull() ?: BigDecimal.ZERO) != 0
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${c.nameAr} (${c.symbol})", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            CompactField(
+                value = text,
+                onValueChange = { text = decimalInput(it).take(20); status = null },
+                placeholder = "السعر",
+                isError = text.isNotBlank() && value == null,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.width(110.dp),
+            )
+            TextButton(
+                onClick = {
+                    vm.saveRate(c, value!!.stripTrailingZeros().toPlainString()) { err ->
+                        status = if (err == null) true to "تم الحفظ" else false to err
+                    }
+                },
+                enabled = changed && !vm.rateBusy,
+            ) { Text("حفظ") }
+        }
+        status?.let { (ok, msg) ->
+            Text(msg, style = MaterialTheme.typography.labelSmall, color = if (ok) Success else MaterialTheme.colorScheme.error)
+        }
+        if (row.rate == null) Text("لا يوجد سعر بعد", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
     }
 }
 

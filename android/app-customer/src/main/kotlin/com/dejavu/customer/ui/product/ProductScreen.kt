@@ -175,6 +175,7 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
                 Surface(shadowElevation = 8.dp) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
+                            if (p.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Gold)
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                         }
                         Button(
@@ -193,6 +194,7 @@ fun ProductScreen(slug: String, onBack: () -> Unit, openCart: () -> Unit, requir
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(p.category.nameAr, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     Text(p.nameAr, style = MaterialTheme.typography.headlineSmall)
+                    if (p.merchantPrice) Tag("سعر التاجر", Gold)
                     PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                     Promotion(p)
 

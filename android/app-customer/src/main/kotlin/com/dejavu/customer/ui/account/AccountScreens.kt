@@ -91,6 +91,7 @@ import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
+import com.dejavu.core.ui.Tag
 import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.theme.Gold
@@ -131,6 +132,26 @@ fun AccountScreen(
                     )
                     s.customer?.let { c ->
                         if (c.loyaltyPoints > 0) Text("نقاط الولاء: ${c.loyaltyPoints}", Modifier.padding(horizontal = 16.dp), color = Gold)
+                        if (c.isMerchant) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Tag("حساب تاجر", Gold)
+                                Text(
+                                    c.creditLimit?.let { "حد الشراء الآجل: ${Money.formatBase(it)}" } ?: "شراء آجل بدون حد",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                "تظهر لك أسعار التاجر في المتجر، ويمكنك الدفع آجلاً على حسابك",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                     }
                     HorizontalDivider()
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)

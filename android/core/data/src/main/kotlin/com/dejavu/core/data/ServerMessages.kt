@@ -33,6 +33,7 @@ object ServerMessages {
         "Amount must be greater than zero" to "المبلغ يجب أن يكون أكبر من صفر",
         "Upload the deposit receipt first" to "أرفق صورة إيصال الإيداع أولاً",
         "Bank account not found" to "الحساب البنكي غير متاح",
+        "This order exceeds your credit limit" to "الطلب يتجاوز حد الشراء الآجل لحسابك، سدّد جزءاً من المستحق أو تواصل معنا",
         "You already have several requests under review" to "لديك عدة طلبات شحن قيد المراجعة، انتظر حتى تتم مراجعتها",
     )
 

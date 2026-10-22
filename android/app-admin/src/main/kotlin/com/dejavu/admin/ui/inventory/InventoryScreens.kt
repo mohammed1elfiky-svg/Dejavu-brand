@@ -436,6 +436,7 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
             var price by rememberSaveable(p.basePrice) { mutableStateOf(p.basePrice) }
             var compareAt by rememberSaveable(p.compareAtPrice) { mutableStateOf(p.compareAtPrice.orEmpty()) }
             var cost by rememberSaveable(p.costPrice) { mutableStateOf(p.costPrice) }
+            var wholesale by rememberSaveable(p.wholesalePrice) { mutableStateOf(p.wholesalePrice.orEmpty()) }
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
@@ -448,6 +449,7 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                             GoldPill { Text("SKU ${p.skuNumber ?: "—"}", color = Color.White, style = MaterialTheme.typography.labelLarge) }
                         }
                         SummaryRow("التكلفة", Money.formatBase(p.costPrice))
+                        SummaryRow("سعر التاجر", p.wholesalePrice?.let { Money.format(it) } ?: "غير محدد")
                         if (canEdit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("مميز في الصفحة الرئيسية", Modifier.weight(1f))
@@ -470,6 +472,12 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                                 value = cost, onValueChange = { cost = it }, label = { Text("التكلفة (ر.س)") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                             )
+                            OutlinedTextField(
+                                value = wholesale, onValueChange = { wholesale = it }, label = { Text("سعر التاجر (ر.س)") }, singleLine = true,
+                                supportingText = { Text("فارغ = التجار يدفعون سعر البيع") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
+                            )
+                            val wholesaleValid = wholesale.isBlank() || wholesale.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.stripTrailingZeros().scale() <= 2 } == true
                             val costValid = cost.isBlank() || cost.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
                             Button(
                                 onClick = {
@@ -478,10 +486,12 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                                             basePrice = price.trim(),
                                             compareAtPrice = compareAt.trim().ifBlank { null },
                                             costPrice = cost.trim().ifBlank { null },
+                                            // "" clears it; an unset one stays unset.
+                                            wholesalePrice = wholesale.trim().ifBlank { if (p.wholesalePrice != null) "" else null },
                                         ),
                                     )
                                 },
-                                enabled = !busy && price.toBigDecimalOrNull() != null && costValid,
+                                enabled = !busy && price.toBigDecimalOrNull() != null && costValid && wholesaleValid,
                             ) { Text("حفظ الأسعار") }
                         } else {
                             SummaryRow("السعر", Money.format(p.basePrice))

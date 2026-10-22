@@ -184,7 +184,9 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
     val display = rates.let { Money.display }
     val walletBalance = state.wallet?.let { Money.parse(it.available(display.currency)) }
     val orderTotal = cart?.let { Money.convert(Money.parse(it.totals.grandTotal), display.currency, display.rate) }
-    val walletShort = walletBalance != null && orderTotal != null && walletBalance < orderTotal
+    // Merchants may order "on account" (credit); the server enforces their credit limit.
+    val merchant = state.wallet?.merchant
+    val walletShort = merchant == null && walletBalance != null && orderTotal != null && walletBalance < orderTotal
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -247,7 +249,36 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
 
             item { SectionTitle("طريقة الدفع") }
             items(state.methods) { m ->
-                if (m == PaymentMethod.CUSTOMER_ACCOUNT) {
+                if (m == PaymentMethod.CUSTOMER_ACCOUNT && merchant != null) {
+                    Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
+                        Text("آجل على حساب التاجر", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            merchant.creditLimit?.let { "حد الشراء الآجل: ${Money.formatBase(it)}" } ?: "شراء آجل بدون حد",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val owed = state.wallet?.balances.orEmpty().filter { Money.parse(it.owed).signum() > 0 }
+                        if (owed.isNotEmpty()) {
+                            Text(
+                                "المستحق عليك حالياً: " + owed.joinToString(" + ") { Money.plain(Money.parse(it.owed), it.currency) },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        if (walletBalance != null && walletBalance.signum() > 0) {
+                            Text(
+                                "رصيدك المتاح: ${Money.plain(walletBalance, display.currency)} ويُستخدم أولاً",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            "يُسجَّل إجمالي الطلب على حسابك وتسدده لاحقاً",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (m == PaymentMethod.CUSTOMER_ACCOUNT) {
                     Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }, enabled = !walletShort) {
                         Text("الدفع من رصيد المحفظة", style = MaterialTheme.typography.titleSmall)
                         Text(

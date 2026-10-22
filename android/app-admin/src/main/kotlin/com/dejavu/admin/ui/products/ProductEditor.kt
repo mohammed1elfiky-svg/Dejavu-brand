@@ -123,6 +123,10 @@ data class ProductForm(
     val compareAt: String = "",
     /** Cost per piece (SAR), shared by all variants. */
     val costPrice: String = "",
+    /** Price for merchant customers (SAR); blank = they pay the normal price. */
+    val wholesalePrice: String = "",
+    /** The wholesale price when loaded, so clearing it is sent as "". */
+    val savedWholesale: String = "",
     val status: ProductStatus = ProductStatus.DRAFT,
     val featured: Boolean = false,
     val images: List<ImageUrl> = emptyList(),
@@ -242,6 +246,7 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         slug = f.slug.trim(),
                         basePrice = f.price.trim(),
                         costPrice = f.costPrice.trim().ifBlank { null },
+                        wholesalePrice = f.wholesalePrice.trim().ifBlank { null },
                         compareAtPrice = f.compareAt.trim().ifBlank { null },
                         descriptionAr = f.descriptionAr.trim().ifBlank { null },
                         status = f.status,
@@ -261,6 +266,8 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         descriptionAr = f.descriptionAr.trim().ifBlank { null },
                         basePrice = f.price.trim(),
                         costPrice = f.costPrice.trim().ifBlank { null },
+                        // "" clears it; unchanged blank is left out.
+                        wholesalePrice = f.wholesalePrice.trim().ifBlank { if (f.savedWholesale.isNotBlank()) "" else null },
                         compareAtPrice = f.compareAt.trim().ifBlank { null },
                         status = f.status,
                         isFeatured = f.featured,
@@ -282,6 +289,7 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         !isAmount(f.price) || f.price.trim().toBigDecimal().signum() == 0 -> "اكتب سعراً صحيحاً"
         f.compareAt.isNotBlank() && !isAmount(f.compareAt) -> "السعر قبل الخصم غير صحيح"
         f.costPrice.isNotBlank() && !isAmount(f.costPrice) -> "التكلفة غير صحيحة"
+        f.wholesalePrice.isNotBlank() && !isAmount(f.wholesalePrice) -> "سعر التاجر غير صحيح"
         f.images.size > MAX_IMAGES -> "الحد الأقصى $MAX_IMAGES صور"
         !isNew -> null
         f.variants.isEmpty() -> "أضف المقاسات والألوان ثم اضغط \"توليد المتغيرات\""
@@ -319,6 +327,8 @@ private fun AdminProduct.toForm() = ProductForm(
     price = basePrice,
     compareAt = compareAtPrice.orEmpty(),
     costPrice = costPrice.takeIf { !Money.isZero(it) }.orEmpty(),
+    wholesalePrice = wholesalePrice.orEmpty(),
+    savedWholesale = wholesalePrice.orEmpty(),
     status = status,
     featured = isFeatured,
     images = images,
@@ -390,6 +400,12 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                             decimal = true,
                             hint = "تكلفة القطعة الواحدة، تُستخدم لكل المقاسات والألوان",
                         ) { v -> vm.edit { it.copy(costPrice = v) } }
+                        Field(
+                            "سعر التاجر (ر.س)",
+                            form.wholesalePrice,
+                            decimal = true,
+                            hint = "سعر الجملة لعملاء حساب التاجر، فارغ = يدفعون سعر البيع",
+                        ) { v -> vm.edit { it.copy(wholesalePrice = v) } }
                     }
                 }
                 item { SectionTitle("النشر") }

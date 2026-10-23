@@ -1,5 +1,6 @@
 package com.dejavu.customer.ui.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,7 +82,12 @@ data class AuthForm(
     /** Sign-up only: one of [Governorate.name], and the area inside it (Taiz). */
     val governorate: String? = null,
     val area: String? = null,
-    /** Sign-up only: the verification code step is showing. */
+    /** Login only: the forgotten-password flow is showing instead of the sign-in form. */
+    val reset: Boolean = false,
+    /** Forgotten password: the new password and its confirmation. */
+    val newPassword: String = "",
+    val confirmPassword: String = "",
+    /** Sign-up / forgotten password: the verification code step is showing. */
     val otpStep: Boolean = false,
     val otp: String = "",
     /** Seconds until the code can be sent again (0 = now). */
@@ -161,6 +167,13 @@ class AuthViewModel(
 
     fun errors(f: AuthForm = _form.value): Map<String, String> = buildMap {
         Validators.phone(f.phone)?.let { put("phone", it) }
+        if (f.reset) {
+            if (f.otpStep) {
+                Validators.password(f.newPassword)?.let { put("newPassword", it) }
+                if (f.confirmPassword != f.newPassword) put("confirmPassword", "كلمتا المرور غير متطابقتين")
+            }
+            return@buildMap
+        }
         Validators.password(f.password)?.let { put("password", it) }
         if (registering) {
             Validators.name(f.name)?.let { put("name", it) }
@@ -191,9 +204,52 @@ class AuthViewModel(
         }
     }
 
-    /** Texts the code to the phone and shows the code step. */
+    // ---- forgotten password
+
+    /** Opens the forgotten-password flow, keeping the phone typed on the sign-in form. */
+    fun startReset() {
+        countdown?.cancel()
+        _form.value = _form.value.copy(
+            reset = true, otpStep = false, otp = "", newPassword = "", confirmPassword = "",
+            resendIn = 0, submitted = false, busy = false, error = null,
+        )
+    }
+
+    /** Back from the forgotten-password flow to the sign-in form. */
+    fun cancelReset() {
+        countdown?.cancel()
+        _form.value = _form.value.copy(
+            reset = false, otpStep = false, otp = "", newPassword = "", confirmPassword = "",
+            resendIn = 0, submitted = false, busy = false, error = null,
+        )
+    }
+
+    /** Forgotten password step 1: texts the reset code to the phone. */
+    fun requestResetCode() {
+        val f = _form.value.copy(submitted = true)
+        _form.value = f
+        if (errors(f).isNotEmpty() || f.busy) return
+        _form.value = f.copy(busy = true, submitted = false)
+        viewModelScope.launch {
+            sendCode(_form.value)
+            _form.value = _form.value.copy(busy = false)
+        }
+    }
+
+    /** Forgotten password step 2: sets the new password with the code, which also signs in. */
+    private suspend fun resetPassword(f: AuthForm) {
+        session.resetPassword(f.phone, f.otp, f.newPassword)
+            .onSuccess {
+                // Same as a sign-in: keep (or forget) the saved sign-in, now with the new password.
+                savedLogin.save(if (f.remember) SavedLogin(f.phone.trim(), f.newPassword) else null)
+                _done.tryEmit(Unit)
+            }
+            .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
+    }
+
+    /** Texts the code (sign-up or password reset) to the phone and shows the code step. */
     private suspend fun sendCode(f: AuthForm) {
-        session.sendOtp(f.phone)
+        (if (f.reset) session.sendResetCode(f.phone) else session.sendOtp(f.phone))
             .onSuccess {
                 _form.value = _form.value.copy(otpStep = true, otp = "", error = null)
                 startCountdown()
@@ -229,9 +285,16 @@ class AuthViewModel(
             _form.value = f.copy(error = "أدخل الرمز المكوّن من $OTP_LENGTH أرقام")
             return
         }
+        if (f.reset) {
+            val checked = f.copy(submitted = true)
+            if (errors(checked).isNotEmpty()) {
+                _form.value = checked
+                return
+            }
+        }
         _form.value = f.copy(busy = true, error = null)
         viewModelScope.launch {
-            register(_form.value, otp = f.otp)
+            if (f.reset) resetPassword(_form.value) else register(_form.value, otp = f.otp)
             _form.value = _form.value.copy(busy = false)
         }
     }
@@ -279,7 +342,15 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
     LaunchedEffect(vm) { vm.done.collect { done() } }
     val errors = if (form.submitted) vm.errors(form) else emptyMap()
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar(if (registering) "إنشاء حساب" else "تسجيل الدخول", onBack) }) { padding ->
+    // In the forgotten-password flow, back returns to the sign-in form.
+    BackHandler(enabled = form.reset) { vm.cancelReset() }
+    val title = when {
+        registering -> "إنشاء حساب"
+        form.reset -> "استعادة كلمة المرور"
+        else -> "تسجيل الدخول"
+    }
+
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar(title, if (form.reset) vm::cancelReset else onBack) }) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -287,8 +358,10 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
         ) {
             Text("Dejavu", style = MaterialTheme.typography.headlineMedium, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
             GlassCard(Modifier.fillMaxWidth(), elevation = 16.dp, contentPadding = 20.dp) {
-                if (registering && form.otpStep) {
-                    OtpStep(vm, form)
+                if (form.otpStep) {
+                    OtpStep(vm, form, errors)
+                } else if (form.reset) {
+                    ResetPhoneStep(vm, form, errors)
                 } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(if (registering) "انضم إلى Dejavu" else "أهلاً بعودتك", style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(4.dp))
@@ -312,6 +385,9 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                             )
                             Spacer(Modifier.width(8.dp))
                             Text("تذكرني (حفظ رقم الجوال وكلمة المرور)", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        TextButton(onClick = vm::startReset, enabled = !form.busy) {
+                            Text("نسيت كلمة المرور؟", color = Liquid.GoldDeep)
                         }
                     }
 
@@ -422,9 +498,30 @@ private fun RegionFields(vm: AuthViewModel, form: AuthForm, errors: Map<String, 
     }
 }
 
-/** Sign-up step 2: the code texted to the phone. */
+/** Forgotten password step 1: the phone the reset code is texted to. */
 @Composable
-private fun OtpStep(vm: AuthViewModel, form: AuthForm) {
+private fun ResetPhoneStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("نسيت كلمة المرور؟", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "أدخل رقم الموبايل المسجّل وسنرسل إليك رمزاً لتعيين كلمة مرور جديدة.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
+        form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Button(onClick = vm::requestResetCode, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
+            if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text("إرسال الرمز")
+        }
+        TextButton(onClick = vm::cancelReset, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
+            Text("العودة إلى تسجيل الدخول", color = Liquid.GoldDeep)
+        }
+    }
+}
+
+/** Step 2 of sign-up or of a password reset: the code texted to the phone (and, for a reset, the new password). */
+@Composable
+private fun OtpStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, String>) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("أدخل رمز التحقق المرسل إلى رقمك", style = MaterialTheme.typography.titleMedium)
         Text(form.phone.trim(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -437,9 +534,13 @@ private fun OtpStep(vm: AuthViewModel, form: AuthForm) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             modifier = Modifier.fillMaxWidth(),
         )
+        if (form.reset) {
+            Input("كلمة المرور الجديدة", form.newPassword, errors["newPassword"], KeyboardType.Password, password = true) { v -> vm.update { copy(newPassword = v) } }
+            Input("تأكيد كلمة المرور", form.confirmPassword, errors["confirmPassword"], KeyboardType.Password, password = true) { v -> vm.update { copy(confirmPassword = v) } }
+        }
         form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = vm::confirmCode, enabled = !form.busy && form.otp.length == 6, modifier = Modifier.fillMaxWidth()) {
-            if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text("تأكيد وإنشاء الحساب")
+            if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text(if (form.reset) "حفظ كلمة المرور" else "تأكيد وإنشاء الحساب")
         }
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             TextButton(onClick = vm::resend, enabled = !form.busy && form.resendIn == 0) {
@@ -450,7 +551,7 @@ private fun OtpStep(vm: AuthViewModel, form: AuthForm) {
             }
         }
         TextButton(onClick = vm::editDetails, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
-            Text("تعديل البيانات", color = Liquid.GoldDeep)
+            Text(if (form.reset) "تعديل الرقم" else "تعديل البيانات", color = Liquid.GoldDeep)
         }
     }
 }
@@ -465,15 +566,23 @@ private fun Input(
     password: Boolean = false,
     onChange: (String) -> Unit,
 ) {
+    var shown by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it) } },
+        trailingIcon = if (password) {
+            {
+                TextButton(onClick = { shown = !shown }) {
+                    Text(if (shown) "إخفاء" else "إظهار", color = Liquid.GoldDeep)
+                }
+            }
+        } else null,
         isError = error != null,
         supportingText = error?.let { { Text(it) } },
         singleLine = true,
-        visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        visualTransformation = if (password && !shown) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboard),
         modifier = Modifier.fillMaxWidth(),
     )

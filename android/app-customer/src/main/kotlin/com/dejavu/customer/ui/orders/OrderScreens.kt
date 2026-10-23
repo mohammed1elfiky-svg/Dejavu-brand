@@ -194,7 +194,7 @@ class OrderDetailViewModel(private val number: String, private val orders: Order
 }
 
 @Composable
-fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, requestReturn: () -> Unit, openProduct: (String) -> Unit) {
+fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, openProduct: (String) -> Unit) {
     val vm = appViewModel(key = "order:$number") { OrderDetailViewModel(number, it.orders) }
     val state by vm.state.collectAsStateWithLifecycle()
     val cancelling by vm.cancelling.collectAsStateWithLifecycle()
@@ -301,11 +301,10 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, r
                         }
                     }
                 }
-                if (order.canCancel || order.canReturn) {
+                if (order.canCancel) {
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            if (order.canReturn) Button(onClick = requestReturn) { Text("طلب إرجاع") }
-                            if (order.canCancel) OutlinedButton(onClick = { askCancel = true }, enabled = !cancelling) { Text("إلغاء الطلب") }
+                            OutlinedButton(onClick = { askCancel = true }, enabled = !cancelling) { Text("إلغاء الطلب") }
                         }
                     }
                 }
@@ -364,95 +363,4 @@ fun ReasonDialog(title: String, placeholder: String, confirm: String, onDismiss:
         confirmButton = { TextButton(onClick = { onConfirm(reason.trim()) }, enabled = reason.trim().length >= 3) { Text(confirm) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
-}
-
-// ---------------------------------------------------------------- return ---
-
-class ReturnRequestViewModel(private val number: String, private val orders: OrderRepository) : BaseViewModel() {
-    private val _order = MutableStateFlow<Load<OrderDetail>>(Load.Loading)
-    val order = _order.asStateFlow()
-    private val _quantities = MutableStateFlow<Map<String, Int>>(emptyMap())
-    val quantities = _quantities.asStateFlow()
-    private val _sending = MutableStateFlow(false)
-    val sending = _sending.asStateFlow()
-    private val _done = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val done = _done.asSharedFlow()
-
-    init { load() }
-
-    fun load() {
-        _order.value = Load.Loading
-        viewModelScope.launch { _order.value = orders.order(number).toLoad() }
-    }
-
-    fun setQuantity(itemId: String, q: Int) {
-        _quantities.value = _quantities.value + (itemId to q)
-    }
-
-    fun submit(reason: String) {
-        if (_quantities.value.values.none { it > 0 }) return say("اختر قطعة واحدة على الأقل")
-        if (reason.trim().length < 3) return say("اكتب سبب الإرجاع")
-        _sending.value = true
-        viewModelScope.launch {
-            orders.requestReturn(number, reason, _quantities.value).orSay()?.let {
-                say("تم إرسال طلب الإرجاع ${it.number}")
-                _done.tryEmit(Unit)
-            }
-            _sending.value = false
-        }
-    }
-}
-
-@Composable
-fun ReturnRequestScreen(number: String, onBack: () -> Unit, submitted: () -> Unit) {
-    val vm = appViewModel(key = "return:$number") { ReturnRequestViewModel(number, it.orders) }
-    val state by vm.order.collectAsStateWithLifecycle()
-    val quantities by vm.quantities.collectAsStateWithLifecycle()
-    val sending by vm.sending.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
-    var reason by rememberSaveable { mutableStateOf("") }
-    CollectMessages(vm, snackbar)
-    LaunchedEffect(vm) { vm.done.collect { submitted() } }
-
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("طلب إرجاع", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { order ->
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item { Text("اختر القطع التي تريد إرجاعها", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep) }
-                items(order.items.filter { it.returnableQty > 0 }, key = { it.id }) { item ->
-                    GlassCard(Modifier.fillMaxWidth(), contentPadding = 12.dp) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(item.productName, style = MaterialTheme.typography.titleSmall)
-                                Text(listOfNotNull(item.color, item.size?.let { "مقاس $it" }).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-                            }
-                            val q = quantities[item.id] ?: 0
-                            // Stepper starts at 0 here: picking nothing means "keep this item".
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { vm.setQuantity(item.id, (q - 1).coerceAtLeast(0)) }, enabled = q > 0) { Text("−") }
-                                Text("$q", fontWeight = FontWeight.Bold, color = Liquid.GoldDeep)
-                                TextButton(onClick = { vm.setQuantity(item.id, (q + 1).coerceAtMost(item.returnableQty)) }, enabled = q < item.returnableQty) { Text("+") }
-                            }
-                        }
-                    }
-                }
-                item {
-                    OutlinedTextField(
-                        value = reason,
-                        onValueChange = { reason = it.take(500) },
-                        label = { Text("سبب الإرجاع") },
-                        placeholder = { Text("مثال: المقاس غير مناسب") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                item {
-                    Text(
-                        "سيراجع فريقنا الطلب ثم يتواصل معك لاستلام القطع. يُرد المبلغ بعد فحصها.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                item { Button(onClick = { vm.submit(reason) }, enabled = !sending, modifier = Modifier.fillMaxWidth()) { Text("إرسال الطلب") } }
-            }
-        }
-    }
 }

@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
@@ -82,7 +81,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.AddressRepository
 import com.dejavu.core.data.CatalogRepository
-import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionState
 import com.dejavu.core.data.Validators
 import com.dejavu.core.data.userMessage
@@ -90,8 +88,6 @@ import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
-import com.dejavu.core.model.ReturnStatus
-import com.dejavu.core.model.SalesReturn
 import com.dejavu.core.model.ShippingZone
 import com.dejavu.customer.BuildConfig
 import com.dejavu.core.ui.BaseViewModel
@@ -104,11 +100,9 @@ import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.Tag
-import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.theme.Gold
 import com.dejavu.core.ui.theme.Success
-import com.dejavu.core.ui.theme.Warning
 import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,7 +117,6 @@ fun AccountScreen(
     login: () -> Unit,
     register: () -> Unit,
     addresses: () -> Unit,
-    returns: () -> Unit,
     orders: () -> Unit,
     notifications: () -> Unit,
     wallet: () -> Unit,
@@ -179,7 +172,6 @@ fun AccountScreen(
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)
                     MenuRow(Icons.Filled.AccountBox, "المحفظة / رصيدي", wallet)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
-                    MenuRow(Icons.Filled.Refresh, "طلبات الإرجاع", returns)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
@@ -562,62 +554,6 @@ private fun Field(
         keyboardOptions = KeyboardOptions(keyboardType = keyboard),
         modifier = modifier,
     )
-}
-
-// ---------------------------------------------------------------- returns ---
-
-class ReturnsViewModel(private val orders: OrderRepository) : BaseViewModel() {
-    private val _state = MutableStateFlow<Load<List<SalesReturn>>>(Load.Loading)
-    val state = _state.asStateFlow()
-
-    init { load() }
-
-    fun load() {
-        _state.value = Load.Loading
-        viewModelScope.launch { _state.value = orders.returns().toLoad() }
-    }
-}
-
-@Composable
-fun ReturnsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
-    val vm = appViewModel { ReturnsViewModel(it.orders) }
-    val state by vm.state.collectAsStateWithLifecycle()
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("طلبات الإرجاع", onBack) }) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
-            if (list.isEmpty()) {
-                EmptyState(Icons.Filled.Refresh, "لا توجد طلبات إرجاع", "يمكنك طلب إرجاع من صفحة الطلب بعد استلامه", modifier = Modifier.padding(padding))
-            } else {
-                LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(list, key = { it.id }) { r ->
-                        GlassCard(Modifier.fillMaxWidth(), onClick = { openOrder(r.order.number) }) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(r.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                    StatusChip(r.status.label, r.status.color())
-                                }
-                                Text("الطلب ${r.order.number} · ${formatDate(r.requestedAt)}", style = MaterialTheme.typography.bodySmall)
-                                r.items.forEach { Text("• ${it.orderItem.productName} × ${it.quantity}", style = MaterialTheme.typography.bodySmall) }
-                                Text(
-                                    "قيمة الإرجاع: ${Money.format(r.refundAmount, r.order.currency, r.order.exchangeRate)}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Liquid.GoldDeep,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                r.rejectReason?.let { Text("سبب الرفض: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReturnStatus.color() = when (this) {
-    ReturnStatus.REQUESTED, ReturnStatus.APPROVED -> Warning
-    ReturnStatus.RECEIVED, ReturnStatus.REFUNDED -> Success
-    ReturnStatus.REJECTED -> MaterialTheme.colorScheme.error
 }
 
 // ----------------------------------------------------------------- server ---

@@ -46,7 +46,6 @@ import androidx.navigation.navArgument
 import com.dejavu.customer.ui.account.AccountScreen
 import com.dejavu.customer.ui.account.AddressFormScreen
 import com.dejavu.customer.ui.account.AddressesScreen
-import com.dejavu.customer.ui.account.ReturnsScreen
 import com.dejavu.customer.ui.account.ServerSettingsScreen
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.auth.LoginScreen
@@ -60,7 +59,6 @@ import com.dejavu.customer.ui.home.HomeScreen
 import com.dejavu.customer.ui.notifications.NotificationsScreen
 import com.dejavu.customer.ui.orders.OrderDetailScreen
 import com.dejavu.customer.ui.orders.OrdersScreen
-import com.dejavu.customer.ui.orders.ReturnRequestScreen
 import com.dejavu.customer.ui.product.ProductScreen
 import com.dejavu.customer.ui.wallet.TopUpScreen
 import com.dejavu.customer.ui.wallet.WalletScreen
@@ -76,7 +74,6 @@ object Routes {
     const val REGISTER = "register"
     const val CHECKOUT = "checkout"
     const val ADDRESSES = "addresses"
-    const val RETURNS = "returns"
     const val SERVER = "server"
     const val NOTIFICATIONS = "notifications"
     const val WALLET = "wallet"
@@ -85,14 +82,12 @@ object Routes {
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
     const val ORDER = "order/{number}?placed={placed}"
-    const val RETURN_REQUEST = "order/{number}/return"
     const val ADDRESS_FORM = "address?id={id}"
 
     fun products(title: String, category: String? = null, query: String? = null, featured: Boolean = false, brand: String? = null) =
         "products?title=${enc(title)}&category=${enc(category)}&q=${enc(query)}&featured=$featured&brand=${enc(brand)}"
     fun product(slug: String) = "product/${enc(slug)}"
     fun order(number: String, placed: Boolean = false) = "order/${enc(number)}?placed=$placed"
-    fun returnRequest(number: String) = "order/${enc(number)}/return"
     fun addressForm(id: String? = null) = "address?id=${enc(id)}"
 
     private fun enc(v: String?) = v?.let { Uri.encode(it) } ?: ""
@@ -239,15 +234,7 @@ fun DejavuNavHost() {
                     number = number,
                     justPlaced = entry.arguments?.getBoolean("placed") ?: false,
                     onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.ORDERS) },
-                    requestReturn = { nav.navigate(Routes.returnRequest(number)) },
                     openProduct = { nav.navigate(Routes.product(it)) },
-                )
-            }
-            composable(Routes.RETURN_REQUEST) { entry ->
-                ReturnRequestScreen(
-                    number = entry.arguments?.getString("number").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                    submitted = { nav.navigate(Routes.RETURNS) { popUpTo(Routes.ORDERS) } },
                 )
             }
             composable(Routes.ACCOUNT) {
@@ -255,7 +242,6 @@ fun DejavuNavHost() {
                     login = { nav.navigate(Routes.LOGIN) },
                     register = { nav.navigate(Routes.REGISTER) },
                     addresses = { nav.navigate(Routes.ADDRESSES) },
-                    returns = { nav.navigate(Routes.RETURNS) },
                     orders = { nav.switchTab(Routes.ORDERS) },
                     notifications = { nav.navigate(Routes.NOTIFICATIONS) },
                     wallet = { nav.navigate(Routes.WALLET) },
@@ -267,9 +253,6 @@ fun DejavuNavHost() {
             }
             composable(Routes.ADDRESS_FORM, arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true })) { entry ->
                 AddressFormScreen(id = entry.arguments?.getString("id")?.ifBlank { null }, onDone = { nav.popBackStack() })
-            }
-            composable(Routes.RETURNS) {
-                ReturnsScreen(onBack = { nav.popBackStack() }, openOrder = { nav.navigate(Routes.order(it)) })
             }
             composable(Routes.LOGIN) {
                 LoginScreen(

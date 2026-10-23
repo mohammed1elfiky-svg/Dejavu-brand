@@ -96,6 +96,7 @@ import com.dejavu.core.model.Wallet
 import com.dejavu.core.model.WalletBalance
 import com.dejavu.core.model.WalletEntry
 import com.dejavu.core.ui.BackTopBar
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.Load
@@ -108,6 +109,7 @@ import com.dejavu.core.ui.media.rememberImagePicker
 import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.theme.Warning
 import com.dejavu.core.ui.toLoad
+import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -658,6 +660,7 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
     val form by vm.form.collectAsStateWithLifecycle()
     val receipt by vm.receipt.collectAsStateWithLifecycle()
     val available by vm.available.collectAsStateWithLifecycle()
+    val rates by appContainer().currencies.rates.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -691,6 +694,7 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                             selected = c == form.currency,
                             onClick = { vm.chooseCurrency(c, accounts) },
                             label = { Text("${c.nameAr} (${c.symbol})") },
+                            leadingIcon = { CurrencyArt(c.code, rates?.rate(c)?.imageUrl, height = 18.dp) },
                             colors = goldChipColors(),
                         )
                     }

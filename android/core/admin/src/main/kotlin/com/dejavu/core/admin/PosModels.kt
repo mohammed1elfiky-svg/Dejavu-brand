@@ -96,8 +96,12 @@ data class PosSaleRequest(
     val reference: String? = null,
     /** Pay this much (invoice currency) from the customer's own credit first. */
     val fromAccount: String? = null,
-    /** Discount code (instead of a typed discount). */
-    val couponCode: String? = null,
+    /** Photo of the deposit / transfer slip (uploaded with uploadPrivate). */
+    val slipFileId: String? = null,
+    /** Id this device gave the sale: sending it again (offline queue) returns the first sale. */
+    val clientRef: String? = null,
+    /** When it was rung up (ISO-8601), for sales sent later from the offline queue. */
+    val soldAt: String? = null,
 )
 
 @Serializable
@@ -145,6 +149,86 @@ data class ShiftSale(
 
 @Serializable
 data class PosShift(val count: Int, val total: String, val sales: List<ShiftSale> = emptyList(), val boxes: List<CashBox> = emptyList())
+
+/** A till sale in the day's list (GET admin/pos/sales). */
+@Serializable
+data class PosSaleSummary(
+    val id: String,
+    val number: String,
+    val status: String,
+    val grandTotal: String,
+    val grandTotalInCurrency: String,
+    val currency: Currency,
+    val paymentMethod: String? = null,
+    val placedAt: String,
+    val cancelledAt: String? = null,
+    val cancelReason: String? = null,
+    val internalNote: String? = null,
+    val customer: PersonRef? = null,
+    val cashier: NameRef? = null,
+    val itemCount: Int = 0,
+    val isVoided: Boolean = false,
+)
+
+@Serializable
+data class VoidSaleRequest(val reason: String? = null)
+
+// ---------------------------------------------------------------- shifts ---
+
+@Serializable
+data class CashierShift(
+    val id: String,
+    val number: String,
+    /** OPEN or CLOSED. */
+    val status: String,
+    val openedAt: String,
+    val closedAt: String? = null,
+    val note: String? = null,
+    val user: NameRef? = null,
+    val lines: List<Line> = emptyList(),
+    val salesCount: Int = 0,
+    val salesTotal: String = "0",
+) {
+    val isOpen: Boolean get() = status == "OPEN"
+
+    @Serializable
+    data class Line(
+        val id: String,
+        val cashBoxId: String,
+        val currency: Currency,
+        /** What the drawer held when the shift opened (float included). */
+        val opening: String = "0",
+        /** What the books say it holds now (open shift) or held at the count. */
+        val expected: String? = null,
+        val counted: String? = null,
+        /** counted − expected: + over, − short. */
+        val difference: String? = null,
+    )
+}
+
+@Serializable
+data class CurrentShift(val shift: CashierShift? = null)
+
+@Serializable
+data class OpenShiftRequest(val floats: List<Float> = emptyList(), val note: String? = null) {
+    /** Float handed over from a safe into the drawer of [currency]. */
+    @Serializable data class Float(val currency: Currency, val amount: String, val fromBoxId: String)
+}
+
+@Serializable
+data class CloseShiftRequest(val counts: List<Count>, val handOver: List<HandOver> = emptyList(), val note: String? = null) {
+    @Serializable data class Count(val currency: Currency, val counted: String)
+    /** Counted cash of [currency] moved to [toBoxId] (a safe or bank). */
+    @Serializable data class HandOver(val currency: Currency, val toBoxId: String)
+}
+
+/** The employee's own till: checkout buttons (order / hidden, ids chosen by the app) and sale currency. */
+@Serializable
+data class PosSettings(
+    val checkoutButtons: List<String> = emptyList(),
+    val hiddenButtons: List<String> = emptyList(),
+    val saleCurrency: String? = null,
+)
 
 @Serializable
 data class QuickCustomerRequest(val name: String, val phone: String)
@@ -374,6 +458,8 @@ data class CurrencyRequest(
     val sortOrder: Int? = null,
     /** Initial rate (create only): units per 1 SAR. */
     val rate: String? = null,
+    /** Picture of the note / coin; "" removes it. */
+    val imageUrl: String? = null,
 )
 
 // --------------------------------------------------------------- merchants ---
@@ -650,9 +736,15 @@ data class QuickPurchaseRequest(
     val receiveNow: Boolean? = null,
     /** CASH or BANK_TRANSFER to pay now; null = on account. */
     val payMethod: String? = null,
-    /** SAR paid now; the whole invoice when null. */
+    /** SAR paid now (USD when the order is in USD/CNY); the whole invoice when null. */
     val payAmount: String? = null,
     val payAccountId: String? = null,
+    /** Currency the prices and shipping are typed in: USD or CNY (suppliers are dealt with in these only). */
+    val currency: String? = null,
+    /** CNY only: yuan per dollar; null = the last payment voucher's rate. */
+    val foreignPerUsd: String? = null,
+    /** Orders in USD/CNY: the dollar box the payment comes from. */
+    val payBoxId: String? = null,
 )
 
 @Serializable

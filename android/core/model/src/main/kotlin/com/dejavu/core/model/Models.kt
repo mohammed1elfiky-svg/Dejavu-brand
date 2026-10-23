@@ -482,6 +482,8 @@ data class CurrencyRate(
     val isActive: Boolean = true,
     val showInCustomerApp: Boolean = true,
     val sortOrder: Int = 0,
+    /** Picture of a note or coin uploaded for the currency; null = the app's built-in picture. */
+    val imageUrl: String? = null,
 )
 
 @Serializable

@@ -41,6 +41,8 @@ data class StaffProfile(
     val permissions: List<String> = emptyList(),
     /** Currency the till opens with for this employee (null = SAR). */
     val saleCurrency: String? = null,
+    /** The employee's own checkout layout. */
+    val posSettings: PosSettings? = null,
 ) {
     fun can(permission: String) = permission in permissions
 }
@@ -73,12 +75,15 @@ data class Dashboard(
     val ordersByStatus: Map<String, Int> = emptyMap(),
     val pendingReturns: Int = 0,
     val lowStockVariants: Int = 0,
+    /** Exchange rates and whether each was updated in the last 24 hours. */
+    val rates: List<RateStatus> = emptyList(),
     val cashAndBank: List<CashAccount> = emptyList(),
     val receivables: Receivables,
     val payables: Payables,
     val monthToDate: MonthToDate,
 ) {
     @Serializable data class Today(val orders: Int, val sales: String)
+    @Serializable data class RateStatus(val currency: String, val nameAr: String? = null, val rate: String? = null, val effectiveAt: String? = null, val stale: Boolean = false)
     @Serializable data class Receivables(val customers: String, val couriersCod: String, val pendingCodShipments: Int = 0)
     @Serializable data class Payables(val suppliers: String, val customerAdvances: String, val accruedExpenses: String, val vatDue: String)
     @Serializable data class MonthToDate(val netRevenue: String, val grossProfit: String, val operatingExpenses: String, val netIncome: String)
@@ -1260,7 +1265,176 @@ data class SupplierOpeningBalanceRequest(
     val amount: String,
     /** WE_OWE (we owe the supplier) or SUPPLIER_OWES (we paid ahead). */
     val direction: String,
-    /** SAR value; required for a currency without a rate in the app (e.g. CNY). */
+    /** SAR value if set by hand; otherwise worked out from the rates. */
     val sarAmount: String? = null,
+    /** CNY: yuan per dollar; null = the last payment voucher's rate. */
+    val foreignPerUsd: String? = null,
     val note: String? = null,
 )
+
+// ----------------------------------------------------------------- audit ---
+
+@Serializable
+data class AuditEntry(
+    val id: String,
+    val action: String,
+    val entityType: String,
+    val entityId: String? = null,
+    val before: kotlinx.serialization.json.JsonElement? = null,
+    val after: kotlinx.serialization.json.JsonElement? = null,
+    val createdAt: String,
+    val user: NameRef? = null,
+)
+
+@Serializable
+data class AuditType(val entityType: String, val count: Int = 0)
+
+// --------------------------------------------------------------- debtors ---
+
+@Serializable
+data class Debtors(val items: List<Debtor> = emptyList(), val totalOwed: String = "0")
+
+@Serializable
+data class Debtor(
+    val id: String,
+    val code: String,
+    val name: String,
+    val phone: String? = null,
+    val isMerchant: Boolean = false,
+    val balances: List<Balance> = emptyList(),
+    val owedSar: String = "0",
+    val lastPaymentAt: String? = null,
+    val lastPurchaseAt: String? = null,
+    val daysSincePayment: Int? = null,
+) {
+    @Serializable data class Balance(val currency: String, val balance: String)
+}
+
+@Serializable
+data class DebtRemindersRequest(val customerIds: List<String>)
+
+@Serializable
+data class DebtRemindersResult(val queued: Int = 0, val skipped: List<Skipped> = emptyList()) {
+    @Serializable data class Skipped(val customerId: String, val reason: String)
+}
+
+// ---------------------------------------------------------- daily summary ---
+
+@Serializable
+data class DailySummarySettings(val enabled: Boolean = false, val phone: String? = null, val hour: Int = 21)
+
+@Serializable
+data class DailySummaryText(val text: String)
+
+// --------------------------------------------------------- product reports ---
+
+@Serializable
+data class ProductsReport(
+    val from: String,
+    val to: String,
+    val deadDays: Int = 60,
+    val topSellers: List<TopSeller> = emptyList(),
+    val deadStock: List<DeadItem> = emptyList(),
+) {
+    @Serializable
+    data class TopSeller(
+        val productId: String,
+        val nameAr: String,
+        val skuNumber: Int? = null,
+        val imageUrl: String? = null,
+        val units: Int,
+        val revenue: String,
+        val cost: String,
+        val grossProfit: String,
+        val margin: String,
+        val onHand: Int = 0,
+    )
+
+    @Serializable
+    data class DeadItem(
+        val productId: String,
+        val nameAr: String,
+        val skuNumber: Int? = null,
+        val imageUrl: String? = null,
+        val onHand: Int,
+        val stockValue: String,
+        val lastSoldAt: String? = null,
+    )
+}
+
+@Serializable
+data class ReorderReport(val days: Int, val coverDays: Int, val items: List<Item> = emptyList()) {
+    @Serializable
+    data class Item(
+        val variantId: String,
+        val productId: String,
+        val nameAr: String,
+        val sku: String,
+        val size: String? = null,
+        val color: String? = null,
+        val imageUrl: String? = null,
+        val sold: Int,
+        val perDay: Double,
+        val onHand: Int,
+        val incoming: Int,
+        val daysLeft: Int? = null,
+        val suggested: Int,
+        val lastSupplier: String? = null,
+    )
+}
+
+@Serializable
+data class RestoreResult(val restored: Boolean = false, val backupCreatedAt: String? = null)
+
+// ----------------------------------------------------------- stock counts ---
+
+@Serializable
+data class StockCountSummary(
+    val id: String,
+    val number: String,
+    val isPosted: Boolean = false,
+    val note: String? = null,
+    val countedAt: String,
+    val postedAt: String? = null,
+    val warehouse: Wh? = null,
+    val countedBy: NameRef? = null,
+    @SerialName("_count") val counts: Counts? = null,
+) {
+    @Serializable data class Wh(val id: String? = null, val code: String? = null, val name: String)
+    @Serializable data class Counts(val items: Int = 0)
+}
+
+@Serializable
+data class StockCountDetail(
+    val id: String,
+    val number: String,
+    val isPosted: Boolean = false,
+    val note: String? = null,
+    val countedAt: String,
+    val postedAt: String? = null,
+    val warehouse: StockCountSummary.Wh? = null,
+    val countedBy: NameRef? = null,
+    val items: List<Item> = emptyList(),
+) {
+    @Serializable
+    data class Item(
+        val id: String,
+        val variantId: String,
+        val systemQty: Int,
+        val countedQty: Int,
+        /** counted − on the books (+ surplus, − shortage). */
+        val difference: Int = 0,
+        /** SAR value of the difference at average cost. */
+        val differenceValue: String = "0",
+        val variant: V,
+    ) {
+        @Serializable data class V(val id: String, val sku: String, val size: String? = null, val color: String? = null, val product: P)
+        @Serializable data class P(val id: String, val nameAr: String)
+    }
+}
+
+/** A count of the pieces on the shelf; posting it books the differences. */
+@Serializable
+data class CreateStockCountRequest(val warehouseId: String, val items: List<Line>, val note: String? = null) {
+    @Serializable data class Line(val variantId: String, val countedQty: Int)
+}

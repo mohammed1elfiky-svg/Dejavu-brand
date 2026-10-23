@@ -3,6 +3,20 @@
 package com.dejavu.admin.ui.pos
 
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Switch
+import androidx.compose.ui.graphics.asImageBitmap
+import com.dejavu.core.admin.PosSettings
+import com.dejavu.core.model.Currencies
+import com.dejavu.core.ui.CurrencyArt
+import com.dejavu.core.ui.media.rememberImagePicker
+import kotlinx.coroutines.flow.StateFlow
+import java.time.Instant
+import java.util.UUID
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import com.dejavu.admin.ui.adminContainer
@@ -289,10 +303,65 @@ enum class PayMethod(val label: String, val wire: String) {
     DEPOSIT("سند إيداع", "BANK_TRANSFER"),
 }
 
+/** Buttons / sections of the checkout the employee can reorder or hide (ids are stored on the server). */
+enum class CheckoutButton(val id: String, val label: String, val hideable: Boolean = true) {
+    CURRENCY("currency", "عملة الفاتورة وأسعار الصرف"),
+    CASH("cash", "نقداً"),
+    TRANSFER("transfer", "تحويل بنكي"),
+    DEPOSIT("deposit", "سند إيداع"),
+    CREDIT("credit", "آجل"),
+    CUSTOMER("customer", "العميل"),
+    DISCOUNT("discount", "الخصم"),
+    AMOUNT("amount", "المبلغ المستلم والإجمالي", hideable = false),
+    MULTI("multi", "الدفع بأكثر من عملة"),
+    NOTE("note", "ملاحظة"),
+    PRINT("print", "طباعة الفاتورة");
+
+    val payMethod: PayMethod?
+        get() = when (this) {
+            CASH -> PayMethod.CASH
+            TRANSFER -> PayMethod.TRANSFER
+            DEPOSIT -> PayMethod.DEPOSIT
+            else -> null
+        }
+
+    companion object {
+        fun of(id: String): CheckoutButton? = entries.firstOrNull { it.id == id }
+
+        /** The payment buttons, shown together in one row. */
+        val PAYMENT = setOf(CASH, TRANSFER, DEPOSIT, CREDIT)
+    }
+}
+
+/** The employee's checkout: buttons in [order], minus [hidden]. */
+data class CheckoutLayout(val order: List<CheckoutButton>, val hidden: Set<CheckoutButton>) {
+    fun isShown(b: CheckoutButton): Boolean = !b.hideable || b !in hidden
+
+    val shown: List<CheckoutButton> get() = order.filter { isShown(it) }
+
+    fun toSettings(saleCurrency: String?) = PosSettings(order.map { it.id }, hidden.filter { it.hideable }.map { it.id }, saleCurrency)
+
+    companion object {
+        val DEFAULT = CheckoutLayout(CheckoutButton.entries, emptySet())
+
+        fun from(s: PosSettings?): CheckoutLayout {
+            if (s == null) return DEFAULT
+            val saved = s.checkoutButtons.mapNotNull { CheckoutButton.of(it) }.distinct()
+            val order = saved + CheckoutButton.entries.filter { it !in saved }
+            val hidden = s.hiddenButtons.mapNotNull { CheckoutButton.of(it) }.filter { it.hideable }.toSet()
+            return CheckoutLayout(order, hidden)
+        }
+    }
+}
+
+/** A plain number for a text field: "1500", "12.5". */
+private fun plainNumber(v: BigDecimal): String = v.stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }.toPlainString()
+
 class PosViewModel(
     private val pos: PosRepository,
     private val finance: FinanceRepository,
     private val treasury: TreasuryRepository,
+    private val offline: OfflineSales,
 ) : BaseViewModel() {
     var products by mutableStateOf<Load<List<PosProduct>>>(Load.Loading)
         private set
@@ -305,13 +374,18 @@ class PosViewModel(
     /** Active non-base currencies (with or without a rate), for the quick rate editor. */
     var rateRows by mutableStateOf<List<CurrencyRate>>(emptyList())
         private set
+    /** Uploaded note / coin picture per currency code. */
+    var currencyImages by mutableStateOf<Map<String, String?>>(emptyMap())
+        private set
     var rateBusy by mutableStateOf(false)
         private set
 
     var cart by mutableStateOf<List<CartLine>>(emptyList())
         private set
     var currency by mutableStateOf(Currency.SAR)
+        private set
     var saleType by mutableStateOf(SaleType.CASH)
+        private set
     var customer by mutableStateOf<PosCustomer?>(null)
         private set
     var customerBalances by mutableStateOf<List<AccountBalance>>(emptyList())
@@ -321,27 +395,63 @@ class PosViewModel(
     var customerResults by mutableStateOf<List<AdminCustomerSummary>>(emptyList())
         private set
     var discountType by mutableStateOf(DiscountType.PERCENT)
+        private set
     var discountValue by mutableStateOf("")
-    /** Discount code applied by the server; exclusive with the typed discount. */
-    var couponCode by mutableStateOf("")
+        private set
+    /** Amount received in the invoice currency (one-field checkout); null = the amount due. */
+    var receivedText by mutableStateOf<String?>(null)
+        private set
+    /** Several tender fields (one per currency) instead of the one received amount. */
+    var multiCurrency by mutableStateOf(false)
         private set
     var tenders by mutableStateOf(listOf(TenderInput(Currency.SAR, "")))
         private set
     var changeCurrency by mutableStateOf<Currency?>(null)
     var payMethod by mutableStateOf(PayMethod.CASH)
+        private set
     var reference by mutableStateOf("")
+    var note by mutableStateOf("")
+    /** Uploaded transfer / deposit slip photo. */
+    var slipFileId by mutableStateOf<String?>(null)
+        private set
+    var slipPreview by mutableStateOf<ByteArray?>(null)
+        private set
+    var slipUploading by mutableStateOf(false)
+        private set
+    /** Print this sale's receipt (null = the printer's automatic setting). */
+    var printAfterSale by mutableStateOf<Boolean?>(null)
     /** Bank / exchange-house boxes a transfer can land in. */
     var banks by mutableStateOf<List<CashBox>>(emptyList())
         private set
     /** Chosen bank box per currency (null = the first one of that currency). */
     var bankFor by mutableStateOf<Map<Currency, String>>(emptyMap())
 
+    /** The employee's own checkout layout and default sale currency. */
+    var layout by mutableStateOf(CheckoutLayout.DEFAULT)
+        private set
+    var saleCurrencyCode by mutableStateOf<String?>(null)
+        private set
+    var settingsBusy by mutableStateOf(false)
+        private set
+
+    /** Sale being corrected (its items are in the cart); checkout then replaces it. */
+    var editing by mutableStateOf<PosReceipt?>(null)
+        private set
+
     var busy by mutableStateOf(false)
         private set
     var checkoutError by mutableStateOf<String?>(null)
     var receipt by mutableStateOf<PosReceipt?>(null)
         private set
+    /** [receipt] is a corrected sale. */
+    var receiptEdited by mutableStateOf(false)
+        private set
     var shift by mutableStateOf<Load<PosShift>?>(null)
+        private set
+
+    /** Sales rung up offline, waiting to be sent. */
+    val pending: StateFlow<List<QueuedSale>> = offline.queue
+    var syncing by mutableStateOf(false)
         private set
 
     private var searchJob: Job? = null
@@ -349,6 +459,11 @@ class PosViewModel(
     /** The signed-in employee's till currency (code), applied until the cashier picks one. */
     private var preferredCurrency: String? = null
     private var currencyPicked = false
+    private var settingsFromServer = false
+    private var profileCurrency: String? = null
+    private var showingCached = false
+    /** Id of this checkout: sending the same sale again (retry, offline queue) books it once. */
+    private var clientRef = UUID.randomUUID().toString()
 
     init {
         load()
@@ -356,18 +471,67 @@ class PosViewModel(
         viewModelScope.launch {
             banks = treasury.safes().getOrNull().orEmpty().filter { it.kind == CashBoxKind.BANK && it.isActive }
         }
+        viewModelScope.launch {
+            pos.settings().onSuccess {
+                settingsFromServer = true
+                applySettings(it, it.saleCurrency ?: profileCurrency)
+            }
+        }
+        syncOffline()
     }
 
     fun pickBank(currency: Currency, boxId: String) {
         bankFor = bankFor + (currency to boxId)
     }
 
+    // ---- settings
+
+    /** Layout from the signed-in profile, used until (or unless) the server's settings arrive. */
+    fun useProfile(settings: PosSettings?, saleCurrency: String?) {
+        profileCurrency = saleCurrency
+        if (settingsFromServer) return
+        applySettings(settings, settings?.saleCurrency ?: saleCurrency)
+    }
+
+    private fun applySettings(s: PosSettings?, saleCurrency: String?) {
+        layout = CheckoutLayout.from(s)
+        saleCurrencyCode = saleCurrency
+        if (!layout.isShown(CheckoutButton.MULTI) && multiCurrency) setMulti(false)
+        if (!layout.isShown(CheckoutButton.CREDIT) && saleType == SaleType.CREDIT && editing == null) saleType = SaleType.CASH
+        if (cart.isEmpty() || !layout.isShown(payMethodButton(payMethod))) payMethod = defaultPayMethod()
+        preferCurrency(saleCurrency)
+    }
+
+    private fun payMethodButton(m: PayMethod): CheckoutButton = CheckoutButton.entries.first { it.payMethod == m }
+
+    private fun defaultPayMethod(): PayMethod = layout.shown.firstNotNullOfOrNull { it.payMethod } ?: PayMethod.CASH
+
+    fun saveSettings(newLayout: CheckoutLayout, saleCurrency: String?, done: () -> Unit) {
+        if (settingsBusy) return
+        settingsBusy = true
+        viewModelScope.launch {
+            pos.saveSettings(newLayout.toSettings(saleCurrency)).fold(
+                {
+                    settingsFromServer = true
+                    if (editing == null) currencyPicked = false
+                    applySettings(it, it.saleCurrency ?: saleCurrency)
+                    say("تم حفظ تخصيص صفحة الدفع")
+                    done()
+                },
+                { e -> say(e.userMessage()) },
+            )
+            settingsBusy = false
+        }
+    }
+
+    // ---- totals
+
     /**
      * The currency change is given in: the cashier's pick, else (like the server) the currency of
      * the cash tenders when they all share one, else the invoice currency.
      */
     val changeIn: Currency
-        get() = changeCurrency ?: defaultChangeCurrency(tenders)
+        get() = changeCurrency ?: defaultChangeCurrency(paidTenders)
 
     private fun defaultChangeCurrency(list: List<TenderInput>): Currency {
         if (payMethod != PayMethod.CASH) return currency
@@ -375,16 +539,102 @@ class PosViewModel(
         return used.singleOrNull() ?: currency
     }
 
-    /** The manual discount, unless a discount code is entered (they are exclusive). */
-    private val typedDiscount: String
-        get() = if (couponCode.isBlank()) discountValue else ""
+    private val invoiceRate: BigDecimal get() = rates[currency] ?: BigDecimal.ONE
+
+    /** Totals with only the typed (%/amount) discount and nothing paid. */
+    private val beforePayment: PosTotals
+        get() = computeTotals(cart, currency, rates, discountType, discountValue, emptyList(), currency, customer)
+
+    /** What the customer has to pay, in the invoice currency. */
+    val dueInInvoice: BigDecimal
+        get() = Money.convert(beforePayment.total, currency, invoiceRate)
+
+    /** The received-amount field as shown: the cashier's text, else the amount due (blank for a credit sale). */
+    val receivedShown: String
+        get() = receivedText ?: if (saleType == SaleType.CREDIT || cart.isEmpty()) "" else plainNumber(dueInInvoice)
+
+    /**
+     * A received amount below the amount due becomes a discount (invoice currency); null when
+     * there is none (paid in full, several currencies, or a credit sale where the rest is owed).
+     */
+    val receivedDiscount: BigDecimal?
+        get() {
+            if (multiCurrency || saleType == SaleType.CREDIT || cart.isEmpty()) return null
+            val r = validAmount(receivedShown, currency) ?: return null
+            val due = dueInInvoice
+            return if (r < due) due.subtract(r) else null
+        }
+
+    /** Discount sent with the sale: the typed one, or (with a short received amount) the whole difference as an amount. */
+    private val discountToSend: Pair<DiscountType, BigDecimal>?
+        get() {
+            if (receivedDiscount != null) {
+                val received = validAmount(receivedShown, currency) ?: return null
+                val subtotal = Money.convert(beforePayment.subtotal, currency, invoiceRate)
+                val amount = subtotal.subtract(received)
+                return if (amount.signum() > 0) DiscountType.AMOUNT to amount else null
+            }
+            val typed = discountValue.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 } ?: return null
+            return discountType to typed
+        }
+
+    /** What was handed over: the one received amount, or the per-currency fields. */
+    private val paidTenders: List<TenderInput>
+        get() = if (multiCurrency) tenders else listOf(TenderInput(currency, receivedShown))
 
     val totals: PosTotals
-        get() = computeTotals(cart, currency, rates, discountType, typedDiscount, tenders, changeIn, customer)
+        get() {
+            val d = discountToSend
+            return computeTotals(
+                cart,
+                currency,
+                rates,
+                d?.first ?: discountType,
+                d?.second?.toPlainString() ?: "",
+                paidTenders,
+                changeIn,
+                customer,
+            )
+        }
 
-    fun editCoupon(code: String) {
-        couponCode = code.filter { !it.isWhitespace() }.take(40)
-        if (couponCode.isNotEmpty()) discountValue = ""
+    fun editReceived(text: String) {
+        receivedText = decimalInput(text).take(20)
+        checkoutError = null
+    }
+
+    fun editDiscount(type: DiscountType = discountType, value: String = discountValue) {
+        discountType = type
+        discountValue = decimalInput(value)
+        receivedText = null
+        checkoutError = null
+    }
+
+    /** Shows / hides the per-currency tender fields. */
+    fun setMulti(on: Boolean) {
+        multiCurrency = on
+        receivedText = null
+        changeCurrency = null
+        if (on) {
+            val cleared = tenders.map { it.copy(amount = "") }
+            tenders = if (cleared.none { it.currency == currency }) listOf(TenderInput(currency, "")) + cleared else cleared
+        }
+        checkoutError = null
+    }
+
+    fun pickPayMethod(m: PayMethod) {
+        payMethod = m
+        checkoutError = null
+    }
+
+    fun toggleCredit() {
+        saleType = if (saleType == SaleType.CREDIT) SaleType.CASH else SaleType.CREDIT
+        receivedText = null
+        checkoutError = null
+    }
+
+    /** Checkout opened: the received amount starts at the amount due again. */
+    fun openCheckout() {
+        receivedText = null
         checkoutError = null
     }
 
@@ -392,6 +642,7 @@ class PosViewModel(
     fun pickCurrency(c: Currency) {
         currency = c
         currencyPicked = true
+        receivedText = null
         checkoutError = null
     }
 
@@ -404,10 +655,38 @@ class PosViewModel(
     private fun applyPreferredCurrency() {
         if (currencyPicked) return
         val code = preferredCurrency ?: return
-        currencies.firstOrNull { it.code == code }?.let { currency = it }
+        currencies.firstOrNull { it.code == code }?.let {
+            currency = it
+            receivedText = null
+        }
     }
 
     fun rateOf(c: Currency): BigDecimal? = rates[c]
+
+    fun imageOf(c: Currency): String? = currencyImages[c.code]
+
+    // ---- slip photo
+
+    fun uploadSlip(bytes: ByteArray) {
+        slipPreview = bytes
+        slipFileId = null
+        slipUploading = true
+        viewModelScope.launch {
+            pos.uploadSlip(bytes).fold(
+                { slipFileId = it.id },
+                { e ->
+                    slipPreview = null
+                    say(e.userMessage())
+                },
+            )
+            slipUploading = false
+        }
+    }
+
+    fun removeSlip() {
+        slipFileId = null
+        slipPreview = null
+    }
 
     // ---- products
 
@@ -426,34 +705,73 @@ class PosViewModel(
     }
 
     private suspend fun fetch() {
-        pos.products(query).fold(
-            { products = Load.Ready(it) },
-            { e -> if (products is Load.Ready) say(e.userMessage()) else products = Load.Failed(e.userMessage()) },
+        val q = query
+        pos.products(q).fold(
+            { list ->
+                products = Load.Ready(list)
+                showingCached = false
+                if (q.isBlank()) offline.saveProducts(list)
+            },
+            { e ->
+                val cached = if (OfflineSales.isTransient(e)) offline.products() else null
+                when {
+                    cached != null -> {
+                        products = Load.Ready(filterLocal(cached, q))
+                        if (!showingCached) say("لا يوجد اتصال: تُعرض آخر قائمة منتجات محفوظة")
+                        showingCached = true
+                    }
+                    products is Load.Ready -> say(e.userMessage())
+                    else -> products = Load.Failed(e.userMessage())
+                }
+            },
         )
+    }
+
+    private fun filterLocal(list: List<PosProduct>, q: String): List<PosProduct> {
+        val t = q.trim()
+        if (t.isEmpty()) return list
+        return list.filter { p ->
+            p.nameAr.contains(t, ignoreCase = true) || p.nameEn.contains(t, ignoreCase = true) ||
+                p.skuNumber?.toString() == t || p.variants.any { it.sku.equals(t, ignoreCase = true) || it.barcode == t }
+        }
     }
 
     fun loadCurrencies() {
         viewModelScope.launch {
             finance.activeCurrencies().fold(
                 { cs ->
-                    val ordered = cs.register()
-                    rateRows = cs.currencies.filter { !Currency.of(it.code.code).isBase }
-                    val found = mutableMapOf(Currency.SAR to BigDecimal.ONE)
-                    cs.currencies.forEach { cr ->
-                        val c = Currency.of(cr.code.code)
-                        val r = if (c.isBase) BigDecimal.ONE else cr.rate?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
-                        if (r != null) found[c] = r
-                    }
-                    rates = found
-                    currencies = (listOf(Currency.SAR) + ordered.map { Currency.of(it.code) }).distinct().filter { it in found }
-                    applyPreferredCurrency()
-                    // Two tender fields side by side by default: SAR and YER (when it has a rate).
-                    val defaults = listOfNotNull(Currency.SAR, Currency.YER.takeIf { it in found })
-                    if (tenders.all { it.amount.isBlank() }) tenders = defaults.map { TenderInput(it, "") }
+                    applyCurrencies(cs)
+                    offline.saveCurrencies(cs)
                 },
-                { say(it.userMessage()) },
+                { e ->
+                    val cached = if (OfflineSales.isTransient(e)) offline.currencies() else null
+                    if (cached != null) {
+                        cached.register()
+                        applyCurrencies(cached)
+                    } else {
+                        say(e.userMessage())
+                    }
+                },
             )
         }
+    }
+
+    private fun applyCurrencies(cs: Currencies) {
+        val ordered = cs.register()
+        rateRows = cs.currencies.filter { !Currency.of(it.code.code).isBase }
+        currencyImages = cs.currencies.associate { it.code.code to it.imageUrl }
+        val found = mutableMapOf(Currency.SAR to BigDecimal.ONE)
+        cs.currencies.forEach { cr ->
+            val c = Currency.of(cr.code.code)
+            val r = if (c.isBase) BigDecimal.ONE else cr.rate?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
+            if (r != null) found[c] = r
+        }
+        rates = found
+        currencies = (listOf(Currency.SAR) + ordered.map { Currency.of(it.code) }).distinct().filter { it in found }
+        applyPreferredCurrency()
+        // Two tender fields side by side by default: SAR and YER (when it has a rate).
+        val defaults = listOfNotNull(Currency.SAR, Currency.YER.takeIf { it in found })
+        if (!multiCurrency && tenders.all { it.amount.isBlank() }) tenders = defaults.map { TenderInput(it, "") }
     }
 
     /** Saves a new rate (units per 1 SAR) and reloads the till's currencies; [done] gets an error or null. */
@@ -510,12 +828,16 @@ class PosViewModel(
     fun inCart(variantId: String): Int = cart.firstOrNull { it.variant.id == variantId }?.qty ?: 0
 
     fun add(product: PosProduct, variant: PosVariant) {
-        val have = inCart(variant.id)
-        if (have + 1 > variant.available) {
-            say(if (variant.available <= 0) "${product.nameAr} (${variant.title}) غير متوفر" else "المتاح من ${product.nameAr} (${variant.title}) ${variant.available} فقط")
+        val line = cart.firstOrNull { it.variant.id == variant.id }
+        val have = line?.qty ?: 0
+        // A line of a sale being corrected also counts the pieces that sale took.
+        val available = line?.variant?.available ?: variant.available
+        if (have + 1 > available) {
+            say(if (available <= 0) "${product.nameAr} (${variant.title}) غير متوفر" else "المتاح من ${product.nameAr} (${variant.title}) $available فقط")
             return
         }
-        cart = if (have == 0) cart + CartLine(product, variant, 1) else cart.map { if (it.variant.id == variant.id) it.copy(qty = it.qty + 1) else it }
+        cart = if (line == null) cart + CartLine(product, variant, 1) else cart.map { if (it.variant.id == variant.id) it.copy(qty = it.qty + 1) else it }
+        receivedText = null
     }
 
     fun setQty(variantId: String, qty: Int) {
@@ -528,6 +850,7 @@ class PosViewModel(
             }
             else -> cart.map { if (it.variant.id == variantId) it.copy(qty = qty) else it }
         }
+        receivedText = null
     }
 
     // ---- payment
@@ -550,7 +873,7 @@ class PosViewModel(
         val t = tenders.getOrNull(index) ?: return
         val r = rates[t.currency] ?: return
         val others = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = "") else x }
-        val owed = computeTotals(cart, currency, rates, discountType, typedDiscount, others, changeCurrency ?: defaultChangeCurrency(others), customer).owed
+        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: defaultChangeCurrency(others), customer).owed
         val amount = if (owed.signum() > 0) Money.convert(owed, t.currency, r).stripTrailingZeros().toPlainString() else ""
         tenders = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = amount) else x }
         checkoutError = null
@@ -573,6 +896,7 @@ class PosViewModel(
         customerQuery = ""
         customerResults = emptyList()
         customerBalances = emptyList()
+        receivedText = null
         checkoutError = null
         viewModelScope.launch {
             customerBalances = finance.customerAccount(c.id).getOrNull()?.balances.orEmpty()
@@ -582,6 +906,7 @@ class PosViewModel(
     fun clearCustomer() {
         customer = null
         customerBalances = emptyList()
+        receivedText = null
     }
 
     fun quickCustomer(name: String, phone: String) {
@@ -602,62 +927,172 @@ class PosViewModel(
     // ---- sale
 
     fun sell() {
-        if (busy || cart.isEmpty()) return
+        if (busy || cart.isEmpty() || slipUploading) return
         val t = totals
-        val coupon = couponCode.trim().ifBlank { null }
-        val discount = typedDiscount.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
+        val discount = discountToSend
+        val bank = payMethod != PayMethod.CASH
         val request = PosSaleRequest(
             items = cart.map { PosItem(it.variant.id, it.qty) },
             saleType = saleType,
             currency = currency,
             customerId = customer?.id,
-            discountType = discountType.takeIf { discount != null },
-            discountValue = discount?.stripTrailingZeros()?.toPlainString(),
-            couponCode = coupon,
-            payments = tenders.mapNotNull { x ->
+            discountType = discount?.first,
+            discountValue = discount?.second?.stripTrailingZeros()?.toPlainString(),
+            payments = paidTenders.mapNotNull { x ->
                 validAmount(x.amount, x.currency)?.let {
                     PosTender(
                         x.currency,
                         it.stripTrailingZeros().toPlainString(),
                         method = payMethod.wire,
-                        bankBoxId = if (payMethod == PayMethod.CASH) null else bankFor[x.currency],
+                        bankBoxId = if (bank) bankFor[x.currency] else null,
                     )
                 }
             },
-            // With a code the real total is only known to the server: send an explicit pick anyway.
-            changeCurrency = changeIn.takeIf { t.change.signum() > 0 || (coupon != null && changeCurrency != null) },
+            changeCurrency = changeIn.takeIf { t.change.signum() > 0 },
+            note = note.trim().ifBlank { null },
             paymentMethod = payMethod.wire,
-            reference = reference.trim().ifBlank { null }?.takeIf { payMethod != PayMethod.CASH },
+            reference = reference.trim().ifBlank { null }?.takeIf { bank },
+            slipFileId = slipFileId?.takeIf { bank },
+            clientRef = clientRef,
         )
+        val editId = editing?.id
         busy = true
         checkoutError = null
         viewModelScope.launch {
-            pos.sell(request).fold(
+            val result = if (editId != null) pos.editSale(editId, request) else pos.sell(request)
+            result.fold(
                 {
+                    receiptEdited = editId != null
                     receipt = it
                     fetch()
+                    syncOffline()
                 },
-                { e -> checkoutError = e.userMessage() },
+                { e ->
+                    if (editId == null && OfflineSales.isOffline(e)) {
+                        saveOffline(request)
+                    } else {
+                        checkoutError = e.userMessage()
+                    }
+                },
             )
             busy = false
         }
     }
 
+    /** No connection: the sale waits in the device's queue and the cart is cleared. */
+    private suspend fun saveOffline(request: PosSaleRequest) {
+        offline.add(request.copy(soldAt = Instant.now().toString()))
+        // Take the pieces off the shown (and cached) stock so the next sale sees them gone.
+        val sold = request.items.associate { it.variantId to it.quantity }
+        fun List<PosProduct>.minusSold() = map { p ->
+            if (p.variants.none { it.id in sold }) p else p.copy(variants = p.variants.map { v -> sold[v.id]?.let { v.copy(available = v.available - it) } ?: v })
+        }
+        (products as? Load.Ready)?.value?.let { products = Load.Ready(it.minusSold()) }
+        offline.products()?.let { offline.saveProducts(it.minusSold()) }
+        say("حُفظت الفاتورة بدون إنترنت وسترسل تلقائياً")
+        newSale()
+    }
+
+    /** Sends the sales saved offline; [manual] also retries the ones the server refused before. */
+    fun syncOffline(manual: Boolean = false) {
+        if (syncing || offline.queue.value.isEmpty()) return
+        syncing = true
+        viewModelScope.launch {
+            val r = offline.sync(pos, includeFailed = manual)
+            if (r.sent > 0) {
+                say("أُرسلت ${r.sent} فاتورة محفوظة")
+                fetch()
+            }
+            if (manual) {
+                when {
+                    r.offline -> say("لا يوجد اتصال بالخادم بعد؛ ستُرسل الفواتير تلقائياً عند عودته")
+                    r.firstError != null -> say("تعذّر إرسال فاتورة: ${r.firstError}")
+                }
+            }
+            syncing = false
+        }
+    }
+
+    fun removeQueued(clientRef: String) {
+        viewModelScope.launch { offline.remove(clientRef) }
+    }
+
+    /** Loads a sale into the cart to correct it; checkout then replaces it ([PosRepository.editSale]). */
+    fun startEdit(r: PosReceipt) {
+        if (busy) return
+        busy = true
+        viewModelScope.launch {
+            val known = (products as? Load.Ready)?.value.orEmpty() + offline.products().orEmpty()
+            val lines = mutableListOf<CartLine>()
+            var missing = 0
+            r.items.groupBy { it.variantId }.forEach { (variantId, items) ->
+                val qty = items.sumOf { it.quantity - it.returnedQty }
+                if (qty <= 0) return@forEach
+                val product = known.firstOrNull { p -> p.variants.any { it.id == variantId } }
+                    ?: pos.lookup(items.first().sku).getOrNull()?.product?.takeIf { p -> p.variants.any { it.id == variantId } }
+                val variant = product?.variants?.firstOrNull { it.id == variantId }
+                if (product == null || variant == null) {
+                    missing++
+                } else {
+                    // The pieces of this sale come back to stock when it is corrected.
+                    lines += CartLine(product, variant.copy(available = variant.available.coerceAtLeast(0) + qty), qty)
+                }
+            }
+            if (lines.isEmpty()) {
+                say("تعذّر تحميل أصناف الفاتورة ${r.number}")
+                busy = false
+                return@launch
+            }
+            newSale()
+            editing = r
+            cart = lines
+            currency = r.currency
+            currencyPicked = true
+            if (!Money.isZero(r.onAccount)) saleType = SaleType.CREDIT
+            val c = r.customer
+            val customerId = c?.id
+            if (c != null && customerId != null && c.code != "CUS-WALKIN") {
+                val full = c.code?.let { code -> finance.customers(code).getOrNull()?.items?.firstOrNull { it.id == customerId } }
+                pickCustomer(full?.toPos() ?: PosCustomer(customerId, c.name, c.phone, c.code))
+            }
+            if (missing > 0) say("تعذّر تحميل $missing من أصناف الفاتورة")
+            busy = false
+        }
+    }
+
+    /** Leaves edit mode without changing the sale. */
+    fun cancelEdit() {
+        newSale()
+    }
+
     fun newSale() {
+        val wasEditing = editing != null
         receipt = null
+        receiptEdited = false
+        editing = null
         cart = emptyList()
         customer = null
         customerBalances = emptyList()
         customerQuery = ""
         customerResults = emptyList()
         discountValue = ""
-        couponCode = ""
+        receivedText = null
+        multiCurrency = false
         saleType = SaleType.CASH
         changeCurrency = null
         checkoutError = null
-        payMethod = PayMethod.CASH
+        payMethod = defaultPayMethod()
         reference = ""
+        note = ""
+        slipFileId = null
+        slipPreview = null
+        printAfterSale = null
         tenders = tenders.map { it.copy(amount = "") }
+        clientRef = UUID.randomUUID().toString()
+        if (wasEditing) {
+            currencyPicked = false
+            applyPreferredCurrency()
+        }
     }
 
     fun loadShift() {
@@ -674,9 +1109,17 @@ class PosViewModel(
 
 /** The till: product grid, cart and multi-currency checkout. */
 @Composable
-fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns: () -> Unit, onLogout: (() -> Unit)? = null, openPrinters: (() -> Unit)? = null) {
+fun PosScreen(
+    session: StaffSession.LoggedIn,
+    openBoxes: () -> Unit,
+    openReturns: () -> Unit,
+    onLogout: (() -> Unit)? = null,
+    openPrinters: (() -> Unit)? = null,
+    openShift: (() -> Unit)? = null,
+) {
     var confirmLogout by remember { mutableStateOf(false) }
-    val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury) }
+    val context = LocalContext.current
+    val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury, OfflineSales.get(context)) }
     val snackbar = remember { SnackbarHostState() }
     val canArrange = session.can(Perm.PRODUCTS_WRITE)
     var arranging by rememberSaveable { mutableStateOf(false) }
@@ -686,14 +1129,19 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
     var newCustomer by remember { mutableStateOf(false) }
     val canEditRates = session.can(Perm.SETTINGS_MANAGE)
     var editRates by remember { mutableStateOf(false) }
+    var customizing by remember { mutableStateOf(false) }
+    var showSales by remember { mutableStateOf(false) }
+    var showPending by remember { mutableStateOf(false) }
+    var viewing by remember { mutableStateOf<PosReceipt?>(null) }
+    val pending by vm.pending.collectAsStateWithLifecycle()
     CollectMessages(vm, snackbar)
-    // The till opens in the employee's own sale currency (when it is active).
-    val saleCurrency = session.profile?.saleCurrency
-    LaunchedEffect(saleCurrency) { vm.preferCurrency(saleCurrency) }
+    // The till opens with the employee's own checkout layout and sale currency (when it is active).
+    val profile = session.profile
+    LaunchedEffect(profile?.posSettings, profile?.saleCurrency) { vm.useProfile(profile?.posSettings, profile?.saleCurrency) }
+    LaunchedEffect(Unit) { OfflineSales.scheduleIfPending(context) }
 
     // Receipt printer: automatic after each sale (if set up), or from the receipt dialog.
     val printerSettings by adminContainer().printers.settings.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val printScope = rememberCoroutineScope()
     var printing by remember { mutableStateOf(false) }
     var printStatus by remember { mutableStateOf<String?>(null) }
@@ -714,7 +1162,8 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
     LaunchedEffect(vm.receipt?.id) {
         printStatus = null
         val r = vm.receipt ?: return@LaunchedEffect
-        if (printerSettings.receipt.autoPrint && printerSettings.receipt.target.isSet) printReceipt(r)
+        val auto = vm.printAfterSale ?: printerSettings.receipt.autoPrint
+        if (auto && printerSettings.receipt.target.isSet) printReceipt(r)
     }
     val scan = rememberBarcodeScanner { code -> vm.scan(code) { picking = it } }
 
@@ -729,6 +1178,19 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
             GlassTopBar(
                 title = { Text(if (arranging) "ترتيب المنتجات" else "نقطة البيع") },
                 actions = {
+                    if (pending.isNotEmpty()) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.error)
+                                .clickable { showPending = true; vm.syncOffline(manual = true) }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                if (vm.syncing) "جارٍ الإرسال…" else "بانتظار الإرسال: ${pending.size}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
                     TextButton(onClick = scan, enabled = !arranging) { Text("باركود") }
                     if (canArrange) {
                         IconButton(onClick = {
@@ -743,8 +1205,12 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
                             Icon(Icons.Filled.Edit, contentDescription = "تعديل سعر الصرف")
                         }
                     }
+                    IconButton(onClick = { showSales = true }, enabled = !arranging) {
+                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "فواتير اليوم")
+                    }
                     IconButton(onClick = openReturns, enabled = !arranging) { Icon(Icons.Filled.Refresh, contentDescription = "مرتجع / استبدال") }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
+                    if (openShift != null) TextButton(onClick = openShift) { Text("الوردية") }
                     IconButton(onClick = openBoxes) { Icon(Icons.Filled.Lock, contentDescription = "الصناديق") }
                     if (openPrinters != null) IconButton(onClick = openPrinters) { Icon(Icons.Filled.Settings, contentDescription = "الطابعات") }
                     if (onLogout != null) {
@@ -761,6 +1227,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
             val wide = maxWidth >= 900.dp
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
+                    if (!arranging) EditBanner(vm, Modifier.padding(horizontal = 16.dp).padding(top = 8.dp))
                     if (arranging) {
                         ArrangeBar(
                             busy = vm.busy,
@@ -794,16 +1261,18 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
                         }
                     }
                     if (!wide && !arranging && vm.cart.isNotEmpty()) {
-                        CartBar(vm) { showCheckout = true }
+                        CartBar(vm) { vm.openCheckout(); showCheckout = true }
                     }
                 }
                 if (wide && !arranging) {
                     GlassCard(Modifier.width(420.dp).fillMaxHeight().padding(8.dp), contentPadding = 0.dp) {
-                        Text(
-                            "الفاتورة",
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
-                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("الفاتورة", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { customizing = true }) { Icon(Icons.Filled.Settings, contentDescription = "تخصيص صفحة الدفع") }
+                        }
                         CheckoutContent(
                             vm,
                             canEditRates = canEditRates,
@@ -829,6 +1298,7 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
         ModalBottomSheet(onDismissRequest = { showCheckout = false }, sheetState = sheet, containerColor = Lux.Pearl) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("الفاتورة والدفع", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = { customizing = true }) { Icon(Icons.Filled.Settings, contentDescription = "تخصيص صفحة الدفع") }
                 IconButton(onClick = { showCheckout = false }) { Icon(Icons.Filled.Close, contentDescription = "إغلاق") }
             }
             CheckoutContent(
@@ -841,6 +1311,27 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
         }
     }
 
+    if (customizing) CheckoutSettingsDialog(vm, onDismiss = { customizing = false })
+
+    if (showSales) {
+        PosSalesSheet(
+            canAll = session.can(Perm.CASHBOXES_MANAGE),
+            canEdit = session.can(PERM_EDIT_SALES),
+            currencyImage = { code -> vm.currencyImages[code] },
+            onDismiss = { showSales = false },
+            onView = { r ->
+                printStatus = null
+                viewing = r
+            },
+            onEdit = { r ->
+                showSales = false
+                vm.startEdit(r)
+            },
+        )
+    }
+
+    if (showPending) PendingSalesDialog(vm, pending, onDismiss = { showPending = false })
+
     if (confirmLogout && onLogout != null) {
         ConfirmDialog("تسجيل الخروج", "هل تريد الخروج من حسابك على هذا الجهاز؟", "خروج", onDismiss = { confirmLogout = false }, onConfirm = onLogout)
     }
@@ -851,9 +1342,169 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
 
     if (editRates && canEditRates) RatesDialog(vm, onDismiss = { editRates = false })
 
-    vm.receipt?.let { r -> ReceiptDialog(r, onNewSale = vm::newSale, printing = printing, printStatus = printStatus, onPrint = { printReceipt(r) }) }
+    vm.receipt?.let { r ->
+        ReceiptDialog(
+            r,
+            title = if (vm.receiptEdited) "تم تعديل الفاتورة ✓" else "تمت عملية البيع ✓",
+            confirmText = "بيع جديد",
+            onNewSale = vm::newSale,
+            printing = printing,
+            printStatus = printStatus,
+            onPrint = { printReceipt(r) },
+        )
+    }
+
+    viewing?.let { r ->
+        ReceiptDialog(
+            r,
+            title = "الفاتورة ${r.number}",
+            confirmText = "إغلاق",
+            onNewSale = { viewing = null },
+            printing = printing,
+            printStatus = printStatus,
+            onPrint = { printReceipt(r) },
+        )
+    }
 
     vm.shift?.let { s -> ShiftDialog(s, onRetry = vm::loadShift, onDismiss = vm::closeShift, openBoxes = { vm.closeShift(); openBoxes() }) }
+}
+
+/** Permission to delete or correct a till sale. */
+private const val PERM_EDIT_SALES = "pos.edit_sales"
+
+/** "Correcting invoice X — cancel" while a sale is loaded for editing. */
+@Composable
+private fun EditBanner(vm: PosViewModel, modifier: Modifier = Modifier) {
+    val r = vm.editing ?: return
+    Row(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Lux.Champagne).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Edit, contentDescription = null, tint = Lux.GoldDeep, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "تعديل الفاتورة ${r.number}",
+            style = MaterialTheme.typography.labelLarge,
+            color = Lux.Ink,
+            modifier = Modifier.weight(1f),
+        )
+        SmallLink("إلغاء", enabled = !vm.busy, onClick = vm::cancelEdit)
+    }
+}
+
+/** Sales saved without internet: send now, see why one was refused, or drop it. */
+@Composable
+private fun PendingSalesDialog(vm: PosViewModel, pending: List<QueuedSale>, onDismiss: () -> Unit) {
+    var dropping by remember { mutableStateOf<QueuedSale?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("فواتير بانتظار الإرسال") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (pending.isEmpty()) Text("أُرسلت كل الفواتير ✓", color = Success)
+                if (vm.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
+                pending.forEach { q ->
+                    val r = q.request
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(formatDateTime(r.soldAt).ifBlank { "فاتورة محفوظة" }, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${r.items.sumOf { it.quantity }} قطعة" + (r.currency?.let { " · ${it.nameAr}" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Lux.InkSoft,
+                                )
+                            }
+                            if (q.error != null) SmallLink("حذف") { dropping = q }
+                        }
+                        q.error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.syncOffline(manual = true) }, enabled = pending.isNotEmpty() && !vm.syncing) { Text("إرسال الآن") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
+    )
+    dropping?.let { q ->
+        ConfirmDialog(
+            "حذف الفاتورة المحفوظة",
+            "رفض الخادم هذه الفاتورة. حذفها يلغيها نهائياً ولن تُرسل.",
+            "حذف",
+            onDismiss = { dropping = null },
+            onConfirm = {
+                vm.removeQueued(q.clientRef)
+                dropping = null
+            },
+        )
+    }
+}
+
+/** "تخصيص صفحة الدفع": order and show/hide the checkout buttons, and the default sale currency. */
+@Composable
+private fun CheckoutSettingsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
+    var order by remember { mutableStateOf(vm.layout.order) }
+    var hidden by remember { mutableStateOf(vm.layout.hidden) }
+    var saleCurrency by remember { mutableStateOf(vm.saleCurrencyCode) }
+    fun move(i: Int, by: Int) {
+        val j = i + by
+        if (j !in order.indices) return
+        order = order.toMutableList().apply { add(j, removeAt(i)) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تخصيص صفحة الدفع") },
+        text = {
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("عملة البيع الافتراضية", style = MaterialTheme.typography.titleSmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        vm.currencies.forEach { c ->
+                            SmallChip(
+                                c.nameAr,
+                                selected = (saleCurrency ?: Currency.SAR.code) == c.code,
+                                leading = { CurrencyArt(c.code, vm.imageOf(c), height = 14.dp) },
+                            ) { saleCurrency = c.code }
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Lux.Hairline)
+                    Text("الأزرار والأقسام", style = MaterialTheme.typography.titleSmall)
+                    Text("رتّبها بالأسهم وأخفِ ما لا تستخدمه.", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                    order.forEachIndexed { i, b ->
+                        val shown = !b.hideable || b !in hidden
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                b.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (shown) Lux.Ink else Lux.InkSoft,
+                                modifier = Modifier.weight(1f),
+                            )
+                            SmallIcon(Icons.Filled.KeyboardArrowUp, "أعلى", tint = if (i > 0) Lux.Ink else Lux.Hairline) { move(i, -1) }
+                            SmallIcon(Icons.Filled.KeyboardArrowDown, "أسفل", tint = if (i < order.lastIndex) Lux.Ink else Lux.Hairline) { move(i, 1) }
+                            Spacer(Modifier.width(6.dp))
+                            if (b.hideable) {
+                                Switch(checked = shown, onCheckedChange = { on -> hidden = if (on) hidden - b else hidden + b })
+                            } else {
+                                Text("دائماً", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.width(52.dp), textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+                    SmallLink("استعادة الترتيب الافتراضي") {
+                        order = CheckoutLayout.DEFAULT.order
+                        hidden = emptySet()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { vm.saveSettings(CheckoutLayout(order, hidden), saleCurrency, onDismiss) },
+                enabled = !vm.settingsBusy,
+            ) { Text(if (vm.settingsBusy) "جارٍ الحفظ…" else "حفظ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
 }
 
 // ------------------------------------------------------------------ grid ---
@@ -1064,11 +1715,12 @@ private fun Section(content: @Composable ColumnScope.() -> Unit) {
 
 /** Small selectable chip (30dp high). */
 @Composable
-private fun SmallChip(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun SmallChip(text: String, selected: Boolean, leading: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(text, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+        leadingIcon = leading,
         modifier = Modifier.height(30.dp),
     )
 }
@@ -1145,24 +1797,38 @@ private fun MerchantBadge() {
     ) { Text("تاجر", color = Color.White, style = MaterialTheme.typography.labelSmall) }
 }
 
+/** A currency's note / coin picture and symbol, e.g. as a field's trailing tag. */
+@Composable
+private fun CurrencyTag(c: Currency, vm: PosViewModel) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        CurrencyArt(c.code, vm.imageOf(c), height = 14.dp)
+        Text(c.symbol, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+    }
+}
+
 @Composable
 private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustomer: () -> Unit, onEditRates: () -> Unit, modifier: Modifier = Modifier) {
     val t = vm.totals
     val inv = vm.currency
     val rate = vm.rateOf(inv) ?: BigDecimal.ONE
     fun inInvoice(sar: BigDecimal) = Money.format(sar, inv, rate)
-    val hasCoupon = vm.couponCode.isNotBlank()
     val discountNumber = vm.discountValue.trim().toBigDecimalOrNull()
-    val discountValid = hasCoupon || vm.discountValue.isBlank() || when (vm.discountType) {
+    val discountValid = vm.discountValue.isBlank() || when (vm.discountType) {
         DiscountType.PERCENT -> discountNumber != null && discountNumber.signum() >= 0 && discountNumber <= HUNDRED
         DiscountType.AMOUNT -> discountNumber != null && discountNumber.signum() >= 0 &&
             discountNumber.stripTrailingZeros().scale() <= inv.decimals && discountNumber <= Money.convert(t.subtotal, inv, rate)
     }
-    val tendersValid = vm.tenders.all { it.amount.isBlank() || validAmount(it.amount, it.currency) != null }
+    val tendersValid = if (vm.multiCurrency) {
+        vm.tenders.all { it.amount.isBlank() || validAmount(it.amount, it.currency) != null }
+    } else {
+        vm.receivedShown.isBlank() || validAmount(vm.receivedShown, inv) != null || vm.receivedShown.toBigDecimalOrNull()?.signum() == 0
+    }
     val credit = vm.saleType == SaleType.CREDIT
-    val canSell = vm.cart.isNotEmpty() && !vm.busy && discountValid && tendersValid &&
-        // With a discount code the server knows the real total (and rejects an underpayment).
-        (if (credit) vm.customer != null else t.owed.signum() == 0 || hasCoupon)
+    val canSell = vm.cart.isNotEmpty() && !vm.busy && !vm.slipUploading && discountValid && tendersValid &&
+        (if (credit) vm.customer != null else t.owed.signum() == 0)
+    val layout = vm.layout
+    val shown = layout.shown
+    val payButtons = shown.filter { it in CheckoutButton.PAYMENT }
 
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
     Column(modifier) {
@@ -1171,6 +1837,7 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        EditBanner(vm)
 
         // ---- lines (own scroll, capped so the form stays visible)
         Section {
@@ -1187,81 +1854,46 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
             }
         }
 
-        // ---- currency, sale type and rates
-        Section {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                vm.currencies.forEach { c ->
-                    SmallChip(c.symbol, selected = c == inv) { vm.pickCurrency(c) }
+        // ---- the employee's own order of buttons and sections
+        // The payment buttons share one row, placed where the first of them is.
+        val payAnchor = payButtons.firstOrNull()
+        shown.forEach { b ->
+            key(b.id) {
+                when (b) {
+                    CheckoutButton.CURRENCY -> CurrencySection(vm, canEditRates, onEditRates)
+                    CheckoutButton.CASH, CheckoutButton.TRANSFER, CheckoutButton.DEPOSIT, CheckoutButton.CREDIT -> if (b == payAnchor) {
+                        Section { PayMethodSection(vm, payButtons) }
+                    }
+                    CheckoutButton.CUSTOMER -> CustomerSection(vm, credit, onNewCustomer)
+                    CheckoutButton.DISCOUNT -> DiscountSection(vm, discountValid)
+                    CheckoutButton.AMOUNT -> Section {
+                        TotalsRows(vm, t)
+                        HorizontalDivider(color = Lux.Hairline)
+                        if (vm.multiCurrency) TenderFieldsSection(vm) else ReceivedField(vm, credit, tendersValid)
+                        PaymentSummary(vm, t, credit)
+                    }
+                    CheckoutButton.MULTI -> OutlinedButton(
+                        onClick = { vm.setMulti(!vm.multiCurrency) },
+                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    ) { Text(if (vm.multiCurrency) "الدفع بعملة واحدة" else "الدفع بأكثر من عملة", style = MaterialTheme.typography.labelLarge) }
+                    CheckoutButton.NOTE -> Section {
+                        CompactField(
+                            value = vm.note,
+                            onValueChange = { vm.note = it.take(300) },
+                            placeholder = "ملاحظة على الفاتورة (اختياري)",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    CheckoutButton.PRINT -> PrintToggle(vm)
                 }
-                Spacer(Modifier.width(6.dp))
-                SmallChip("نقداً", selected = !credit) { vm.saleType = SaleType.CASH; vm.checkoutError = null }
-                SmallChip("آجل", selected = credit) { vm.saleType = SaleType.CREDIT; vm.checkoutError = null }
-            }
-            val rateLine = vm.currencies.filter { !it.isBase }.mapNotNull { c -> vm.rateOf(c)?.let { "${Money.plain(it, c)}" } }
-            if (rateLine.isNotEmpty() || canEditRates) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (rateLine.isEmpty()) "لا توجد أسعار صرف" else "1 ر.س = ${rateLine.joinToString(" · ")}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Lux.InkSoft,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (canEditRates) SmallLink("تعديل السعر", onClick = onEditRates)
-                }
+                Unit
             }
         }
-
-        // ---- customer
-        CustomerSection(vm, credit, onNewCustomer)
-
-        // ---- discount and totals
-        Section {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("خصم", style = MaterialTheme.typography.labelLarge)
-                SmallChip("%", selected = vm.discountType == DiscountType.PERCENT) { vm.discountType = DiscountType.PERCENT }
-                SmallChip("مبلغ", selected = vm.discountType == DiscountType.AMOUNT) { vm.discountType = DiscountType.AMOUNT }
-                CompactField(
-                    value = vm.discountValue,
-                    onValueChange = { vm.discountValue = decimalInput(it) },
-                    placeholder = if (vm.discountType == DiscountType.PERCENT) "النسبة %" else "المبلغ (${inv.symbol})",
-                    isError = !discountValid,
-                    keyboardType = KeyboardType.Decimal,
-                    enabled = !hasCoupon,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("كود خصم", style = MaterialTheme.typography.labelLarge)
-                CompactField(
-                    value = vm.couponCode,
-                    onValueChange = vm::editCoupon,
-                    placeholder = "أدخل الكود (بدلاً من الخصم اليدوي)",
-                    trailing = if (hasCoupon) ({ SmallIcon(Icons.Filled.Close, "مسح الكود") { vm.editCoupon("") } }) else null,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (hasCoupon) Text("يُحسب الخصم عند إتمام البيع", style = MaterialTheme.typography.labelSmall, color = Lux.GoldDeep)
-            CompactRow("المجموع", inInvoice(t.subtotal))
-            if (t.discount.signum() > 0) CompactRow("الخصم", "− ${inInvoice(t.discount)}", MaterialTheme.colorScheme.error)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("الإجمالي", style = MaterialTheme.typography.titleSmall)
-                    if (!inv.isBase) Text("يعادل ${Money.formatBase(t.total.toPlainString())}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
-                }
-                Box(
-                    Modifier.clip(RoundedCornerShape(50)).background(Lux.GoldBrush).padding(horizontal = 12.dp, vertical = 4.dp),
-                ) { Text(inInvoice(t.total), color = Color.White, style = MaterialTheme.typography.titleSmall) }
-            }
-        }
-
-        // ---- how the money comes in, then the amounts
-        Section {
-            PayMethodSection(vm)
-            HorizontalDivider(color = Lux.Hairline)
-            TendersSection(vm, t, credit)
-        }
+        // A credit sale needs the customer even when the customer section is hidden; bank payments need their details.
+        if (!layout.isShown(CheckoutButton.CUSTOMER) && (credit || vm.customer != null)) CustomerSection(vm, credit, onNewCustomer)
+        if (payButtons.isEmpty() && vm.payMethod != PayMethod.CASH) Section { PayMethodSection(vm, emptyList()) }
     }
     // ---- submit (always visible)
     GlassCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), contentPadding = 10.dp) {
@@ -1269,14 +1901,15 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
         val hint = when {
             vm.cart.isEmpty() -> "أضف منتجات أولاً"
             credit && vm.customer == null -> "اختر حساب العميل للبيع الآجل"
-            !credit && t.owed.signum() > 0 && !hasCoupon -> "المتبقي ${inInvoice(t.owed)} — أكمل المبلغ أو اختر آجل"
+            vm.slipUploading -> "جارٍ رفع صورة الإيصال…"
+            !credit && t.owed.signum() > 0 -> "المتبقي ${inInvoice(t.owed)} — أكمل المبلغ أو اختر آجل"
             else -> null
         }
         hint?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp)) }
         LuxButton(
             when {
                 vm.busy -> "جارٍ الحفظ…"
-                hasCoupon -> "إتمام الفاتورة (مع كود الخصم)"
+                vm.editing != null -> "حفظ التعديل · ${inInvoice(t.total)}"
                 else -> "إتمام الفاتورة · ${inInvoice(t.total)}"
             },
             onClick = vm::sell,
@@ -1285,6 +1918,91 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
         )
     }
     }
+    }
+}
+
+/** Invoice currency chips and today's rates. */
+@Composable
+private fun CurrencySection(vm: PosViewModel, canEditRates: Boolean, onEditRates: () -> Unit) {
+    Section {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            vm.currencies.forEach { c ->
+                SmallChip(c.symbol, selected = c == vm.currency, leading = { CurrencyArt(c.code, vm.imageOf(c), height = 14.dp) }) { vm.pickCurrency(c) }
+            }
+        }
+        val rateLine = vm.currencies.filter { !it.isBase }.mapNotNull { c -> vm.rateOf(c)?.let { Money.plain(it, c) } }
+        if (rateLine.isNotEmpty() || canEditRates) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (rateLine.isEmpty()) "لا توجد أسعار صرف" else "1 ر.س = ${rateLine.joinToString(" · ")}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Lux.InkSoft,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (canEditRates) SmallLink("تعديل السعر", onClick = onEditRates)
+            }
+        }
+    }
+}
+
+/** The typed invoice discount (% or amount). */
+@Composable
+private fun DiscountSection(vm: PosViewModel, valid: Boolean) {
+    Section {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("خصم", style = MaterialTheme.typography.labelLarge)
+            SmallChip("%", selected = vm.discountType == DiscountType.PERCENT) { vm.editDiscount(type = DiscountType.PERCENT) }
+            SmallChip("مبلغ", selected = vm.discountType == DiscountType.AMOUNT) { vm.editDiscount(type = DiscountType.AMOUNT) }
+            CompactField(
+                value = vm.discountValue,
+                onValueChange = { vm.editDiscount(value = it) },
+                placeholder = if (vm.discountType == DiscountType.PERCENT) "النسبة %" else "المبلغ (${vm.currency.symbol})",
+                isError = !valid,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** Subtotal, discount and total of the invoice. */
+@Composable
+private fun TotalsRows(vm: PosViewModel, t: PosTotals) {
+    val inv = vm.currency
+    val rate = vm.rateOf(inv) ?: BigDecimal.ONE
+    CompactRow("المجموع", Money.format(t.subtotal, inv, rate))
+    if (t.discount.signum() > 0) CompactRow("الخصم", "− ${Money.format(t.discount, inv, rate)}", MaterialTheme.colorScheme.error)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("الإجمالي", style = MaterialTheme.typography.titleSmall)
+            if (!inv.isBase) Text("يعادل ${Money.formatBase(t.total.toPlainString())}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+        }
+        CurrencyArt(inv.code, vm.imageOf(inv), height = 18.dp)
+        Spacer(Modifier.width(6.dp))
+        Box(
+            Modifier.clip(RoundedCornerShape(50)).background(Lux.GoldBrush).padding(horizontal = 12.dp, vertical = 4.dp),
+        ) { Text(Money.format(t.total, inv, rate), color = Color.White, style = MaterialTheme.typography.titleSmall) }
+    }
+}
+
+/** One received-amount field in the invoice currency; less than due becomes a discount. */
+@Composable
+private fun ReceivedField(vm: PosViewModel, credit: Boolean, valid: Boolean) {
+    val inv = vm.currency
+    Text(if (credit) "المدفوع الآن (والباقي على حساب العميل)" else "المبلغ المستلم", style = MaterialTheme.typography.labelLarge)
+    CompactField(
+        value = vm.receivedShown,
+        onValueChange = vm::editReceived,
+        placeholder = if (credit) "دفعة مقدمة (اختياري) ${inv.symbol}" else "المبلغ المستلم (${inv.symbol})",
+        isError = !valid,
+        keyboardType = KeyboardType.Decimal,
+        trailing = { CurrencyTag(inv, vm) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    vm.receivedDiscount?.let { d ->
+        Text("خصم: ${Money.plain(d, inv)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1347,11 +2065,19 @@ private fun CartLineRow(l: CartLine, vm: PosViewModel, inv: Currency, rate: BigD
     }
 }
 
+/** Payment buttons (in the employee's order), then bank details and the slip photo for a transfer / deposit. */
 @Composable
-private fun PayMethodSection(vm: PosViewModel) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        PayMethod.entries.forEach { m ->
-            SmallChip(m.label, selected = vm.payMethod == m) { vm.payMethod = m; vm.checkoutError = null }
+private fun PayMethodSection(vm: PosViewModel, buttons: List<CheckoutButton>) {
+    if (buttons.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            buttons.forEach { b ->
+                val method = b.payMethod
+                if (method != null) {
+                    SmallChip(b.label, selected = vm.payMethod == method) { vm.pickPayMethod(method) }
+                } else {
+                    SmallChip(b.label, selected = vm.saleType == SaleType.CREDIT, onClick = vm::toggleCredit)
+                }
+            }
         }
     }
     if (vm.payMethod != PayMethod.CASH) {
@@ -1361,8 +2087,10 @@ private fun PayMethodSection(vm: PosViewModel) {
             placeholder = if (vm.payMethod == PayMethod.DEPOSIT) "رقم سند الإيداع" else "رقم الحوالة / المرجع",
             modifier = Modifier.fillMaxWidth(),
         )
+        SlipPhoto(vm)
         // One bank account per currency being paid in.
-        val used = vm.tenders.filter { it.amount.isNotBlank() }.map { it.currency }.ifEmpty { listOf(vm.currency) }.distinct()
+        val paid = if (vm.multiCurrency) vm.tenders.filter { it.amount.isNotBlank() }.map { it.currency } else listOf(vm.currency)
+        val used = paid.ifEmpty { listOf(vm.currency) }.distinct()
         used.forEach { c ->
             val options = vm.banks.filter { it.currency == c }
             if (options.isEmpty()) {
@@ -1378,6 +2106,144 @@ private fun PayMethodSection(vm: PosViewModel) {
                 }
             }
         }
+    }
+}
+
+/** "تصوير الإيصال": camera or gallery, uploaded at once; thumbnail with remove. */
+@Composable
+private fun SlipPhoto(vm: PosViewModel) {
+    val picker = rememberImagePicker { bytes -> vm.uploadSlip(bytes) }
+    val preview = vm.slipPreview
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (preview != null) {
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne), contentAlignment = Alignment.Center) {
+                val bitmap = remember(preview) { BitmapFactory.decodeByteArray(preview, 0, preview.size)?.asImageBitmap() }
+                if (bitmap != null) Image(bitmap, contentDescription = "صورة الإيصال", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                if (vm.slipUploading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        vm.slipUploading -> "جارٍ رفع الإيصال…"
+                        vm.slipFileId != null -> "تم إرفاق صورة الإيصال ✓"
+                        else -> "صورة الإيصال"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (vm.slipFileId != null) Success else Lux.InkSoft,
+                )
+                Row {
+                    SmallLink("تغيير", enabled = !vm.slipUploading, onClick = picker.fromCamera)
+                    SmallLink("إزالة", enabled = !vm.slipUploading, onClick = vm::removeSlip)
+                }
+            }
+        } else {
+            SmallLink("تصوير الإيصال", onClick = picker.fromCamera)
+            SmallLink("من المعرض", onClick = picker.fromGallery)
+        }
+    }
+}
+
+/** Print this sale's receipt after checkout (default: the printer's automatic setting). */
+@Composable
+private fun PrintToggle(vm: PosViewModel) {
+    val settings by adminContainer().printers.settings.collectAsStateWithLifecycle()
+    val on = vm.printAfterSale ?: settings.receipt.autoPrint
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SmallChip("طباعة الفاتورة بعد البيع", selected = on) { vm.printAfterSale = !on }
+        if (on && !settings.receipt.target.isSet) {
+            Text("لم تُضبط طابعة الفواتير", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+/** Several tender fields, one per currency (two per row). */
+@Composable
+private fun TenderFieldsSection(vm: PosViewModel) {
+    var adding by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("المدفوع بأكثر من عملة", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        val more = vm.currencies.filter { c -> vm.tenders.none { it.currency == c } }
+        if (more.isNotEmpty()) {
+            Box {
+                SmallLink("+ عملة", onClick = { adding = true })
+                DropdownMenu(expanded = adding, onDismissRequest = { adding = false }) {
+                    more.forEach { c ->
+                        DropdownMenuItem(
+                            text = { Text("${c.nameAr} (${c.symbol})") },
+                            leadingIcon = { CurrencyArt(c.code, vm.imageOf(c), height = 16.dp) },
+                            onClick = {
+                                vm.addTender(c)
+                                adding = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+    val defaults = setOf(Currency.SAR, Currency.YER, vm.currency)
+    // Two tender fields per row (SAR and YER side by side by default).
+    vm.tenders.withIndex().chunked(2).forEach { pair ->
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            pair.forEach { (i, tender) ->
+                val c = tender.currency
+                Column(Modifier.weight(1f)) {
+                    CompactField(
+                        value = tender.amount,
+                        onValueChange = { vm.setTender(i, it) },
+                        placeholder = if (c.decimals == 0) "${c.nameAr} بدون كسور" else c.nameAr,
+                        isError = tender.amount.isNotBlank() && validAmount(tender.amount, c) == null,
+                        keyboardType = KeyboardType.Decimal,
+                        trailing = { CurrencyTag(c, vm) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SmallLink("المتبقي") { vm.fillRemaining(i) }
+                        Spacer(Modifier.weight(1f))
+                        if (c !in defaults) SmallLink("حذف") { vm.removeTender(i) }
+                    }
+                }
+            }
+            if (pair.size == 1) Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+/** What is still owed (or put on the account), or the change to hand back and its currency. */
+@Composable
+private fun PaymentSummary(vm: PosViewModel, t: PosTotals, credit: Boolean) {
+    val inv = vm.currency
+    val rate = vm.rateOf(inv) ?: BigDecimal.ONE
+    val others = vm.currencies.filter { it != inv }
+    when {
+        t.owed.signum() > 0 -> {
+            CompactRow(
+                if (credit) "على حساب العميل" else "المتبقي",
+                Money.format(t.owed, inv, rate),
+                valueColor = if (credit) Lux.GoldDeep else MaterialTheme.colorScheme.error,
+            )
+            Equivalents(t.owed, others, vm)
+        }
+        t.change.signum() > 0 -> {
+            val changeCur = vm.changeIn
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("الباقي للعميل", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                CurrencyArt(changeCur.code, vm.imageOf(changeCur), height = 16.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(Money.plain(t.changeAmount, changeCur), style = MaterialTheme.typography.bodySmall, color = Success, fontWeight = FontWeight.SemiBold)
+            }
+            Equivalents(t.change, vm.currencies.filter { it != changeCur }, vm)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("عملة الباقي:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
+                vm.currencies.forEach { c ->
+                    SmallChip(c.symbol, selected = c == changeCur, leading = { CurrencyArt(c.code, vm.imageOf(c), height = 12.dp) }) { vm.changeCurrency = c }
+                }
+            }
+        }
+        vm.cart.isNotEmpty() -> CompactRow("المتبقي", Money.format(BigDecimal.ZERO, inv, rate), valueColor = Success)
     }
 }
 
@@ -1462,80 +2328,6 @@ private fun CustomerSection(vm: PosViewModel, credit: Boolean, onNewCustomer: ()
                 SmallLink("+ عميل جديد", onClick = onNewCustomer)
             }
         }
-    }
-}
-
-@Composable
-private fun TendersSection(vm: PosViewModel, t: PosTotals, credit: Boolean) {
-    val inv = vm.currency
-    val rate = vm.rateOf(inv) ?: BigDecimal.ONE
-    var adding by remember { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("المدفوع", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-        val more = vm.currencies.filter { c -> vm.tenders.none { it.currency == c } }
-        if (more.isNotEmpty()) {
-            Box {
-                SmallLink("+ عملة", onClick = { adding = true })
-                DropdownMenu(expanded = adding, onDismissRequest = { adding = false }) {
-                    more.forEach { c ->
-                        DropdownMenuItem(text = { Text("${c.nameAr} (${c.symbol})") }, onClick = {
-                            vm.addTender(c)
-                            adding = false
-                        })
-                    }
-                }
-            }
-        }
-    }
-    val defaults = setOf(Currency.SAR, Currency.YER)
-    // Two tender fields per row (SAR and YER side by side by default).
-    vm.tenders.withIndex().chunked(2).forEach { pair ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            pair.forEach { (i, tender) ->
-                val c = tender.currency
-                Column(Modifier.weight(1f)) {
-                    CompactField(
-                        value = tender.amount,
-                        onValueChange = { vm.setTender(i, it) },
-                        placeholder = if (c.decimals == 0) "${c.nameAr} (${c.symbol}) بدون كسور" else "${c.nameAr} (${c.symbol})",
-                        isError = tender.amount.isNotBlank() && validAmount(tender.amount, c) == null,
-                        keyboardType = KeyboardType.Decimal,
-                        trailing = { Text(c.symbol, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SmallLink("المتبقي") { vm.fillRemaining(i) }
-                        Spacer(Modifier.weight(1f))
-                        if (c !in defaults) SmallLink("حذف") { vm.removeTender(i) }
-                    }
-                }
-            }
-            if (pair.size == 1) Spacer(Modifier.weight(1f))
-        }
-    }
-    val others = vm.currencies.filter { it != inv }
-    when {
-        t.owed.signum() > 0 -> {
-            CompactRow(
-                if (credit) "على حساب العميل" else "المتبقي",
-                Money.format(t.owed, inv, rate),
-                valueColor = if (credit) Lux.GoldDeep else MaterialTheme.colorScheme.error,
-            )
-            Equivalents(t.owed, others, vm)
-        }
-        t.change.signum() > 0 -> {
-            val changeCur = vm.changeIn
-            CompactRow("الباقي للعميل", Money.plain(t.changeAmount, changeCur), valueColor = Success)
-            Equivalents(t.change, vm.currencies.filter { it != changeCur }, vm)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text("عملة الباقي:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
-                vm.currencies.forEach { c -> SmallChip(c.symbol, selected = c == changeCur) { vm.changeCurrency = c } }
-            }
-        }
-        vm.cart.isNotEmpty() -> CompactRow("المتبقي", Money.format(BigDecimal.ZERO, inv, rate), valueColor = Success)
     }
 }
 
@@ -1631,12 +2423,20 @@ internal fun QuickCustomerDialog(onDismiss: () -> Unit, onCreate: (String, Strin
 }
 
 @Composable
-private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit, printing: Boolean, printStatus: String?, onPrint: () -> Unit) {
+private fun ReceiptDialog(
+    r: PosReceipt,
+    title: String,
+    confirmText: String,
+    onNewSale: () -> Unit,
+    printing: Boolean,
+    printStatus: String?,
+    onPrint: () -> Unit,
+) {
     val cur = r.currency
     fun inCur(v: String) = Money.plain(Money.parse(v), cur)
     AlertDialog(
         onDismissRequest = {},
-        title = { Text("تمت عملية البيع ✓") },
+        title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 SummaryRow("رقم الفاتورة", r.number, strong = true)
@@ -1684,7 +2484,7 @@ private fun ReceiptDialog(r: PosReceipt, onNewSale: () -> Unit, printing: Boolea
             Button(
                 onClick = onNewSale,
                 shape = RoundedCornerShape(16.dp),
-            ) { Text("بيع جديد") }
+            ) { Text(confirmText) }
         },
         dismissButton = {
             TextButton(onClick = onPrint, enabled = !printing) { Text(if (printing) "جارٍ الطباعة…" else "طباعة الفاتورة") }

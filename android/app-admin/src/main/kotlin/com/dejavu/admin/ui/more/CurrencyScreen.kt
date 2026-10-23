@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +55,7 @@ import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.CurrencyRequest
 import com.dejavu.core.admin.ExchangeRates
 import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.model.Currencies
@@ -62,10 +65,12 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDateTime
+import com.dejavu.core.ui.media.rememberImagePicker
 import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,13 +88,15 @@ private val CurrencyRate.currency: Currency get() = Currency.of(code.code)
 
 private val CurrencyRate.title: String get() = nameAr ?: currency.nameAr
 
-class CurrencyViewModel(private val repo: FinanceRepository) : BaseViewModel() {
+class CurrencyViewModel(private val repo: FinanceRepository, private val inventory: InventoryRepository) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<Currencies>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
     private val _history = MutableStateFlow<Load<List<ExchangeRates.Entry>>>(Load.Loading)
     val history = _history.asStateFlow()
+    private val _uploading = MutableStateFlow(false)
+    val uploading = _uploading.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
@@ -120,6 +127,16 @@ class CurrencyViewModel(private val repo: FinanceRepository) : BaseViewModel() {
         }
     }
 
+    /** Uploads a photo of the note / coin and hands back its URL (saved with the currency later). */
+    fun uploadPicture(bytes: ByteArray, done: (String) -> Unit) {
+        if (_uploading.value) return
+        _uploading.value = true
+        viewModelScope.launch {
+            inventory.uploadImage(bytes).orSay()?.let { done(it.url) }
+            _uploading.value = false
+        }
+    }
+
     fun loadHistory(code: String) {
         _history.value = Load.Loading
         viewModelScope.launch { _history.value = repo.rateHistory(code).toLoad() }
@@ -142,7 +159,7 @@ class CurrencyViewModel(private val repo: FinanceRepository) : BaseViewModel() {
 /** Currencies the store works with, their rates against SAR, and which ones shoppers see. */
 @Composable
 fun CurrencyScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel { CurrencyViewModel(it.finance) }
+    val vm = adminViewModel { CurrencyViewModel(it.finance, it.inventory) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -210,7 +227,7 @@ fun CurrencyScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
     }
 
     rateFor?.let { c -> RateDialog(c, busy, onDismiss = { rateFor = null }) { rate, note -> vm.setRate(c.code.code, rate, note) { rateFor = null } } }
-    editing?.let { c -> EditCurrencyDialog(c, busy, onDismiss = { editing = null }) { req -> vm.update(c.code.code, req) { editing = null } } }
+    editing?.let { c -> EditCurrencyDialog(c, busy, vm, onDismiss = { editing = null }) { req -> vm.update(c.code.code, req) { editing = null } } }
     historyFor?.let { c -> HistoryDialog(c, vm, onDismiss = { historyFor = null }) }
     if (adding) AddCurrencyDialog(busy, onDismiss = { adding = false }) { req -> vm.create(req) { adding = false } }
 }
@@ -229,6 +246,7 @@ private fun CurrencyCard(
     val cur = c.currency
     GlassCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CurrencyArt(c.code.code, c.imageUrl, height = 32.dp)
             Column(Modifier.weight(1f)) {
                 Text(c.title, style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -311,7 +329,11 @@ private fun RateDialog(c: CurrencyRate, busy: Boolean, onDismiss: () -> Unit, on
 }
 
 @Composable
-private fun EditCurrencyDialog(c: CurrencyRate, busy: Boolean, onDismiss: () -> Unit, onSave: (CurrencyRequest) -> Unit) {
+private fun EditCurrencyDialog(c: CurrencyRate, busy: Boolean, vm: CurrencyViewModel, onDismiss: () -> Unit, onSave: (CurrencyRequest) -> Unit) {
+    val uploading by vm.uploading.collectAsStateWithLifecycle()
+    // The picture: the current one, a new upload, or "" for the built-in drawing.
+    var imageUrl by rememberSaveable { mutableStateOf(c.imageUrl.orEmpty()) }
+    val picker = rememberImagePicker(maxSide = 800) { bytes -> vm.uploadPicture(bytes) { imageUrl = it } }
     var nameAr by rememberSaveable { mutableStateOf(c.title) }
     var nameEn by rememberSaveable { mutableStateOf(c.nameEn.orEmpty()) }
     var symbol by rememberSaveable { mutableStateOf(c.symbol ?: c.currency.symbol) }
@@ -330,11 +352,21 @@ private fun EditCurrencyDialog(c: CurrencyRate, busy: Boolean, onDismiss: () -> 
                 TextInput("الرمز", symbol) { symbol = it.take(10) }
                 TextInput("الخانات العشرية (0–4)", decimals, number = true) { decimals = it }
                 TextInput("ترتيب العرض", sortOrder, number = true) { sortOrder = it }
+                Text("صورة العملة", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CurrencyArt(c.code.code, imageUrl.ifBlank { null }, height = 44.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        OutlinedButton(onClick = picker.fromGallery, enabled = !uploading && !busy) {
+                            if (uploading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("رفع صورة")
+                        }
+                        if (imageUrl.isNotBlank()) TextButton(onClick = { imageUrl = "" }, enabled = !uploading) { Text("استخدام الصورة الافتراضية") }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                enabled = valid && !busy,
+                enabled = valid && !busy && !uploading,
                 onClick = {
                     onSave(
                         CurrencyRequest(
@@ -343,6 +375,8 @@ private fun EditCurrencyDialog(c: CurrencyRate, busy: Boolean, onDismiss: () -> 
                             symbol = symbol.trim(),
                             decimals = dec,
                             sortOrder = sort,
+                            // Only sent when changed; "" removes the uploaded picture.
+                            imageUrl = imageUrl.takeIf { it != c.imageUrl.orEmpty() },
                         ),
                     )
                 },

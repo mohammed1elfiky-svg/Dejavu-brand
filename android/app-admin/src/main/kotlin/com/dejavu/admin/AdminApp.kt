@@ -11,7 +11,10 @@ class AdminApp : Application() {
         super.onCreate()
         container = AdminContainer(this)
         container.start()
+        com.dejavu.admin.ui.pos.OfflineSales.scheduleIfPending(this)
         // SMS gateway switched on for this phone: run it whenever a staff session exists.
         SmsGateway.watch(this)
+        // Daily automatic backup switched on: keep its work scheduled.
+        com.dejavu.admin.ui.system.AutoBackup.restoreSchedule(this)
     }
 }

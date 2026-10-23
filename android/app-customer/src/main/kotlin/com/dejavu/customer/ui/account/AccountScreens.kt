@@ -96,6 +96,7 @@ import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -218,7 +219,12 @@ private fun CurrencyRow() {
         title = "العملة: ${selected.nameAr}",
         subtitle = selectedRate?.takeIf { !selected.isBase }?.let { r -> "1 ${Currency.SAR.symbol} = ${Money.plain(r, selected)}" },
         leading = { GoldIconCircle(Icons.Filled.ShoppingCart) },
-        trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Liquid.GoldDeep) },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                CurrencyArt(selected.code, rates?.rate(selected)?.imageUrl, height = 22.dp)
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Liquid.GoldDeep)
+            }
+        },
         onClick = { open = true },
     )
     if (open) {
@@ -235,6 +241,7 @@ private fun CurrencyRow() {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(selected = c == selected, onClick = null, enabled = usable, colors = RadioButtonDefaults.colors(selectedColor = Liquid.GoldDeep))
+                            CurrencyArt(c.code, rates?.rate(c)?.imageUrl, height = 22.dp, modifier = Modifier.padding(horizontal = 8.dp))
                             Column {
                                 Text("${c.nameAr} (${c.symbol})")
                                 if (!c.isBase && rate != null) {

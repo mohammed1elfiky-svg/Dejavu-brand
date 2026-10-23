@@ -2,7 +2,20 @@
 
 package com.dejavu.admin.ui.finance
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import com.dejavu.core.admin.AccountBalance
+import com.dejavu.core.admin.AccountEntry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +37,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -34,6 +49,9 @@ import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -89,6 +107,8 @@ import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.InventoryValuation
 import com.dejavu.core.admin.LedgerAccount
 import com.dejavu.core.admin.PendingCod
+import com.dejavu.core.admin.ProductsReport
+import com.dejavu.core.admin.ReorderReport
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.ReportSection
 import com.dejavu.core.admin.RevenueReport
@@ -104,6 +124,7 @@ import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
+import com.dejavu.core.ui.ProductImage
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDate
@@ -117,8 +138,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import android.graphics.Color as AndroidColor
 import java.math.RoundingMode
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 // ------------------------------------------------------------ settlements ---
 
@@ -266,18 +292,31 @@ fun SettlementsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
 
 // --------------------------------------------------------------- reports ---
 
+/** Quick ranges for the reports. */
 enum class Period(val label: String) {
+    TODAY("اليوم"),
     THIS_MONTH("هذا الشهر"),
     LAST_MONTH("الشهر الماضي"),
-    THIS_YEAR("هذا العام");
+    THIS_YEAR("هذه السنة");
 
-    /** Inclusive ISO `from`/`to` dates. */
-    fun range(today: LocalDate = LocalDate.now()): Pair<String, String> = when (this) {
-        THIS_MONTH -> today.withDayOfMonth(1) to today
-        LAST_MONTH -> today.minusMonths(1).withDayOfMonth(1).let { it to it.withDayOfMonth(it.lengthOfMonth()) }
-        THIS_YEAR -> today.withDayOfYear(1) to today
-    }.let { (a, b) -> a.toString() to b.toString() }
+    /** Inclusive `from`/`to` dates. */
+    fun range(today: LocalDate = LocalDate.now()): ReportRange = when (this) {
+        TODAY -> ReportRange(today, today)
+        THIS_MONTH -> ReportRange(today.withDayOfMonth(1), today)
+        LAST_MONTH -> today.minusMonths(1).withDayOfMonth(1).let { ReportRange(it, it.withDayOfMonth(it.lengthOfMonth())) }
+        THIS_YEAR -> ReportRange(today.withDayOfYear(1), today)
+    }
 }
+
+/** Inclusive report dates, sent to the server as yyyy-MM-dd. */
+data class ReportRange(val from: LocalDate, val to: LocalDate) {
+    val fromIso: String get() = from.toString()
+    val toIso: String get() = to.toString()
+}
+
+private val reportDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.forLanguageTag("ar"))
+
+private fun LocalDate.shown(): String = format(reportDateFormat)
 
 internal enum class SalesGroup(val key: String, val label: String) {
     PRODUCT("product", "حسب المنتج"),
@@ -296,17 +335,33 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
     val sales = _sales.asStateFlow()
     private val _revenue = MutableStateFlow<Load<RevenueReport>>(Load.Loading)
     val revenue = _revenue.asStateFlow()
+    private val _productsReport = MutableStateFlow<Load<ProductsReport>>(Load.Loading)
+    val productsReport = _productsReport.asStateFlow()
+    private val _reorderReport = MutableStateFlow<Load<ReorderReport>>(Load.Loading)
+    val reorderReport = _reorderReport.asStateFlow()
+    private val _range = MutableStateFlow(Period.THIS_MONTH.range())
 
-    var period = Period.THIS_MONTH
-        private set
+    /** The dates every period report covers. */
+    val range = _range.asStateFlow()
+
     internal var group = SalesGroup.PRODUCT
         private set
 
-    fun setPeriod(p: Period) {
-        period = p
+    /** Days without a sale for an item to count as dead stock. */
+    internal var deadDays = 60
+        private set
+
+    /** Days the suggested reorder should last. */
+    internal var coverDays = 30
+        private set
+
+    fun setRange(r: ReportRange) {
+        if (r == _range.value) return
+        _range.value = r
         _income.value = Load.Loading
         _sales.value = Load.Loading
         _revenue.value = Load.Loading
+        _productsReport.value = Load.Loading
     }
 
     internal fun setGroup(g: SalesGroup) {
@@ -314,9 +369,19 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
         _sales.value = Load.Loading
     }
 
+    internal fun setDeadDays(days: Int) {
+        deadDays = days
+        _productsReport.value = Load.Loading
+    }
+
+    internal fun setCoverDays(days: Int) {
+        coverDays = days
+        _reorderReport.value = Load.Loading
+    }
+
     fun loadIncome() {
-        val (from, to) = period.range()
-        viewModelScope.launch { _income.value = repo.incomeStatement(from, to).toLoad() }
+        val r = _range.value
+        viewModelScope.launch { repo.incomeStatement(r.fromIso, r.toIso).toLoad().let { if (r == _range.value) _income.value = it } }
     }
 
     fun loadBalance() {
@@ -324,13 +389,27 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
     }
 
     fun loadSales() {
-        val (from, to) = period.range()
-        viewModelScope.launch { _sales.value = repo.sales(group.key, from, to).toLoad() }
+        val r = _range.value
+        val g = group
+        viewModelScope.launch { repo.sales(g.key, r.fromIso, r.toIso).toLoad().let { if (r == _range.value && g == group) _sales.value = it } }
     }
 
     fun loadRevenue() {
-        val (from, to) = period.range()
-        viewModelScope.launch { _revenue.value = repo.revenue(from, to).toLoad() }
+        val r = _range.value
+        viewModelScope.launch { repo.revenue(r.fromIso, r.toIso).toLoad().let { if (r == _range.value) _revenue.value = it } }
+    }
+
+    fun loadProducts() {
+        val r = _range.value
+        val dead = deadDays
+        viewModelScope.launch {
+            repo.products(r.fromIso, r.toIso, dead, 50).toLoad().let { if (r == _range.value && dead == deadDays) _productsReport.value = it }
+        }
+    }
+
+    fun loadReorder() {
+        val cover = coverDays
+        viewModelScope.launch { repo.reorder(coverDays = cover).toLoad().let { if (cover == coverDays) _reorderReport.value = it } }
     }
 
     fun loadValuation() {
@@ -338,22 +417,34 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
     }
 }
 
+private const val INCOME_TAB = "الأرباح والخسائر"
+
+private const val BALANCE_TAB = "المركز المالي"
+
+private const val SALES_TAB = "المبيعات"
+
+private const val PRODUCTS_TAB = "الأصناف"
+
+private const val REORDER_TAB = "إعادة الطلب"
+
 @Composable
 fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val vm = adminViewModel { ReportsViewModel(it.dashboard, it.inventory) }
     val tabs = buildList {
         if (session.can(Perm.REPORTS_FINANCIAL)) {
-            add("الأرباح والخسائر")
-            add("المركز المالي")
+            add(INCOME_TAB)
+            add(BALANCE_TAB)
         }
         if (session.can(Perm.REPORTS_SALES)) {
-            add("المبيعات")
+            add(SALES_TAB)
             add(REVENUE_TAB)
+            add(PRODUCTS_TAB)
         }
+        if (session.can(REPORTS_INVENTORY)) add(REORDER_TAB)
         if (session.can(REPORTS_INVENTORY) || session.can(Perm.REPORTS_FINANCIAL)) add(INVENTORY_TAB)
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var period by remember { mutableStateOf(vm.period) }
+    val range by vm.range.collectAsStateWithLifecycle()
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar("التقارير", onBack) }) { padding ->
         Column(Modifier.padding(padding)) {
@@ -365,29 +456,73 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             PrimaryScrollableTabRow(selectedTabIndex = tab.coerceIn(tabs.indices), edgePadding = 8.dp) {
                 tabs.forEachIndexed { i, t -> Tab(selected = i == tab, onClick = { tab = i }, text = { Text(t) }) }
             }
-            if (current != "المركز المالي" && current != INVENTORY_TAB) {
-                ChipFilter(Period.entries, period, { it?.label.orEmpty() }) { p ->
-                    if (p != null) {
-                        vm.setPeriod(p)
-                        period = p
-                    }
-                }
+            if (current != BALANCE_TAB && current != INVENTORY_TAB && current != REORDER_TAB) {
+                RangeBar(range, vm::setRange)
             }
             when (current) {
-                "الأرباح والخسائر" -> IncomeTab(vm, period)
-                "المركز المالي" -> BalanceTab(vm)
+                INCOME_TAB -> IncomeTab(vm, range)
+                BALANCE_TAB -> BalanceTab(vm)
                 INVENTORY_TAB -> InventoryValueTab(vm)
-                REVENUE_TAB -> RevenueTab(vm, period)
-                else -> SalesTab(vm, period)
+                REVENUE_TAB -> RevenueTab(vm, range)
+                PRODUCTS_TAB -> ProductsTab(vm, range)
+                REORDER_TAB -> ReorderTab(vm)
+                else -> SalesTab(vm, range)
             }
         }
     }
 }
 
+/** Quick ranges (today, this month…) and a custom "from … to …" with date pickers. */
 @Composable
-private fun IncomeTab(vm: ReportsViewModel, period: Period) {
+private fun RangeBar(range: ReportRange, onChange: (ReportRange) -> Unit) {
+    // true = picking the start date, false = the end date.
+    var pickingFrom by remember { mutableStateOf<Boolean?>(null) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Period.entries.forEach { p ->
+                val r = p.range()
+                FilterChip(selected = r == range, onClick = { onChange(r) }, label = { Text(p.label) })
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { pickingFrom = true }, modifier = Modifier.weight(1f)) { Text("من تاريخ ${range.from.shown()}", maxLines = 1) }
+            OutlinedButton(onClick = { pickingFrom = false }, modifier = Modifier.weight(1f)) { Text("إلى تاريخ ${range.to.shown()}", maxLines = 1) }
+        }
+    }
+    pickingFrom?.let { from ->
+        ReportDatePicker(if (from) range.from else range.to, onDismiss = { pickingFrom = null }) { d ->
+            pickingFrom = null
+            onChange(
+                if (from) ReportRange(d, if (d.isAfter(range.to)) d else range.to)
+                else ReportRange(if (d.isBefore(range.from)) d else range.from, d),
+            )
+        }
+    }
+}
+
+/** A Material date picker for one day (the picker works in UTC midnights). */
+@Composable
+private fun ReportDatePicker(initial: LocalDate, onDismiss: () -> Unit, onPick: (LocalDate) -> Unit) {
+    val state = rememberDatePickerState(initialSelectedDateMillis = initial.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val millis = state.selectedDateMillis ?: return@TextButton
+                    onPick(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                },
+                enabled = state.selectedDateMillis != null,
+            ) { Text("تم") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    ) { DatePicker(state = state) }
+}
+
+@Composable
+private fun IncomeTab(vm: ReportsViewModel, range: ReportRange) {
     val state by vm.income.collectAsStateWithLifecycle()
-    LaunchedEffect(period) { vm.loadIncome() }
+    LaunchedEffect(range) { vm.loadIncome() }
     LoadContent(state, onRetry = vm::loadIncome) { r ->
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Section("الإيرادات", r.revenue) }
@@ -415,7 +550,7 @@ private fun BalanceTab(vm: ReportsViewModel) {
     LaunchedEffect(Unit) { vm.loadBalance() }
     LoadContent(state, onRetry = vm::loadBalance) { b ->
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { Text("حتى ${formatDate(LocalDate.now().toString())}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("حتى تاريخ ${LocalDate.now().shown()}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Section("الأصول", b.assets) }
             item { Section("الالتزامات", b.liabilities) }
             item {
@@ -441,10 +576,10 @@ private fun BalanceTab(vm: ReportsViewModel) {
 }
 
 @Composable
-private fun SalesTab(vm: ReportsViewModel, period: Period) {
+private fun SalesTab(vm: ReportsViewModel, range: ReportRange) {
     val state by vm.sales.collectAsStateWithLifecycle()
     var group by remember { mutableStateOf(vm.group) }
-    LaunchedEffect(period, group) { vm.loadSales() }
+    LaunchedEffect(range, group) { vm.loadSales() }
     Column {
         ChipFilter(SalesGroup.entries, group, { it?.label.orEmpty() }) { g ->
             if (g != null) {
@@ -490,9 +625,9 @@ private const val REVENUE_TAB = "الإيرادات"
 
 /** Till vs app sales, each split into retail and merchants (SAR, net of tax and returns). */
 @Composable
-private fun RevenueTab(vm: ReportsViewModel, period: Period) {
+private fun RevenueTab(vm: ReportsViewModel, range: ReportRange) {
     val state by vm.revenue.collectAsStateWithLifecycle()
-    LaunchedEffect(period) { vm.loadRevenue() }
+    LaunchedEffect(range) { vm.loadRevenue() }
     LoadContent(state, onRetry = vm::loadRevenue) { r ->
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -548,7 +683,7 @@ private fun InventoryValueTab(vm: ReportsViewModel) {
             item {
                 GlassCard(Modifier.fillMaxWidth()) {
                     Text("تقرير قيمة المخزون", style = MaterialTheme.typography.titleMedium)
-                    Text("حتى ${formatDate(LocalDate.now().toString())} · بالريال السعودي", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    Text("حتى تاريخ ${LocalDate.now().shown()} · بالريال السعودي", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                     HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Lux.Hairline)
                     SummaryRow("عدد الأصناف", "${v.totals.products}")
                     SummaryRow("عدد القطع", "${v.totals.pieces}")
@@ -578,6 +713,150 @@ private fun InventoryValueTab(vm: ReportsViewModel) {
                     SummaryRow("التكلفة", Money.formatBase(c.costValue))
                     SummaryRow("قيمة البيع", Money.formatBase(c.saleValue))
                     SummaryRow("الربح المتوقع", Money.formatBase(c.expectedProfit), valueColor = signColor(c.expectedProfit))
+                }
+            }
+        }
+    }
+}
+
+private fun marginText(margin: String): String = "${margin.toBigDecimalOrNull()?.setScale(1, RoundingMode.HALF_UP)?.toPlainString() ?: margin}٪"
+
+/** Best sellers with their profit, and stock that has not sold for [ReportsViewModel.deadDays]. */
+@Composable
+private fun ProductsTab(vm: ReportsViewModel, range: ReportRange) {
+    val state by vm.productsReport.collectAsStateWithLifecycle()
+    var deadDays by remember { mutableIntStateOf(vm.deadDays) }
+    LaunchedEffect(range, deadDays) { vm.loadProducts() }
+    LoadContent(state, onRetry = vm::loadProducts) { r ->
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Text("الأكثر مبيعاً", style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep) }
+            if (r.topSellers.isEmpty()) item { Text("لا توجد مبيعات في هذه الفترة", color = Lux.InkSoft) }
+            itemsIndexed(r.topSellers, key = { _, t -> "top:${t.productId}" }) { i, t ->
+                GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ProductImage(t.imageUrl, Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)), t.nameAr)
+                        Column(Modifier.weight(1f)) {
+                            Text("${i + 1}. ${t.nameAr}", style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                            Text(
+                                listOfNotNull(t.skuNumber?.let { "#$it" }, "${t.units} قطعة", "المتوفر ${t.onHand}").joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Lux.InkSoft,
+                            )
+                        }
+                        GoldPill { Text(marginText(t.margin), color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                    }
+                    SummaryRow("الإيراد", Money.formatBase(t.revenue))
+                    SummaryRow("الربح", Money.formatBase(t.grossProfit), valueColor = signColor(t.grossProfit))
+                }
+            }
+            item {
+                Column(Modifier.padding(top = 12.dp)) {
+                    Text("راكد", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+                    Text("أصناف في المخزون لم يُبع منها شيء منذ $deadDays يوماً", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        listOf(30, 60, 90).forEach { d ->
+                            FilterChip(
+                                selected = d == deadDays,
+                                onClick = {
+                                    if (d != deadDays) {
+                                        vm.setDeadDays(d)
+                                        deadDays = d
+                                    }
+                                },
+                                label = { Text("$d يوم") },
+                            )
+                        }
+                    }
+                }
+            }
+            if (r.deadStock.isEmpty()) item { Text("لا يوجد مخزون راكد", color = Lux.InkSoft) }
+            if (r.deadStock.isNotEmpty()) {
+                item {
+                    val total = r.deadStock.fold(BigDecimal.ZERO) { acc, d -> acc + Money.parse(d.stockValue) }
+                    SummaryRow("قيمة الراكد (${r.deadStock.size} صنف · ${r.deadStock.sumOf { it.onHand }} قطعة)", Money.formatBase(total.toPlainString()), strong = true)
+                }
+            }
+            items(r.deadStock, key = { "dead:${it.productId}" }) { d ->
+                GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ProductImage(d.imageUrl, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), d.nameAr)
+                        Column(Modifier.weight(1f)) {
+                            Text(d.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                            Text(
+                                "${d.onHand} قطعة · " + (d.lastSoldAt?.let { "آخر بيع ${formatDate(it)}" } ?: "لم يُبع بعد"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Lux.InkSoft,
+                            )
+                        }
+                        Text(Money.formatBase(d.stockValue), style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** What to order again: items running out soonest first, with the suggested quantity. */
+@Composable
+private fun ReorderTab(vm: ReportsViewModel) {
+    val state by vm.reorderReport.collectAsStateWithLifecycle()
+    var cover by remember { mutableIntStateOf(vm.coverDays) }
+    LaunchedEffect(cover) { vm.loadReorder() }
+    Column {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("يكفي لـ", style = MaterialTheme.typography.bodyMedium)
+            listOf(15, 30, 60).forEach { d ->
+                FilterChip(
+                    selected = d == cover,
+                    onClick = {
+                        if (d != cover) {
+                            vm.setCoverDays(d)
+                            cover = d
+                        }
+                    },
+                    label = { Text("$d يوم") },
+                )
+            }
+        }
+        LoadContent(state, onRetry = vm::loadReorder) { r ->
+            val sorted = r.items.sortedWith(compareBy<ReorderReport.Item> { it.daysLeft ?: Int.MAX_VALUE }.thenByDescending { it.perDay })
+            LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    Text(
+                        "حسب مبيعات آخر ${r.days} يوماً؛ الكمية المقترحة تكفي ${r.coverDays} يوماً بعد خصم المتوفر والقادم.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Lux.InkSoft,
+                    )
+                }
+                if (sorted.isEmpty()) item { EmptyState(Icons.Filled.CheckCircle, "لا توجد أصناف تحتاج إعادة طلب") }
+                items(sorted, key = { it.variantId }) { line ->
+                    val urgent = (line.daysLeft ?: Int.MAX_VALUE) <= 7
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ProductImage(line.imageUrl, Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)), line.nameAr)
+                            Column(Modifier.weight(1f)) {
+                                Text(line.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                                Text(
+                                    listOfNotNull(line.sku, line.color, line.size).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Lux.InkSoft,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("اطلب", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                                GoldPill { Text("${line.suggested}", color = Color.White, style = MaterialTheme.typography.titleSmall) }
+                            }
+                        }
+                        SummaryRow(
+                            "يكفي المخزون",
+                            line.daysLeft?.let { d -> "$d يوم" } ?: "—",
+                            strong = urgent,
+                            valueColor = if (urgent) MaterialTheme.colorScheme.error else Color.Unspecified,
+                        )
+                        SummaryRow("المتوفر / القادم", "${line.onHand} / ${line.incoming}")
+                        SummaryRow("المباع", "${line.sold} (${BigDecimal.valueOf(line.perDay).setScale(1, RoundingMode.HALF_UP).toPlainString()} يومياً)")
+                        line.lastSupplier?.let { s -> SummaryRow("آخر مورد", s) }
+                    }
                 }
             }
         }
@@ -714,6 +993,8 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
     val rates = _rates.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _exporting = MutableStateFlow(false)
+    val exporting = _exporting.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
@@ -802,6 +1083,39 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
         }
     }
 
+    /**
+     * Everything a statement needs: the customer, their balances and all their account entries
+     * (every page, newest first). [build] makes and shares the file; a failure is shown.
+     */
+    fun statement(build: suspend (AdminCustomerDetail, List<AccountBalance>, List<AccountEntry>) -> Unit) {
+        if (_exporting.value) return
+        _exporting.value = true
+        viewModelScope.launch {
+            val customer = (_state.value as? Load.Ready)?.value ?: repo.customer(id).orSay()
+            var first: CustomerAccount? = null
+            val entries = mutableListOf<AccountEntry>()
+            var page = 1
+            var failed = customer == null
+            while (!failed && page <= 50) {
+                val acc = repo.customerAccount(id, page).orSay()
+                if (acc == null) {
+                    failed = true
+                    break
+                }
+                if (first == null) first = acc
+                entries += acc.entries.items
+                if (!acc.entries.hasMore || acc.entries.items.isEmpty()) break
+                page++
+            }
+            val head = first
+            if (!failed && customer != null && head != null) {
+                val balances = head.balances
+                runCatching { build(customer, balances, entries) }.onFailure { say("تعذّر إنشاء كشف الحساب") }
+            }
+            _exporting.value = false
+        }
+    }
+
     /** A balance from before the system ([owes] = the customer owes the store). */
     fun openingBalance(currency: Currency, amount: String, owes: Boolean, note: String, done: () -> Unit) {
         if (_busy.value) return
@@ -826,6 +1140,8 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     val currencies by vm.currencies.collectAsStateWithLifecycle()
     val rates by vm.rates.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val exporting by vm.exporting.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val canCollect = adminContainer().session.can(Perm.POS_SELL)
     val canEdit = adminContainer().session.can(Perm.CUSTOMERS_WRITE)
     val canOpening = adminContainer().session.can("journal.write")
@@ -902,6 +1218,13 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                         onCollect = { collecting = true },
                         onOpening = if (canOpening) ({ opening = true }) else null,
                         onExchange = if (canExchange && currencies.size > 1) ({ exchanging = true }) else null,
+                        exporting = exporting,
+                        onStatement = {
+                            vm.statement { customer, balances, entries ->
+                                val file = customerStatementPdf(context, customer, balances, entries)
+                                shareStatement(context, file, "كشف حساب ${customer.name}")
+                            }
+                        },
                     )
                 }
                 item { Text("آخر الطلبات", style = MaterialTheme.typography.titleSmall) }
@@ -1002,6 +1325,8 @@ private fun CustomerAccountCard(
     onCollect: () -> Unit,
     onOpening: (() -> Unit)? = null,
     onExchange: (() -> Unit)? = null,
+    exporting: Boolean = false,
+    onStatement: (() -> Unit)? = null,
 ) {
     InfoCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1018,6 +1343,11 @@ private fun CustomerAccountCard(
                 if (onExchange != null) {
                     OutlinedButton(onClick = onExchange, modifier = Modifier.weight(1f)) { Text("مصارفة") }
                 }
+            }
+        }
+        if (onStatement != null && state is Load.Ready) {
+            OutlinedButton(onClick = onStatement, enabled = !exporting, modifier = Modifier.fillMaxWidth()) {
+                if (exporting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("كشف حساب PDF")
             }
         }
         when (state) {
@@ -1062,6 +1392,144 @@ private fun CustomerAccountCard(
             }
         }
     }
+}
+
+// ------------------------------------------------- customer statement PDF ---
+
+/**
+ * A4 statement of a customer's account: store name, customer, balance per currency and every
+ * entry (date, description, amount, currency). Drawn with Android's own text engine (as the
+ * purchase checklist is), so Arabic is shaped and laid out right to left.
+ */
+private suspend fun customerStatementPdf(
+    context: Context,
+    customer: AdminCustomerDetail,
+    balances: List<AccountBalance>,
+    entries: List<AccountEntry>,
+): File = withContext(Dispatchers.IO) {
+    val pageW = 595
+    val pageH = 842
+    val margin = 32f
+    val right = pageW - margin
+    val doc = PdfDocument()
+    val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(26, 26, 26); textSize = 11f; textAlign = Paint.Align.RIGHT }
+    val soft = Paint(ink).apply { color = AndroidColor.rgb(108, 117, 125); textSize = 10f }
+    val bold = Paint(ink).apply { typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textSize = 13f }
+    val red = Paint(ink).apply { color = AndroidColor.rgb(192, 57, 43) }
+    val green = Paint(ink).apply { color = AndroidColor.rgb(39, 129, 77) }
+    val gold = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(170, 119, 28) }
+    val line = Paint().apply { color = AndroidColor.rgb(220, 220, 220); strokeWidth = 1f }
+    val rowH = 22f
+    // Columns, right to left: date, description, amount, currency.
+    val dateX = right
+    val noteX = right - 110f
+    val amountX = margin + 150f
+    val currencyX = margin + 60f
+
+    var pageNo = 0
+    var page: PdfDocument.Page? = null
+    var y = 0f
+    fun header(c: android.graphics.Canvas) {
+        soft.textAlign = Paint.Align.RIGHT
+        c.drawText("التاريخ", dateX, y, soft)
+        c.drawText("البيان", noteX, y, soft)
+        c.drawText("المبلغ", amountX, y, soft)
+        c.drawText("العملة", currencyX, y, soft)
+        y += 6f
+        c.drawLine(margin, y, right, y, line)
+        y += rowH - 4f
+    }
+    fun newPage(withHeader: Boolean) {
+        page?.let(doc::finishPage)
+        pageNo += 1
+        page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
+        val c = page!!.canvas
+        c.drawRect(0f, 0f, pageW.toFloat(), 6f, gold)
+        bold.textSize = 20f
+        c.drawText("DEJAVU", right, margin + 18f, bold)
+        bold.textSize = 13f
+        c.drawText("كشف حساب عميل", right, margin + 40f, bold)
+        soft.textAlign = Paint.Align.LEFT
+        c.drawText("صفحة $pageNo", margin, margin + 18f, soft)
+        c.drawText(LocalDate.now().toString(), margin, margin + 34f, soft)
+        soft.textAlign = Paint.Align.RIGHT
+        y = margin + 62f
+        if (withHeader) header(c)
+    }
+    newPage(withHeader = false)
+
+    var c = page!!.canvas
+    c.drawText(customer.name, right, y, bold)
+    y += 18f
+    c.drawText(listOf(customer.code, customer.phone).filter { it.isNotBlank() }.joinToString(" · "), right, y, soft)
+    y += 24f
+    c.drawText("الأرصدة", right, y, bold)
+    y += 18f
+    val open = balances.filter { Money.parse(it.balance).signum() != 0 }
+    if (open.isEmpty()) {
+        c.drawText("لا يوجد رصيد مستحق أو دائن", right, y, ink)
+        y += rowH
+    }
+    open.forEach { b ->
+        val v = Money.parse(b.balance)
+        val label = if (v.signum() > 0) "مدين على العميل (${b.currency.nameAr})" else "رصيد للعميل (${b.currency.nameAr})"
+        c.drawText(label, right, y, ink)
+        c.drawText(statementAmount(v.abs(), b.currency), amountX, y, if (v.signum() > 0) red else green)
+        c.drawText(b.currency.nameAr, currencyX, y, ink)
+        y += rowH
+    }
+    y += 10f
+    c.drawText("الحركات (${entries.size})", right, y, bold)
+    soft.textAlign = Paint.Align.LEFT
+    c.drawText("+ عليه   − له", margin, y, soft)
+    soft.textAlign = Paint.Align.RIGHT
+    y += 18f
+    header(c)
+    if (entries.isEmpty()) {
+        c.drawText("لا توجد حركات", right, y, ink)
+        y += rowH
+    }
+    entries.forEach { e ->
+        if (y + rowH > pageH - margin) {
+            newPage(withHeader = true)
+            c = page!!.canvas
+        }
+        val v = Money.parse(e.amount)
+        c.drawText(formatDate(e.createdAt), dateX, y, ink)
+        c.drawText(fitText(sourceLabel(e.sourceType, e.note), ink, noteX - amountX - 20f), noteX, y, ink)
+        c.drawText((if (v.signum() > 0) "+" else "−") + statementAmount(v.abs(), e.currency), amountX, y, if (v.signum() > 0) red else green)
+        c.drawText(e.currency.nameAr, currencyX, y, ink)
+        y += 4f
+        c.drawLine(margin, y, right, y, line)
+        y += rowH - 4f
+    }
+    doc.finishPage(page!!)
+
+    val dir = File(context.cacheDir, "photos").apply { mkdirs() }
+    val file = File(dir, "statement-${customer.code}-${System.currentTimeMillis()}.pdf")
+    file.outputStream().use(doc::writeTo)
+    doc.close()
+    file
+}
+
+private fun statementAmount(v: BigDecimal, currency: Currency): String = v.setScale(currency.decimals, RoundingMode.HALF_UP).toPlainString()
+
+private fun fitText(text: String, paint: Paint, max: Float): String {
+    if (paint.measureText(text) <= max) return text
+    var t = text
+    while (t.length > 1 && paint.measureText("$t…") > max) t = t.dropLast(1)
+    return "$t…"
+}
+
+/** Opens the share sheet (WhatsApp, email…) for the statement, through the app's photos FileProvider. */
+private fun shareStatement(context: Context, file: File, subject: String) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.photos", file)
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("application/pdf")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .putExtra(Intent.EXTRA_SUBJECT, subject)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(send, "مشاركة كشف الحساب").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
 @Composable

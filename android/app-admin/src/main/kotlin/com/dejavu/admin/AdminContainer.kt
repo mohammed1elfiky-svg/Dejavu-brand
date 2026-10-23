@@ -13,6 +13,7 @@ import com.dejavu.core.admin.PromotionRepository
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.SmsRepository
 import com.dejavu.core.admin.CouponRepository
+import com.dejavu.core.admin.SystemRepository
 import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.admin.WalletAdminRepository
 import com.dejavu.core.admin.StaffRepository
@@ -63,6 +64,7 @@ class AdminContainer(private val context: Context) {
     val staff = StaffRepository(api)
     val sms = SmsRepository(api)
     val coupons = CouponRepository(api)
+    val system = SystemRepository(api)
 
     /** Receipt and barcode-label printers of this device. */
     val printers = PrinterStore(context)

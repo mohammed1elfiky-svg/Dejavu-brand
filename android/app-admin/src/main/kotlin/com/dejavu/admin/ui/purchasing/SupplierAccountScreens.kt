@@ -69,6 +69,7 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -107,11 +108,8 @@ private fun sourceLabel(type: String) = when (type) {
     else -> type
 }
 
-/** Currencies offered for a supplier's opening balance (plus any the account already has). */
-private val OPENING_CURRENCIES = listOf("CNY", "USD", "SAR", "YER", "YEQ")
-
-/** Assumed to have a rate in the app until the active currencies load. */
-private val DEFAULT_RATED = setOf("SAR", "YER", "YEQ", "USD")
+/** Suppliers are dealt with in yuan and dollars only; the server works out the SAR value. */
+private val OPENING_CURRENCIES = listOf("CNY", "USD")
 
 class SupplierAccountViewModel(
     private val supplierId: String,
@@ -129,10 +127,10 @@ class SupplierAccountViewModel(
     val boxes = _boxes.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
-    private val _rated = MutableStateFlow(DEFAULT_RATED)
+    private val _art = MutableStateFlow<Map<String, String>>(emptyMap())
 
-    /** Currency codes the app has an exchange rate for (the SAR value can be worked out by the server). */
-    val rated = _rated.asStateFlow()
+    /** Uploaded currency pictures by code (others use the built-in art). */
+    val art = _art.asStateFlow()
 
     fun load() {
         viewModelScope.launch { _state.value = repo.supplierAccount(supplierId).toLoad() }
@@ -144,21 +142,19 @@ class SupplierAccountViewModel(
         }
         viewModelScope.launch {
             finance.activeCurrencies().getOrNull()?.let { cs ->
-                _rated.value = cs.currencies
-                    .filter { it.isBase || it.code.isBase || (it.rate != null && !Money.isZero(it.rate)) }
-                    .map { it.code.code }
-                    .toSet() + "SAR"
+                _art.value = cs.currencies.mapNotNull { c -> c.imageUrl?.ifBlank { null }?.let { c.code.code to it } }.toMap()
             }
         }
     }
 
     /** Balance from before the system; [weOwe] = we owe the supplier, else the supplier owes us. */
-    fun openingBalance(currency: String, amount: String, weOwe: Boolean, sarAmount: String?, note: String, done: () -> Unit) = act {
+    fun openingBalance(currency: String, amount: String, weOwe: Boolean, sarAmount: String?, foreignPerUsd: String?, note: String, done: () -> Unit) = act {
         val request = SupplierOpeningBalanceRequest(
             currency = currency,
             amount = amount,
             direction = if (weOwe) "WE_OWE" else "SUPPLIER_OWES",
             sarAmount = sarAmount,
+            foreignPerUsd = if (currency == "CNY") foreignPerUsd else null,
             note = note.trim().ifBlank { null },
         )
         repo.supplierOpeningBalance(supplierId, request).orSay()?.let {
@@ -223,7 +219,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
     val name by vm.name.collectAsStateWithLifecycle()
     val boxes by vm.boxes.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
-    val rated by vm.rated.collectAsStateWithLifecycle()
+    val art by vm.art.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val canPay = session.can(Perm.SUPPLIER_PAY)
     val canOpening = canPay && session.can("journal.write")
@@ -260,10 +256,13 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                             account.balances.forEach { b ->
                                 val sign = Money.parse(b.balance).signum()
                                 val amount = inCurrency(Money.parse(b.balance).abs().toPlainString(), b.currency)
-                                when {
-                                    sign > 0 -> StatusChip("$amount · مستحق للمورد", Lux.GoldDeep)
-                                    sign < 0 -> StatusChip("$amount · مدفوع زيادة", Success)
-                                    else -> StatusChip("${b.currency} · مسدَّد", Lux.InkSoft)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    CurrencyArt(b.currency, art[b.currency], height = 20.dp)
+                                    when {
+                                        sign > 0 -> StatusChip("$amount · مستحق للمورد", Lux.GoldDeep)
+                                        sign < 0 -> StatusChip("$amount · مدفوع زيادة", Success)
+                                        else -> StatusChip("${b.currency} · مسدَّد", Lux.InkSoft)
+                                    }
                                 }
                             }
                         }
@@ -285,6 +284,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                 items(account.vouchers, key = { "v:" + it.id }) { v ->
                     VoucherCard(
                         v,
+                        art = art,
                         canEdit = canPay && !v.isCancelled && !busy,
                         onEdit = {
                             if (v.kind == SupplierVoucherKind.PAYMENT) {
@@ -310,6 +310,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                                 Text(e.note?.ifBlank { null } ?: sourceLabel(e.sourceType), style = MaterialTheme.typography.bodyMedium)
                                 Text("${formatDate(e.createdAt)} · ${sourceLabel(e.sourceType)}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
                             }
+                            CurrencyArt(e.currency, art[e.currency], height = 18.dp, modifier = Modifier.padding(end = 6.dp))
                             Text(
                                 (if (sign > 0) "+" else if (sign < 0) "−" else "") + inCurrency(Money.parse(e.amount).abs().toPlainString(), e.currency),
                                 style = MaterialTheme.typography.titleSmall,
@@ -338,15 +339,15 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                 }
             }
             if (openingOpen) {
-                val currencies = (account.balances.map { it.currency } + OPENING_CURRENCIES).distinct()
                 OpeningBalanceDialog(
-                    currencies = currencies,
+                    currencies = OPENING_CURRENCIES,
                     initial = foreign,
-                    rated = rated,
+                    lastRate = account.lastRate,
+                    art = art,
                     busy = busy,
                     onDismiss = { openingOpen = false },
-                ) { currency, amount, weOwe, sar, note ->
-                    vm.openingBalance(currency, amount, weOwe, sar, note) { openingOpen = false }
+                ) { currency, amount, weOwe, sar, rate, note ->
+                    vm.openingBalance(currency, amount, weOwe, sar, rate, note) { openingOpen = false }
                 }
             }
             deleting?.let { v ->
@@ -365,7 +366,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
 }
 
 @Composable
-private fun VoucherCard(v: SupplierVoucher, canEdit: Boolean, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun VoucherCard(v: SupplierVoucher, art: Map<String, String>, canEdit: Boolean, onEdit: () -> Unit, onDelete: () -> Unit) {
     GlassCard(Modifier.fillMaxWidth().alpha(if (v.isCancelled) 0.5f else 1f), elevation = 6.dp, contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -380,6 +381,7 @@ private fun VoucherCard(v: SupplierVoucher, canEdit: Boolean, onEdit: () -> Unit
                 }
                 Text(formatDate(v.createdAt), style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
             }
+            CurrencyArt("USD", art["USD"], height = 18.dp, modifier = Modifier.padding(end = 6.dp))
             Text(inCurrency(v.usdAmount, "USD"), style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep)
         }
         if (v.kind == SupplierVoucherKind.PAYMENT) {
@@ -478,28 +480,31 @@ private fun PaymentVoucherDialog(
     )
 }
 
-/** A balance with the supplier from before the system, in one currency. */
+/** A balance with the supplier from before the system, in yuan or dollars; the SAR value is worked out by the server. */
 @Composable
 private fun OpeningBalanceDialog(
     currencies: List<String>,
     initial: String,
-    rated: Set<String>,
+    lastRate: String?,
+    art: Map<String, String>,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onSave: (currency: String, amount: String, weOwe: Boolean, sarAmount: String?, note: String) -> Unit,
+    onSave: (currency: String, amount: String, weOwe: Boolean, sarAmount: String?, foreignPerUsd: String?, note: String) -> Unit,
 ) {
     var currency by remember { mutableStateOf(initial.takeIf { it in currencies } ?: currencies.first()) }
     var amount by remember { mutableStateOf("") }
     var weOwe by remember { mutableStateOf(true) }
     var sar by remember { mutableStateOf("") }
+    var rate by remember { mutableStateOf(lastRate?.let { accNum(it)?.let(::accPlain) }.orEmpty()) }
     var note by remember { mutableStateOf("") }
     // The server takes up to 2 decimals.
     val amountValue = accNum(amount)?.takeIf { it.signum() > 0 && it.stripTrailingZeros().scale() <= 2 }
     val sarValue = accNum(sar)?.takeIf { it.signum() > 0 && it.stripTrailingZeros().scale() <= 2 }
-    val isSar = currency == "SAR"
-    val needsSar = !isSar && (currency == "CNY" || currency !in rated)
+    val rateValue = accNum(rate)?.takeIf { it.signum() > 0 }
+    val isCny = currency == "CNY"
     val sarInvalid = sar.isNotBlank() && sarValue == null
-    val ok = amountValue != null && (!needsSar || sarValue != null) && !sarInvalid
+    val rateInvalid = isCny && rate.isNotBlank() && rateValue == null
+    val ok = amountValue != null && !sarInvalid && !rateInvalid
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("رصيد افتتاحي للمورد") },
@@ -507,7 +512,14 @@ private fun OpeningBalanceDialog(
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("العملة", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    currencies.forEach { c -> FilterChip(selected = currency == c, onClick = { currency = c }, label = { Text(c) }) }
+                    currencies.forEach { c ->
+                        FilterChip(
+                            selected = currency == c,
+                            onClick = { currency = c },
+                            label = { Text(if (c == "CNY") "اليوان" else if (c == "USD") "الدولار" else c) },
+                            leadingIcon = { CurrencyArt(c, art[c], height = 16.dp) },
+                        )
+                    }
                 }
                 AmountField("المبلغ ($currency)", amount, Modifier.fillMaxWidth()) { amount = it }
                 Text("الاتجاه", style = MaterialTheme.typography.labelLarge)
@@ -520,20 +532,26 @@ private fun OpeningBalanceDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = Lux.InkSoft,
                 )
-                if (!isSar) {
+                if (isCny) {
                     AmountField(
-                        if (needsSar) "القيمة بالريال السعودي (مطلوبة)" else "القيمة بالريال السعودي (اختياري)",
-                        sar,
+                        "سعر الدولار باليوان (اختياري)",
+                        rate,
                         Modifier.fillMaxWidth(),
-                        hint = if (needsSar) "لا يوجد سعر صرف لهذه العملة في التطبيق" else "اتركه فارغاً ليُحسب بسعر الصرف الحالي",
-                    ) { sar = it }
+                        hint = if (lastRate != null) "آخر سعر من سندات الصرف: $lastRate" else "فارغ = سعر آخر سند صرف للمورد",
+                    ) { rate = it }
                 }
+                AmountField(
+                    "القيمة بالريال السعودي (اختياري)",
+                    sar,
+                    Modifier.fillMaxWidth(),
+                    hint = "اتركه فارغاً ليُحسب تلقائياً بسعر الصرف",
+                ) { sar = it }
                 OutlinedTextField(value = note, onValueChange = { note = it.take(255) }, label = { Text("ملاحظة (اختياري)") }, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
             TextButton(enabled = ok && !busy, onClick = {
-                onSave(currency, accPlain(amountValue!!), weOwe, if (isSar) null else sarValue?.let(::accPlain), note)
+                onSave(currency, accPlain(amountValue!!), weOwe, sarValue?.let(::accPlain), if (isCny) rateValue?.let(::accPlain) else null, note)
             }) { Text("حفظ") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },

@@ -126,6 +126,17 @@ class DashboardRepository(private val api: AdminApi) {
 
     /** Revenue of till and app sales, retail and merchants (dates yyyy-MM-dd; null = this month). */
     suspend fun revenue(from: String? = null, to: String? = null) = apiCall { api.revenue(from, to) }
+
+    /** Best sellers with profit, and dead stock (no sale for [deadDays]). */
+    suspend fun products(from: String? = null, to: String? = null, deadDays: Int? = null, limit: Int? = null) = apiCall { api.productsReport(from, to, deadDays, limit) }
+
+    /** Pieces to order again so the shelf lasts [coverDays], from the last [days] of sales. */
+    suspend fun reorder(days: Int? = null, coverDays: Int? = null) = apiCall { api.reorderReport(days, coverDays) }
+
+    suspend fun dailySummary() = apiCall { api.dailySummary() }
+    suspend fun dailySummarySettings() = apiCall { api.dailySummarySettings() }
+    suspend fun saveDailySummarySettings(s: DailySummarySettings) = apiCall { api.saveDailySummarySettings(s) }
+    suspend fun sendDailySummary() = apiCall { api.sendDailySummary() }
 }
 
 class AdminOrderRepository(private val api: AdminApi) {
@@ -222,6 +233,16 @@ class InventoryRepository(private val api: AdminApi) {
             .onSuccess { categoriesCache = null }
 
     suspend fun createProduct(request: CreateProductRequest) = apiCall { api.createProduct(request) }
+
+    // stock counts (جرد): count the shelf by scanning, then post the differences
+    suspend fun stockCounts(page: Int = 1) = apiCall { api.stockCounts(page) }
+    suspend fun stockCount(id: String) = apiCall { api.stockCount(id) }
+    suspend fun createStockCount(request: CreateStockCountRequest) = apiCall { api.createStockCount(request) }
+    suspend fun postStockCount(id: String) = apiCall { api.postStockCount(id) }
+    suspend fun deleteStockCount(id: String) = apiCall {
+        val res = api.deleteStockCount(id)
+        if (!res.isSuccessful) throw HttpException(res)
+    }
 
     /** Replaces the product's images with [images] (at most 10), in order. */
     suspend fun setImages(id: String, images: List<ImageRequest>) = apiCall { api.replaceImages(id, ImagesRequest(images)) }
@@ -399,6 +420,32 @@ class PosRepository(private val api: AdminApi) {
     /** New app orders and top-up requests since [since] (ISO time); polled for alerts. */
     suspend fun alerts(since: String? = null) = apiCall { api.alerts(since) }
     suspend fun shift() = apiCall { api.shift() }
+
+    /** Till sales of a day (yyyy-MM-dd, null = today): your own, or everyone's with [all] (managers). */
+    suspend fun sales(date: String? = null, all: Boolean = false) = apiCall { api.posSales(date, all.takeIf { it }) }
+
+    /** Deletes a sale: money, stock and accounts are put back. */
+    suspend fun voidSale(id: String, reason: String? = null) = apiCall { api.voidSale(id, VoidSaleRequest(reason?.trim()?.ifBlank { null })) }
+
+    /** Corrects a sale: it is deleted and [request] rung up in its place; returns the new receipt. */
+    suspend fun editSale(id: String, request: PosSaleRequest) = apiCall { api.editSale(id, request) }
+
+    /** Photo of a deposit / transfer slip; send its id as PosSaleRequest.slipFileId. */
+    suspend fun uploadSlip(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadPrivate(MultipartBody.Part.createFormData("file", "slip.jpg", bytes.toRequestBody(mimeType.toMediaType())))
+    }
+
+    // shifts
+    suspend fun currentShift() = apiCall { api.currentShift() }.map { it.shift }
+    suspend fun openShift(request: OpenShiftRequest) = apiCall { api.openShift(request) }
+    suspend fun closeShift(request: CloseShiftRequest, shiftId: String? = null) =
+        apiCall { if (shiftId == null) api.closeShift(request) else api.closeShiftOf(shiftId, request) }
+    suspend fun shifts(page: Int = 1, userId: String? = null) = apiCall { api.shifts(page, userId) }
+
+    /** The signed-in employee's own checkout layout and sale currency. */
+    suspend fun settings() = apiCall { api.posSettings() }
+    suspend fun saveSettings(settings: PosSettings) = apiCall { api.savePosSettings(settings) }
+
     suspend fun quickCustomer(name: String, phone: String) = apiCall { api.quickCustomer(QuickCustomerRequest(name.trim(), phone.trim())) }
 }
 
@@ -470,4 +517,30 @@ class CouponRepository(private val api: AdminApi) {
     suspend fun list() = apiCall { api.coupons() }
     suspend fun create(request: CouponRequest) = apiCall { api.createCoupon(request) }
     suspend fun update(id: String, request: CouponRequest) = apiCall { api.updateCoupon(id, request) }
+}
+
+/** Who changed what (audit log), customers who owe, and whole-database backups. */
+class SystemRepository(private val api: AdminApi) {
+    suspend fun audit(page: Int = 1, entityType: String? = null, userId: String? = null, from: String? = null, to: String? = null) =
+        apiCall { api.auditLogs(page, 30, entityType, userId, from, to) }
+    suspend fun auditTypes() = apiCall { api.auditTypes() }
+
+    suspend fun debtors(minDays: Int? = null) = apiCall { api.debtors(minDays) }
+    suspend fun remind(customerIds: List<String>) = apiCall { api.remindDebtors(DebtRemindersRequest(customerIds)) }
+
+    /** The whole database as a gzipped JSON file; the caller copies the stream where it wants it. */
+    suspend fun backup() = apiCall { api.backup() }
+
+    /** Replaces all data with [bytes] (a backup file). [confirm] must be the restore phrase. */
+    suspend fun restore(bytes: ByteArray, confirm: String) = apiCall {
+        api.restore(
+            MultipartBody.Part.createFormData("file", "backup.json.gz", bytes.toRequestBody("application/gzip".toMediaType())),
+            confirm.toRequestBody("text/plain".toMediaType()),
+        )
+    }
+
+    companion object {
+        /** Typed to confirm a restore (as the server expects). */
+        const val RESTORE_PHRASE = "استعادة النسخة الاحتياطية"
+    }
 }

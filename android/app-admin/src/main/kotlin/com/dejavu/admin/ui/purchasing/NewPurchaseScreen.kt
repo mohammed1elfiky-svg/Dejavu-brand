@@ -102,9 +102,9 @@ import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminCategory
+import com.dejavu.core.admin.CashBox
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.InventoryRepository
-import com.dejavu.core.admin.LedgerAccount
 import com.dejavu.core.admin.LocalNewProduct
 import com.dejavu.core.admin.LocalNewVariant
 import com.dejavu.core.admin.PosProduct
@@ -114,12 +114,15 @@ import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.QuickPurchaseItem
 import com.dejavu.core.admin.QuickPurchaseRequest
 import com.dejavu.core.admin.Supplier
+import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.data.userMessage
+import com.dejavu.core.model.Currencies
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
@@ -132,7 +135,7 @@ import java.math.RoundingMode
 
 // ------------------------------------------------------------------ model ---
 
-/** One variant on the purchase invoice; [cost] is the typed SAR unit cost. */
+/** One variant on the purchase invoice; [cost] is the unit cost typed in the invoice currency (USD / CNY). */
 data class PurchaseLine(val product: PosProduct, val variant: PosVariant, val qty: Int, val cost: String = "") {
     val unitCost: BigDecimal? get() = validAmount(cost, Currency.SAR)
     val lineTotal: BigDecimal get() = (unitCost ?: BigDecimal.ZERO).multiply(BigDecimal(qty)).setScale(2, RoundingMode.HALF_UP)
@@ -145,7 +148,7 @@ data class NewPurchaseItem(
     val categoryName: String,
     /** Selling price, SAR. */
     val basePrice: String,
-    /** Purchase cost per piece, SAR. */
+    /** Purchase cost per piece, in the invoice currency (USD / CNY). */
     val cost: String,
     val imageUrl: String?,
     val variants: List<LocalNewVariant>,
@@ -165,16 +168,26 @@ data class NewPurchaseItem(
     )
 }
 
-/** How the supplier is paid now. */
+/** How the supplier is paid now: on account, or dollars from a USD box (recorded as a payment voucher). */
 enum class PurchasePay(val label: String, val wire: String?) {
     ON_ACCOUNT("على الحساب (آجل)", null),
-    CASH("نقداً", "CASH"),
-    BANK("تحويل بنكي", "BANK_TRANSFER"),
+    CASH("دفع الآن من صندوق دولار", "CASH"),
+}
+
+/** Suppliers are dealt with in dollars and yuan only; the server converts to SAR for costs and the books. */
+enum class PurchaseCurrency(val code: String, val label: String) {
+    USD("USD", "الدولار"),
+    CNY("CNY", "اليوان"),
 }
 
 private const val MAX_QTY = 100_000
 
 private fun sar(v: BigDecimal): String = Money.formatBase(v.toPlainString())
+
+private fun usd(v: BigDecimal): String = Money.plain(v, Currency.of("USD"))
+
+/** A typed positive rate (yuan per dollar), or null. */
+private fun rateOf(text: String?): BigDecimal? = text?.trim()?.replace(',', '.')?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
 
 // -------------------------------------------------------------- viewmodel ---
 
@@ -183,6 +196,7 @@ class NewPurchaseViewModel(
     private val purchasing: PurchasingRepository,
     private val finance: FinanceRepository,
     private val inventory: InventoryRepository,
+    private val treasury: TreasuryRepository,
 ) : BaseViewModel() {
     var products by mutableStateOf<Load<List<PosProduct>>>(Load.Loading)
         private set
@@ -213,11 +227,24 @@ class NewPurchaseViewModel(
     var receiveNow by mutableStateOf(true)
     var pay by mutableStateOf(PurchasePay.ON_ACCOUNT)
         private set
-    /** Paid now (SAR); blank = the whole invoice. */
+    /** Paid now, in USD; blank = the whole invoice. */
     var payAmount by mutableStateOf("")
-    var accounts by mutableStateOf<List<LedgerAccount>>(emptyList())
+    /** Active USD boxes the payment can come from. */
+    var boxes by mutableStateOf<List<CashBox>>(emptyList())
         private set
-    var accountId by mutableStateOf<String?>(null)
+    var boxId by mutableStateOf<String?>(null)
+
+    /** Currency the prices and shipping are typed in. */
+    var currency by mutableStateOf(PurchaseCurrency.USD)
+        private set
+    /** CNY: yuan per dollar, prefilled from the supplier's last payment voucher. */
+    var cnyRate by mutableStateOf("")
+    /** Yuan per dollar of the supplier's latest payment voucher (the server's fallback). */
+    var supplierLastRate by mutableStateOf<String?>(null)
+        private set
+    /** The app's currencies (rates per 1 SAR and pictures); null until loaded. */
+    var rates by mutableStateOf<Currencies?>(null)
+        private set
 
     var busy by mutableStateOf(false)
         private set
@@ -229,7 +256,13 @@ class NewPurchaseViewModel(
     init {
         load()
         searchSuppliers("")
-        viewModelScope.launch { accounts = finance.cashAccounts() }
+        viewModelScope.launch { finance.activeCurrencies().getOrNull()?.let { rates = it } }
+        viewModelScope.launch {
+            treasury.all(currency = Currency.of("USD")).getOrNull()?.let { list ->
+                boxes = list.filter { it.isActive && it.currency.code == "USD" }
+                if (boxId == null || boxes.none { it.id == boxId }) boxId = boxes.firstOrNull()?.id
+            }
+        }
         loadCategories()
     }
 
@@ -363,11 +396,24 @@ class NewPurchaseViewModel(
         supplier = s
         supplierQuery = ""
         error = null
+        supplierLastRate = null
+        viewModelScope.launch {
+            val last = purchasing.supplierAccount(s.id).getOrNull()?.lastRate
+            if (supplier?.id != s.id) return@launch
+            supplierLastRate = last
+            rateOf(last)?.let { cnyRate = it.stripTrailingZeros().toPlainString() }
+        }
     }
 
     fun clearSupplier() {
         supplier = null
+        supplierLastRate = null
         searchSuppliers("")
+    }
+
+    fun chooseCurrency(c: PurchaseCurrency) {
+        currency = c
+        error = null
     }
 
     fun createSupplier(name: String, phone: String) {
@@ -390,14 +436,35 @@ class NewPurchaseViewModel(
     fun choosePay(p: PurchasePay) {
         pay = p
         error = null
-        if (p != PurchasePay.ON_ACCOUNT) accountId = defaultAccount(p)?.id
+        if (p != PurchasePay.ON_ACCOUNT && boxId == null) boxId = boxes.firstOrNull()?.id
     }
 
-    /** First account whose name looks like a cash box (for cash) or a bank (for transfers). */
-    private fun defaultAccount(p: PurchasePay): LedgerAccount? {
-        val words = if (p == PurchasePay.BANK) listOf("بنك", "مصرف", "bank") else listOf("صندوق", "نقد", "خزينة", "خزنة", "cash")
-        return accounts.firstOrNull { a -> words.any { w -> a.nameAr.contains(w, ignoreCase = true) || a.nameEn.contains(w, ignoreCase = true) } }
-            ?: accounts.firstOrNull()
+    // ---- currency
+
+    val invoiceCurrency: Currency get() = Currency.of(currency.code)
+
+    /** An amount typed in the invoice currency, formatted in it. */
+    fun money(v: BigDecimal): String = Money.plain(v, invoiceCurrency)
+
+    fun artUrl(code: String): String? = rates?.rate(Currency.of(code))?.imageUrl
+
+    /** Yuan per dollar used for the invoice: the typed one, else the supplier's last. */
+    val yuanPerUsd: BigDecimal? get() = rateOf(cnyRate) ?: rateOf(supplierLastRate)
+
+    /** [v] (invoice currency) in dollars; null when the yuan rate is unknown. */
+    fun toUsd(v: BigDecimal): BigDecimal? = when (currency) {
+        PurchaseCurrency.USD -> v
+        PurchaseCurrency.CNY -> yuanPerUsd?.let { v.divide(it, 2, RoundingMode.HALF_UP) }
+    }
+
+    /** [v] (invoice currency) in SAR at the app's dollar rate; null when a rate is missing. */
+    fun toSar(v: BigDecimal): BigDecimal? {
+        val usdPerSar = rateOf(rates?.rate(Currency.of("USD"))?.rate) ?: return null
+        val inUsd = when (currency) {
+            PurchaseCurrency.USD -> v
+            PurchaseCurrency.CNY -> yuanPerUsd?.let { v.divide(it, 8, RoundingMode.HALF_UP) } ?: return null
+        }
+        return inUsd.divide(usdPerSar, 2, RoundingMode.HALF_UP)
     }
 
     // ---- totals
@@ -412,9 +479,17 @@ class NewPurchaseViewModel(
 
     val shippingValid: Boolean get() = shipping.isBlank() || validAmount(shipping, Currency.SAR) != null
     val costsValid: Boolean get() = lines.all { it.unitCost != null } && newItems.all { it.unitCost != null }
+
+    /** The whole invoice in dollars (what "pay all" pays); null when the yuan rate is unknown. */
+    val grandTotalUsd: BigDecimal? get() = toUsd(grandTotal)?.setScale(2, RoundingMode.HALF_UP)
+
+    /** Dollars paid now: the typed amount, else the whole invoice. */
+    val paidUsd: BigDecimal? get() = validAmount(payAmount, Currency.SAR) ?: grandTotalUsd
+
+    val rateValid: Boolean get() = currency != PurchaseCurrency.CNY || (cnyRate.isBlank() && rateOf(supplierLastRate) != null) || rateOf(cnyRate) != null
     val payAmountValid: Boolean
         get() = pay == PurchasePay.ON_ACCOUNT || payAmount.isBlank() ||
-            validAmount(payAmount, Currency.SAR)?.let { it <= grandTotal } == true
+            validAmount(payAmount, Currency.SAR)?.let { paid -> grandTotalUsd?.let { paid <= it } ?: true } == true
 
     /** Why the invoice cannot be issued yet; null when it can. */
     val blocker: String?
@@ -423,15 +498,18 @@ class NewPurchaseViewModel(
             supplier == null -> "اختر المورد"
             !costsValid -> "أدخل تكلفة الوحدة لكل صنف"
             !shippingValid -> "تكلفة الشحن غير صحيحة"
+            !rateValid -> "أدخل سعر الدولار باليوان"
             !payAmountValid -> "المبلغ المدفوع يجب ألا يتجاوز الإجمالي"
-            pay != PurchasePay.ON_ACCOUNT && accounts.isNotEmpty() && accountId == null -> "اختر الصندوق أو الحساب البنكي"
+            pay != PurchasePay.ON_ACCOUNT && boxes.isEmpty() -> "لا يوجد صندوق بالدولار — أنشئ صندوقاً بعملة USD من شاشة الخزينة"
+            pay != PurchasePay.ON_ACCOUNT && boxId == null -> "اختر صندوق الدولار"
             else -> null
         }
 
     fun submit(created: (String) -> Unit) {
         if (busy || blocker != null) return
         val s = supplier ?: return
-        val paid = validAmount(payAmount, Currency.SAR)
+        val paid = paidUsd
+        val payNow = pay != PurchasePay.ON_ACCOUNT
         val request = QuickPurchaseRequest(
             supplierId = s.id,
             items = lines.map { QuickPurchaseItem(it.variant.id, it.qty, it.unitCost!!.stripTrailingZeros().toPlainString()) },
@@ -440,9 +518,12 @@ class NewPurchaseViewModel(
             shippingCost = validAmount(shipping, Currency.SAR)?.stripTrailingZeros()?.toPlainString(),
             note = note.trim().ifBlank { null },
             receiveNow = receiveNow,
-            payMethod = pay.wire,
-            payAmount = if (pay == PurchasePay.ON_ACCOUNT) null else paid?.stripTrailingZeros()?.toPlainString(),
-            payAccountId = if (pay == PurchasePay.ON_ACCOUNT) null else accountId,
+            payMethod = if (payNow) "CASH" else null,
+            payAmount = if (payNow) paid?.stripTrailingZeros()?.toPlainString() else null,
+            payAccountId = null,
+            currency = currency.code,
+            foreignPerUsd = if (currency == PurchaseCurrency.CNY) rateOf(cnyRate)?.stripTrailingZeros()?.toPlainString() else null,
+            payBoxId = if (payNow) boxId else null,
         )
         busy = true
         error = null
@@ -466,7 +547,7 @@ class NewPurchaseViewModel(
 /** Till-style purchase: product grid on one side, the supplier's invoice on the other. */
 @Composable
 fun NewPurchaseScreen(onBack: () -> Unit, created: (String) -> Unit) {
-    val vm = adminViewModel { NewPurchaseViewModel(it.pos, it.purchasing, it.finance, it.inventory) }
+    val vm = adminViewModel { NewPurchaseViewModel(it.pos, it.purchasing, it.finance, it.inventory, it.treasury) }
     val snackbar = remember { SnackbarHostState() }
     var picking by remember { mutableStateOf<PosProduct?>(null) }
     var showInvoice by rememberSaveable { mutableStateOf(false) }
@@ -636,7 +717,8 @@ private fun InvoiceBar(vm: NewPurchaseViewModel, onOpen: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text("${vm.itemCount} صنف · ${vm.pieces} قطعة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
-                Text(sar(vm.grandTotal), style = MaterialTheme.typography.titleLarge, color = Lux.GoldDeep)
+                Text(vm.money(vm.grandTotal), style = MaterialTheme.typography.titleLarge, color = Lux.GoldDeep)
+                vm.toSar(vm.grandTotal)?.let { SarHint(it) }
             }
             LuxButton("فاتورة الشراء ←", onClick = onOpen, modifier = Modifier.width(170.dp))
         }
@@ -730,7 +812,7 @@ private fun InvoiceContent(
                             vm.newItems.forEachIndexed { i, n ->
                                 key(n.key) {
                                     if (i > 0) HorizontalDivider(color = Lux.Hairline)
-                                    NewItemRow(n, onEdit = { onEditNew(n) }, onRemove = { vm.removeNewItem(n.key) })
+                                    NewItemRow(n, money = vm::money, onEdit = { onEditNew(n) }, onRemove = { vm.removeNewItem(n.key) })
                                 }
                             }
                             vm.lines.forEachIndexed { i, l ->
@@ -749,6 +831,7 @@ private fun InvoiceContent(
                 // ---- invoice details
                 Section {
                     Text("بيانات الفاتورة", style = MaterialTheme.typography.labelLarge)
+                    CurrencySwitch(vm)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CompactField(
                             value = vm.invoiceNo,
@@ -759,10 +842,10 @@ private fun InvoiceContent(
                         CompactField(
                             value = vm.shipping,
                             onValueChange = { vm.shipping = decimalInput(it).take(14); vm.error = null },
-                            placeholder = "الشحن (ر.س)",
+                            placeholder = "الشحن (${vm.invoiceCurrency.symbol})",
                             isError = !vm.shippingValid,
                             keyboardType = KeyboardType.Decimal,
-                            trailing = { Text("ر.س", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
+                            trailing = { Text(vm.invoiceCurrency.symbol, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -796,19 +879,26 @@ private fun InvoiceContent(
                 Section {
                     CompactRow("عدد الأصناف", "${vm.itemCount}")
                     CompactRow("عدد القطع", "${vm.pieces}")
-                    CompactRow("قيمة البضاعة", sar(vm.subtotal))
-                    if (vm.shippingValue.signum() > 0) CompactRow("الشحن", sar(vm.shippingValue))
+                    CompactRow("قيمة البضاعة", vm.money(vm.subtotal))
+                    if (vm.shippingValue.signum() > 0) CompactRow("الشحن", vm.money(vm.shippingValue))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("الإجمالي", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                        GoldPill { Text(sar(vm.grandTotal), color = Color.White, style = MaterialTheme.typography.titleSmall) }
+                        GoldPill { Text(vm.money(vm.grandTotal), color = Color.White, style = MaterialTheme.typography.titleSmall) }
+                    }
+                    vm.toSar(vm.grandTotal)?.let { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { SarHint(it) } }
+                    if (vm.currency == PurchaseCurrency.CNY) {
+                        vm.grandTotalUsd?.let { CompactRow("بالدولار", usd(it)) }
                     }
                     if (vm.pay != PurchasePay.ON_ACCOUNT) {
-                        val paid = validAmount(vm.payAmount, Currency.SAR) ?: vm.grandTotal
-                        val rest = vm.grandTotal.subtract(paid).max(BigDecimal.ZERO)
-                        CompactRow("المدفوع الآن", sar(paid.min(vm.grandTotal)))
-                        if (rest.signum() > 0) CompactRow("المتبقي على الحساب", sar(rest), Lux.GoldDeep)
+                        val totalUsd = vm.grandTotalUsd
+                        val paid = vm.paidUsd
+                        if (totalUsd != null && paid != null) {
+                            val rest = totalUsd.subtract(paid).max(BigDecimal.ZERO)
+                            CompactRow("المدفوع الآن", usd(paid.min(totalUsd)))
+                            if (rest.signum() > 0) CompactRow("المتبقي على الحساب", usd(rest), Lux.GoldDeep)
+                        }
                     } else if (!vm.isEmpty) {
-                        CompactRow("على حساب المورد", sar(vm.grandTotal), Lux.GoldDeep)
+                        CompactRow("على حساب المورد", vm.money(vm.grandTotal), Lux.GoldDeep)
                     }
                 }
             }
@@ -823,7 +913,7 @@ private fun InvoiceContent(
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp))
                 }
                 LuxButton(
-                    if (vm.busy) "جارٍ الحفظ…" else "إصدار فاتورة الشراء · ${sar(vm.grandTotal)}",
+                    if (vm.busy) "جارٍ الحفظ…" else "إصدار فاتورة الشراء · ${vm.money(vm.grandTotal)}",
                     onClick = { vm.submit(onCreated) },
                     enabled = hint == null && !vm.busy,
                     modifier = Modifier.fillMaxWidth(),
@@ -875,13 +965,13 @@ private fun LineRow(l: PurchaseLine, vm: NewPurchaseViewModel) {
             CompactField(
                 value = l.cost,
                 onValueChange = { vm.setCost(l.variant.id, it) },
-                placeholder = "تكلفة الوحدة (ر.س)",
+                placeholder = "تكلفة الوحدة (${vm.invoiceCurrency.symbol})",
                 isError = l.cost.isNotBlank() && l.unitCost == null,
                 keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                sar(l.lineTotal),
+                vm.money(l.lineTotal),
                 style = MaterialTheme.typography.labelLarge,
                 color = Lux.GoldDeep,
                 textAlign = TextAlign.End,
@@ -892,7 +982,7 @@ private fun LineRow(l: PurchaseLine, vm: NewPurchaseViewModel) {
         val siblings = vm.lines.count { it.product.id == l.product.id }
         val cost = l.unitCost
         if (siblings > 1 && cost != null && vm.lines.any { it.product.id == l.product.id && it.unitCost?.compareTo(cost) != 0 }) {
-            SmallLink("تطبيق ${sar(cost)} على كل مقاسات المنتج") { vm.applyCostToProduct(l.product.id, l.cost) }
+            SmallLink("تطبيق ${vm.money(cost)} على كل مقاسات المنتج") { vm.applyCostToProduct(l.product.id, l.cost) }
         }
     }
 }
@@ -971,26 +1061,32 @@ private fun PaymentSection(vm: NewPurchaseViewModel) {
             PurchasePay.entries.forEach { p -> SmallChip(p.label, selected = vm.pay == p) { vm.choosePay(p) } }
         }
         if (vm.pay != PurchasePay.ON_ACCOUNT) {
-            if (vm.accounts.isEmpty()) {
-                Text("سيُستخدم الحساب الافتراضي للدفع", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
-            } else {
+            Text("يُسجَّل الدفع كسند صرف بالدولار في كشف حساب المورد", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+            if (vm.boxes.isEmpty()) {
                 Text(
-                    if (vm.pay == PurchasePay.BANK) "من الحساب البنكي:" else "من الصندوق:",
+                    "لا يوجد صندوق بالدولار — أنشئ صندوقاً بعملة USD من شاشة الخزينة",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Lux.InkSoft,
+                    color = MaterialTheme.colorScheme.error,
                 )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CurrencyArt("USD", vm.artUrl("USD"), height = 14.dp)
+                    Text("من صندوق الدولار:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    vm.accounts.forEach { a -> SmallChip(a.nameAr, selected = a.id == vm.accountId) { vm.accountId = a.id; vm.error = null } }
+                    vm.boxes.forEach { b ->
+                        SmallChip("${b.name} · ${b.shownBalance}", selected = b.id == vm.boxId) { vm.boxId = b.id; vm.error = null }
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactField(
                     value = vm.payAmount,
                     onValueChange = { vm.payAmount = decimalInput(it).take(14); vm.error = null },
-                    placeholder = "المبلغ المدفوع (الكل ${sar(vm.grandTotal)})",
+                    placeholder = "المبلغ بالدولار (الكل ${vm.grandTotalUsd?.let { usd(it) } ?: "—"})",
                     isError = !vm.payAmountValid,
                     keyboardType = KeyboardType.Decimal,
-                    trailing = { Text("ر.س", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
+                    trailing = { Text("USD", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
                     modifier = Modifier.weight(1f),
                 )
                 SmallLink("الكل") { vm.payAmount = "" }
@@ -999,9 +1095,48 @@ private fun PaymentSection(vm: NewPurchaseViewModel) {
     }
 }
 
+/** "عملة الفاتورة": dollars or yuan (no SAR); for yuan, the dollar rate in yuan. */
+@Composable
+private fun CurrencySwitch(vm: NewPurchaseViewModel) {
+    Text("عملة الفاتورة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        PurchaseCurrency.entries.forEach { c ->
+            FilterChip(
+                selected = vm.currency == c,
+                onClick = { vm.chooseCurrency(c) },
+                label = { Text(c.label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+                leadingIcon = { CurrencyArt(c.code, vm.artUrl(c.code), height = 14.dp) },
+                modifier = Modifier.height(30.dp),
+            )
+        }
+    }
+    if (vm.currency == PurchaseCurrency.CNY) {
+        CompactField(
+            value = vm.cnyRate,
+            onValueChange = { vm.cnyRate = decimalInput(it).take(12); vm.error = null },
+            placeholder = "سعر الدولار باليوان" + (vm.supplierLastRate?.let { " (آخر سعر $it)" } ?: ""),
+            isError = !vm.rateValid,
+            keyboardType = KeyboardType.Decimal,
+            trailing = { Text("CNY / 1 USD", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "سعر الدولار باليوان" + if (vm.supplierLastRate != null) " — مأخوذ من آخر سند صرف للمورد، ويمكن تعديله" else "",
+            style = MaterialTheme.typography.labelSmall,
+            color = Lux.InkSoft,
+        )
+    }
+}
+
+/** "≈ 1,200 ر.س": the SAR value of an amount typed in the invoice currency. */
+@Composable
+private fun SarHint(v: BigDecimal) {
+    Text("≈ ${sar(v)}", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+}
+
 /** A product bought for the first time, tagged "جديد"; edited or removed like any other line. */
 @Composable
-private fun NewItemRow(n: NewPurchaseItem, onEdit: () -> Unit, onRemove: () -> Unit) {
+private fun NewItemRow(n: NewPurchaseItem, money: (BigDecimal) -> String, onEdit: () -> Unit, onRemove: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -1044,12 +1179,12 @@ private fun NewItemRow(n: NewPurchaseItem, onEdit: () -> Unit, onRemove: () -> U
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${n.pieces} قطعة × ${n.unitCost?.let { sar(it) } ?: "—"}",
+                "${n.pieces} قطعة × ${n.unitCost?.let { money(it) } ?: "—"}",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (n.unitCost == null) MaterialTheme.colorScheme.error else Lux.InkSoft,
                 modifier = Modifier.weight(1f),
             )
-            Text(sar(n.lineTotal), style = MaterialTheme.typography.labelLarge, color = Lux.GoldDeep)
+            Text(money(n.lineTotal), style = MaterialTheme.typography.labelLarge, color = Lux.GoldDeep)
         }
     }
 }
@@ -1059,7 +1194,7 @@ private fun NewItemRow(n: NewPurchaseItem, onEdit: () -> Unit, onRemove: () -> U
 /** One size / colour row of a new product. */
 private data class NewVariantRow(val size: String = "", val color: String = "", val qty: String = "1", val barcode: String = "")
 
-/** "صنف جديد": photo, name, category, sale price and cost (SAR), then sizes / colours / quantities with optional barcodes. */
+/** "صنف جديد": photo, name, category, sale price (SAR) and cost (invoice currency), then sizes / colours / quantities with optional barcodes. */
 @Composable
 private fun NewProductDialog(vm: NewPurchaseViewModel, initial: NewPurchaseItem?, onDismiss: () -> Unit) {
     var name by rememberSaveable { mutableStateOf(initial?.nameAr.orEmpty()) }
@@ -1145,7 +1280,7 @@ private fun NewProductDialog(vm: NewPurchaseViewModel, initial: NewPurchaseItem?
                     OutlinedTextField(
                         value = cost,
                         onValueChange = { cost = decimalInput(it).take(14) },
-                        label = { Text("تكلفة القطعة (ر.س)") },
+                        label = { Text("تكلفة القطعة (${vm.invoiceCurrency.symbol})") },
                         isError = cost.isNotBlank() && validAmount(cost, Currency.SAR) == null,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1204,7 +1339,7 @@ private fun NewProductDialog(vm: NewPurchaseViewModel, initial: NewPurchaseItem?
                 val pieces = parsed.sumOf { it.quantity.coerceAtLeast(0) }
                 val unit = validAmount(cost, Currency.SAR)
                 if (unit != null && pieces > 0) {
-                    CompactRow("الإجمالي ($pieces قطعة)", sar(unit.multiply(BigDecimal(pieces))), Lux.GoldDeep)
+                    CompactRow("الإجمالي ($pieces قطعة)", vm.money(unit.multiply(BigDecimal(pieces))), Lux.GoldDeep)
                 }
                 Text(
                     "يُنشأ الصنف برقم SKU وباركود عند إصدار الفاتورة، ويُعرض للبيع بعد الاستلام.",

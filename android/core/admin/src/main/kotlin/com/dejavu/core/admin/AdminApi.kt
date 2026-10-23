@@ -40,6 +40,25 @@ interface AdminApi {
     @GET("admin/reports/dashboard") suspend fun dashboard(): Dashboard
     @GET("admin/reports/income-statement") suspend fun incomeStatement(@Query("from") from: String?, @Query("to") to: String?): IncomeStatement
     @GET("admin/reports/balance-sheet") suspend fun balanceSheet(@Query("asOf") asOf: String? = null): BalanceSheet
+    @GET("admin/reports/products") suspend fun productsReport(@Query("from") from: String?, @Query("to") to: String?, @Query("deadDays") deadDays: Int? = null, @Query("limit") limit: Int? = null): ProductsReport
+    @GET("admin/reports/reorder") suspend fun reorderReport(@Query("days") days: Int? = null, @Query("coverDays") coverDays: Int? = null): ReorderReport
+    @GET("admin/reports/daily-summary") suspend fun dailySummary(): DailySummaryText
+    @GET("admin/reports/daily-summary/settings") suspend fun dailySummarySettings(): DailySummarySettings
+    @PUT("admin/reports/daily-summary/settings") suspend fun saveDailySummarySettings(@Body body: DailySummarySettings): DailySummarySettings
+    @POST("admin/reports/daily-summary/send") suspend fun sendDailySummary(): DailySummaryText
+    @GET("admin/audit-logs") suspend fun auditLogs(
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 30,
+        @Query("entityType") entityType: String? = null,
+        @Query("userId") userId: String? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): Page<AuditEntry>
+    @GET("admin/audit-logs/types") suspend fun auditTypes(): List<AuditType>
+    @GET("admin/debtors") suspend fun debtors(@Query("minDays") minDays: Int? = null): Debtors
+    @POST("admin/debtors/reminders") suspend fun remindDebtors(@Body body: DebtRemindersRequest): DebtRemindersResult
+    @retrofit2.http.Streaming @GET("admin/system/backup") suspend fun backup(): ResponseBody
+    @Multipart @POST("admin/system/restore") suspend fun restore(@Part file: MultipartBody.Part, @Part("confirm") confirm: okhttp3.RequestBody): RestoreResult
     @GET("admin/reports/revenue") suspend fun revenue(@Query("from") from: String?, @Query("to") to: String?): RevenueReport
     @GET("admin/reports/sales") suspend fun sales(@Query("groupBy") groupBy: String, @Query("from") from: String?, @Query("to") to: String?): SalesReport
 
@@ -99,6 +118,11 @@ interface AdminApi {
         @Query("pageSize") pageSize: Int = 30,
     ): Page<StockLevel>
     @GET("admin/inventory/low-stock") suspend fun lowStock(): List<LowStockRow>
+    @GET("admin/stock-counts") suspend fun stockCounts(@Query("page") page: Int = 1): Page<StockCountSummary>
+    @GET("admin/stock-counts/{id}") suspend fun stockCount(@Path("id") id: String): StockCountDetail
+    @POST("admin/stock-counts") suspend fun createStockCount(@Body body: CreateStockCountRequest): StockCountDetail
+    @POST("admin/stock-counts/{id}/post") suspend fun postStockCount(@Path("id") id: String): StockCountDetail
+    @DELETE("admin/stock-counts/{id}") suspend fun deleteStockCount(@Path("id") id: String): Response<Unit>
     @POST("admin/inventory/adjustments") suspend fun adjust(@Body body: AdjustmentRequest): AdjustmentResult
 
     // purchasing
@@ -179,6 +203,16 @@ interface AdminApi {
     @GET("admin/pos/sales/{id}") suspend fun posReceipt(@Path("id") id: String): PosReceipt
     @GET("admin/pos/sales/by-number/{number}") suspend fun findSale(@Path("number") number: String): PosReceipt
     @POST("admin/pos/returns") suspend fun posReturn(@Body body: PosReturnRequest): PosReturnResult
+    @GET("admin/pos/sales") suspend fun posSales(@Query("date") date: String? = null, @Query("all") all: Boolean? = null): List<PosSaleSummary>
+    @POST("admin/pos/sales/{id}/void") suspend fun voidSale(@Path("id") id: String, @Body body: VoidSaleRequest): PosReceipt
+    @PUT("admin/pos/sales/{id}") suspend fun editSale(@Path("id") id: String, @Body body: PosSaleRequest): PosReceipt
+    @GET("admin/pos/shifts/current") suspend fun currentShift(): CurrentShift
+    @POST("admin/pos/shifts/open") suspend fun openShift(@Body body: OpenShiftRequest): CashierShift
+    @POST("admin/pos/shifts/close") suspend fun closeShift(@Body body: CloseShiftRequest): CashierShift
+    @POST("admin/pos/shifts/{id}/close") suspend fun closeShiftOf(@Path("id") id: String, @Body body: CloseShiftRequest): CashierShift
+    @GET("admin/pos/shifts") suspend fun shifts(@Query("page") page: Int = 1, @Query("userId") userId: String? = null): Page<CashierShift>
+    @GET("admin/pos/settings") suspend fun posSettings(): PosSettings
+    @PUT("admin/pos/settings") suspend fun savePosSettings(@Body body: PosSettings): PosSettings
     @POST("admin/pos/returns/without-invoice") suspend fun posFreeReturn(@Body body: FreeReturnRequest): FreeReturnResult
     @GET("admin/alerts") suspend fun alerts(@Query("since") since: String? = null): StaffAlerts
     @GET("admin/pos/shift") suspend fun shift(): PosShift
@@ -220,6 +254,8 @@ interface AdminApi {
 
     // files
     @Multipart @POST("admin/files") suspend fun uploadImage(@Part file: MultipartBody.Part): UploadedFile
+    /** Private staff file (deposit slip photo at the till). */
+    @Multipart @POST("admin/files/private") suspend fun uploadPrivate(@Part file: MultipartBody.Part): UploadedFile
     /** A private file (deposit slip), read with the staff token. */
     @GET("admin/files/{id}") suspend fun file(@Path("id") id: String): ResponseBody
 }

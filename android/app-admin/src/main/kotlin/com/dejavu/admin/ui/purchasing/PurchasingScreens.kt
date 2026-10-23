@@ -62,11 +62,13 @@ import com.dejavu.core.admin.PurchaseOrderSummary
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.Supplier
+import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
@@ -85,6 +87,9 @@ import kotlinx.coroutines.launch
 internal const val PURCHASES_WRITE = "purchases.write"
 
 private val SUPPLIER_METHODS = listOf(PaymentMethod.BANK_TRANSFER, PaymentMethod.CASH, PaymentMethod.INSTAPAY, PaymentMethod.WALLET)
+
+/** An amount in the order's own (supplier) currency, e.g. "1,200 USD". */
+private fun inForeign(amount: java.math.BigDecimal, code: String): String = Money.plain(amount, Currency.of(code))
 
 class PurchasingViewModel(private val repo: PurchasingRepository) : BaseViewModel() {
     private val _orders = MutableStateFlow<Load<List<PurchaseOrderSummary>>>(Load.Loading)
@@ -252,6 +257,13 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
             val canWrite = session.can(PURCHASES_WRITE)
             val canEdit = canWrite && po.isImport && po.status == PurchaseOrderStatus.ORDERED && nothingReceived
             val canDelete = canWrite && nothingReceived && (po.status == PurchaseOrderStatus.DRAFT || po.status == PurchaseOrderStatus.ORDERED)
+            // Prices typed in the supplier's currency (USD / CNY); SAR values come second.
+            val fx = po.foreignCurrency?.ifBlank { null }
+            val fxGoods = if (fx != null && po.items.all { it.unitPriceForeign != null }) {
+                po.items.fold(java.math.BigDecimal.ZERO) { acc, l -> acc.add(Money.parse(l.unitPriceForeign).multiply(java.math.BigDecimal(l.quantity))) }
+            } else {
+                null
+            }
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
@@ -262,7 +274,16 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         }
                         po.supplierInvoiceNo?.let { Text("فاتورة المورد: $it", style = MaterialTheme.typography.bodySmall) }
                         Text(formatDate(po.orderDate), style = MaterialTheme.typography.bodySmall)
-                        SummaryRow("البضاعة", Money.format(po.subtotal))
+                        if (fx != null && !po.isImport) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                CurrencyArt(fx, height = 18.dp)
+                                Text("فاتورة بعملة $fx", style = MaterialTheme.typography.labelLarge, color = Lux.GoldDeep)
+                            }
+                            fxGoods?.let { SummaryRow("البضاعة ($fx)", inForeign(it, fx), strong = true, valueColor = Lux.GoldDeep) }
+                            if (fx != "USD") po.foreignPerUsd?.let { SummaryRow("سعر الدولار", "$it $fx") }
+                            po.sarPerUsd?.let { SummaryRow("سعر الدولار بالريال", "$it ر.س") }
+                        }
+                        SummaryRow(if (fx != null) "البضاعة (ر.س)" else "البضاعة", Money.format(po.subtotal))
                         SummaryRow("الشحن", Money.format(po.shippingCost))
                         SummaryRow("الإجمالي", Money.format(po.grandTotal), strong = true)
                         SummaryRow("المدفوع", Money.format(po.amountPaid))
@@ -322,8 +343,18 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     InfoCard {
                         Text(line.variant.product.nameAr, style = MaterialTheme.typography.titleSmall)
                         line.note?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
-                        Text("${line.option.ifBlank { "" }}${if (line.option.isNotBlank()) " · " else ""}${line.variant.sku} · ${Money.format(line.unitCost)} للقطعة", style = MaterialTheme.typography.bodySmall)
-                        line.unitPriceForeign?.let { Text("سعر المورد: $it ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
+                        val foreignUnit = line.unitPriceForeign
+                        if (fx != null && foreignUnit != null) {
+                            val unit = Money.parse(foreignUnit)
+                            Text(
+                                "${line.option.ifBlank { "" }}${if (line.option.isNotBlank()) " · " else ""}${line.variant.sku} · ${inForeign(unit, fx)} للقطعة · الإجمالي ${inForeign(unit.multiply(java.math.BigDecimal(line.quantity)), fx)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text("بالريال: ${Money.format(line.unitCost)} للقطعة · ${Money.format(line.lineTotal)}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                        } else {
+                            Text("${line.option.ifBlank { "" }}${if (line.option.isNotBlank()) " · " else ""}${line.variant.sku} · ${Money.format(line.unitCost)} للقطعة", style = MaterialTheme.typography.bodySmall)
+                            line.unitPriceForeign?.let { Text("سعر المورد: $it ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
+                        }
                         line.landedUnitCost?.let { Text("التكلفة الفعلية للقطعة: ${Money.format(it)}", style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("مستلم ${line.receivedQty} من ${line.quantity}", Modifier.weight(1f))
@@ -342,9 +373,14 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         if (canReceive) {
                             Button(onClick = { vm.receive(receiving.toMap()); receiving.clear() }, enabled = !busy && receiving.values.any { it > 0 }) { Text("تأكيد الاستلام") }
                         }
-                        if (session.can(Perm.SUPPLIER_PAY) && Money.parse(po.balanceDue).signum() > 0 && po.status != PurchaseOrderStatus.CANCELLED) {
+                        if (fx == null && session.can(Perm.SUPPLIER_PAY) && Money.parse(po.balanceDue).signum() > 0 && po.status != PurchaseOrderStatus.CANCELLED) {
                             OutlinedButton(onClick = { paying = true }, enabled = !busy) { Text("سداد للمورد") }
                         }
+                    }
+                }
+                if (fx != null && Money.parse(po.balanceDue).signum() > 0 && po.status != PurchaseOrderStatus.CANCELLED) {
+                    item {
+                        Text("ادفع للمورد من كشف حساب المورد (سند صرف بالدولار)", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                     }
                 }
                 if (po.payments.isNotEmpty()) {
@@ -372,7 +408,7 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("تراجع") } },
                 )
             }
-            if (paying) MoneyDialog("سداد للمورد", SUPPLIER_METHODS, po.balanceDue, "سداد", { paying = false }) { amount, method, ref -> vm.pay(po, amount, method, ref) }
+            if (paying && fx == null) MoneyDialog("سداد للمورد", SUPPLIER_METHODS, po.balanceDue, "سداد", { paying = false }) { amount, method, ref -> vm.pay(po, amount, method, ref) }
         }
     }
 }

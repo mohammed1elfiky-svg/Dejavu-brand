@@ -86,6 +86,12 @@ import com.dejavu.admin.ui.purchasing.SupplierAccountScreen
 import com.dejavu.admin.ui.sms.SmsGatewayScreen
 import com.dejavu.admin.ui.categories.CategoriesScreen
 import com.dejavu.admin.ui.coupons.CouponsScreen
+import com.dejavu.admin.ui.pos.ShiftScreen
+import com.dejavu.admin.ui.system.AuditScreen
+import com.dejavu.admin.ui.system.BackupScreen
+import com.dejavu.admin.ui.system.DailySummaryScreen
+import com.dejavu.admin.ui.finance.DebtorsScreen
+import com.dejavu.admin.ui.inventory.StockCountsScreen
 import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
 import com.dejavu.admin.ui.purchasing.NewImportScreen
 import com.dejavu.admin.ui.purchasing.SupplierScreen
@@ -169,6 +175,12 @@ object R {
     const val SMS = "sms"
     const val CATEGORIES = "categories"
     const val COUPONS = "coupons"
+    const val SHIFT = "shift"
+    const val AUDIT = "audit"
+    const val DEBTORS = "debtors"
+    const val BACKUP = "backup"
+    const val STOCK_COUNTS = "stock-counts"
+    const val DAILY_SUMMARY = "daily-summary"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -345,8 +357,15 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     openReturns = { nav.navigate(R.POS_RETURNS) },
                     onLogout = if (tillOnly) ({ container.appScope.launch { container.logout() } }) else null,
                     openPrinters = { nav.navigate(R.PRINTERS) },
+                    openShift = { nav.navigate(R.SHIFT) },
                 )
             }
+            composable(R.SHIFT) { ShiftScreen(session, back) }
+            composable(R.AUDIT) { AuditScreen(back) }
+            composable(R.DEBTORS) { DebtorsScreen(session, back, openCustomer = { open(R.CUSTOMER, it) }) }
+            composable(R.BACKUP) { BackupScreen(back) }
+            composable(R.STOCK_COUNTS) { StockCountsScreen(session, back) }
+            composable(R.DAILY_SUMMARY) { DailySummaryScreen(back) }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })

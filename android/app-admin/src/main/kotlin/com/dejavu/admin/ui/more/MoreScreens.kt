@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Face
@@ -103,13 +104,16 @@ private val sections = listOf(SALES, STOCK, FINANCE, SETTINGS)
 private val menu = listOf(
     MenuEntry(R.RETURNS, "المرتجعات", "طلبات الإرجاع والاسترداد", Icons.Filled.Refresh, listOf(Perm.RETURNS), SALES),
     MenuEntry(R.POS_RETURNS, "مرتجعات واستبدال الكاشير", "إرجاع صنف مباع أو استبداله بمقاس/لون آخر مع تسوية الفارق", Icons.Filled.Refresh, listOf(Perm.POS_SELL), SALES),
+    MenuEntry(R.SHIFT, "الوردية", "فتح وإقفال الوردية وعدّ النقد في الدرج", Icons.Filled.DateRange, listOf(Perm.POS_SELL), SALES),
     MenuEntry(R.CUSTOMERS, "العملاء", "بيانات العملاء وأرصدتهم", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), SALES),
+    MenuEntry(R.DEBTORS, "العملاء المدينون", "الديون المستحقة على العملاء وتذكيرهم برسالة", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), SALES),
     MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ), SALES),
     MenuEntry(R.COUPONS, "أكواد الخصم", "أكواد خصم للعملاء وللكاشير", Icons.Filled.Favorite, listOf("coupons.manage"), SALES),
     MenuEntry(R.TOP_UPS, "طلبات شحن حسابات العملاء", "سندات الإيداع والموافقة أو الرفض", Icons.Filled.Email, listOf(Perm.WALLET_MANAGE), SALES),
     MenuEntry(R.PRODUCTS, "المنتجات", "الأسعار والنشر والمقاسات", Icons.Filled.Star, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.BRANDS, "الماركات", "إضافة الماركات وشعاراتها وتصفح منتجاتها", Icons.Filled.AccountBox, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.CATEGORIES, "الأقسام", "تعديل أسماء الأقسام وإظهارها أو إخفاؤها في التطبيق", Icons.AutoMirrored.Filled.List, listOf(Perm.CATEGORIES_WRITE), STOCK),
+    MenuEntry(R.STOCK_COUNTS, "جرد المخزون", "عدّ القطع على الرفوف وترحيل فروقات الجرد", Icons.Filled.CheckCircle, listOf("stock.count"), STOCK),
     MenuEntry(R.SUPPLIERS, "الموردون والاستيراد", "عمولة الموردين، البضائع المعلقة، طلبيات الاستيراد والـ CBM", Icons.Filled.Person, listOf(Perm.PURCHASES_READ), STOCK),
     MenuEntry(R.PURCHASING, "المشتريات", "أوامر الشراء والموردين", Icons.Filled.ShoppingCart, listOf(Perm.PURCHASES_READ), STOCK),
     MenuEntry(R.EXPENSES, "المصروفات", "تسجيل واعتماد وسداد المصروفات", Icons.AutoMirrored.Filled.List, listOf(Perm.EXPENSES_READ), FINANCE),
@@ -121,6 +125,9 @@ private val menu = listOf(
     MenuEntry(R.STAFF, "الموظفون والصلاحيات", "إضافة الموظفين، كلمات المرور، الصلاحيات والصناديق", Icons.Filled.Person, listOf(Perm.USERS_MANAGE), SETTINGS),
     MenuEntry(R.BANK_ACCOUNTS, "الحسابات البنكية للمتجر", "تظهر للعملاء عند شحن الرصيد", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), SETTINGS),
     MenuEntry(R.SMS, "الرسائل النصية (SMS)", "إرسال الرسائل من شريحة هذا الهاتف ورمز التحقق للعملاء", Icons.Filled.Phone, listOf(Perm.SETTINGS_MANAGE), SETTINGS),
+    MenuEntry(R.DAILY_SUMMARY, "الملخص اليومي", "رسالة مسائية بأرقام اليوم إلى هاتف المالك", Icons.Filled.Email, listOf(Perm.SETTINGS_MANAGE), SETTINGS),
+    MenuEntry(R.AUDIT, "سجل العمليات", "من أضاف أو عدّل أو حذف ماذا ومتى", Icons.AutoMirrored.Filled.List, listOf("audit.read"), SETTINGS),
+    MenuEntry(R.BACKUP, "النسخ الاحتياطي", "تنزيل نسخة من كل البيانات، نسخ يومي تلقائي واستعادة", Icons.Filled.Lock, listOf("system.backup"), SETTINGS),
 )
 
 private val LogoutBrush = Brush.linearGradient(listOf(Color(0xFFE57373), Color(0xFFC62828)))

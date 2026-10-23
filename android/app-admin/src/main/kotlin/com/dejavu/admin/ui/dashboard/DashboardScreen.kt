@@ -13,7 +13,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.KeyboardType
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.Perm
+import com.dejavu.core.model.Currency
+import com.dejavu.core.ui.CollectMessages
+import com.dejavu.core.ui.CurrencyArt
+import com.dejavu.core.ui.StatusChip
+import com.dejavu.core.ui.formatDateTime
+import com.dejavu.core.ui.theme.OutlinedTextField
+import java.math.BigDecimal
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,20 +72,56 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class DashboardViewModel(private val repo: DashboardRepository) : BaseViewModel() {
+class DashboardViewModel(private val repo: DashboardRepository, private val finance: FinanceRepository) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<Dashboard>>(Load.Loading)
     val state = _state.asStateFlow()
+    private val _pictures = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** Uploaded picture of each currency (code → URL). */
+    val pictures = _pictures.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.dashboard().toLoad() }
+        viewModelScope.launch {
+            finance.activeCurrencies().onSuccess { cs ->
+                _pictures.value = cs.currencies.mapNotNull { c -> c.imageUrl?.takeIf { it.isNotBlank() }?.let { c.code.code to it } }.toMap()
+            }
+        }
+    }
+
+    /** Same as the currencies screen: the new rate applies to operations from now on. */
+    fun setRate(code: String, rate: String, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            finance.setRate(Currency.of(code), rate, null).orSay()?.let {
+                say("تم تحديث سعر الصرف. العمليات الجديدة ستُحسب به")
+                done()
+                repo.dashboard().getOrNull()?.let { d -> _state.value = Load.Ready(d) }
+            }
+            _busy.value = false
+        }
     }
 }
 
+/** A rate: units per 1 SAR, more than 0, up to 6 decimals. */
+private fun dashRateOf(v: String): BigDecimal? = v.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 && it.scale() <= 6 }
+
+private fun dashPlainRate(rate: String?): String = rate?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString() ?: "—"
+
 @Composable
 fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: () -> Unit, openSettlements: () -> Unit) {
-    val vm = adminViewModel { DashboardViewModel(it.dashboard) }
+    val vm = adminViewModel { DashboardViewModel(it.dashboard, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val pictures by vm.pictures.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val canEditRates = adminContainer().session.can(Perm.SETTINGS_MANAGE)
+    val snackbar = remember { SnackbarHostState() }
+    var editingRate by remember { mutableStateOf<Dashboard.RateStatus?>(null) }
+    CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -75,9 +135,22 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
                 actions = { IconButton(onClick = vm::load) { Icon(Icons.Filled.Refresh, contentDescription = "تحديث") } },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { d ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (d.rates.any { it.stale }) {
+                    item {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)), modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                "سعر الصرف لم يُحدَّث اليوم",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(14.dp),
+                            )
+                        }
+                    }
+                }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Kpi("مبيعات اليوم", Money.format(d.today.sales), "${d.today.orders} طلب", Modifier.weight(1f), onClick = openOrders)
@@ -91,6 +164,9 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
                     }
                 }
                 item { Alerts(d, openOrders, openReturns, openStock, openSettlements) }
+                if (d.rates.isNotEmpty()) {
+                    item { RatesCard(d.rates, pictures, canEdit = canEditRates && !busy) { editingRate = it } }
+                }
                 item {
                     InfoCard {
                         Text("النقدية والبنوك", style = MaterialTheme.typography.titleSmall)
@@ -129,6 +205,71 @@ fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: 
             }
         }
     }
+
+    editingRate?.let { r ->
+        QuickRateDialog(r, busy, onDismiss = { editingRate = null }) { rate -> vm.setRate(r.currency, rate) { editingRate = null } }
+    }
+}
+
+/** Each exchange rate (units per 1 SAR), when it was set, and a red tag when not updated in 24 hours. */
+@Composable
+private fun RatesCard(rates: List<Dashboard.RateStatus>, pictures: Map<String, String>, canEdit: Boolean, onEdit: (Dashboard.RateStatus) -> Unit) {
+    InfoCard {
+        Text("أسعار الصرف", style = MaterialTheme.typography.titleSmall)
+        rates.forEachIndexed { i, r ->
+            if (i > 0) HorizontalDivider(color = Lux.Hairline)
+            Row(
+                Modifier.fillMaxWidth().clickable(enabled = canEdit) { onEdit(r) }.padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                CurrencyArt(r.currency, pictures[r.currency], height = 26.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(r.nameAr ?: Currency.of(r.currency).nameAr, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        r.effectiveAt?.let { "آخر تحديث ${formatDateTime(it)}" } ?: "لم يُحدَّد بعد",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Lux.InkSoft,
+                    )
+                }
+                if (r.stale) StatusChip("قديم", MaterialTheme.colorScheme.error)
+                Text("1 ر.س = ${dashPlainRate(r.rate)}", style = MaterialTheme.typography.titleSmall)
+            }
+        }
+        if (canEdit) Text("اضغط على العملة لتعديل سعرها", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+    }
+}
+
+@Composable
+private fun QuickRateDialog(r: Dashboard.RateStatus, busy: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var rate by rememberSaveable { mutableStateOf(r.rate?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString().orEmpty()) }
+    val value = dashRateOf(rate)
+    val currency = Currency.of(r.currency)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("سعر ${r.nameAr ?: currency.nameAr}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CurrencyArt(r.currency, height = 30.dp)
+                    Text("الحالي: 1 ر.س = ${dashPlainRate(r.rate)}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                }
+                OutlinedTextField(
+                    value = rate,
+                    onValueChange = { rate = it.filter { ch -> ch.isDigit() || ch == '.' }.take(20) },
+                    label = { Text("كم ${currency.symbol} يساوي 1 ر.س؟") },
+                    isError = rate.isNotBlank() && value == null,
+                    supportingText = { Text("حتى 6 خانات عشرية") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("يُطبَّق على الطلبات والفواتير الجديدة فقط؛ السابقة تبقى بسعرها.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            }
+        },
+        confirmButton = { TextButton(onClick = { value?.let { onSave(it.toPlainString()) } }, enabled = value != null && !busy) { Text("حفظ السعر") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
 }
 
 @Composable

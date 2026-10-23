@@ -8,6 +8,7 @@ import {
   AdminSalesSettingsController,
 } from './admin-sales.controller';
 import { CartService } from './cart.service';
+import { ShiftService } from './shift.service';
 import { CourierSettlementsService } from './courier-settlements.service';
 import { AdminCurrenciesController, StoreCurrenciesController } from './currency.controller';
 import { CustomersService } from './customers.service';
@@ -46,6 +47,6 @@ import {
     AdminCourierSettlementsController,
     AdminPosController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService],
 })
 export class SalesModule {}

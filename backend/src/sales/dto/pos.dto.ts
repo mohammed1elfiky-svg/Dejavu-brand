@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { IsAmount, IsCurrencyCode } from '../../common/decorators/validation.decorators';
 
 export class PosItemDto {
@@ -67,13 +67,6 @@ export class PosSaleDto {
   @IsAmount()
   discountValue?: string;
 
-  @ApiPropertyOptional({ example: 'WELCOME10', description: 'Discount code (instead of a typed discount)' })
-  @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() || undefined : value))
-  @IsString()
-  @MaxLength(40)
-  couponCode?: string;
-
   @ApiPropertyOptional({ type: [PosTenderDto], description: 'Money handed over, in one or more currencies' })
   @IsOptional()
   @ValidateNested({ each: true })
@@ -96,6 +89,21 @@ export class PosSaleDto {
   @IsString()
   @MaxLength(100)
   reference?: string;
+
+  @ApiPropertyOptional({ description: 'Photo of the deposit / transfer slip (POST admin/files/private)' })
+  @IsOptional()
+  @IsUUID()
+  slipFileId?: string;
+
+  @ApiPropertyOptional({ description: 'Id the device gave the sale; the same id sent again returns the first sale (offline queue)' })
+  @IsOptional()
+  @Matches(/^[A-Za-z0-9_-]{8,64}$/, { message: 'clientRef must be 8-64 letters, digits, _ or -' })
+  clientRef?: string;
+
+  @ApiPropertyOptional({ description: 'When the sale was rung up on the device (offline sales sent later); at most 7 days ago' })
+  @IsOptional()
+  @IsDateString()
+  soldAt?: string;
 
   @ApiPropertyOptional({ example: 'YER', description: 'Currency the change is given in; the invoice currency by default' })
   @IsOptional()
@@ -321,4 +329,131 @@ export class PosFreeReturnDto {
   @IsOptional()
   @IsCurrencyCode()
   changeCurrency?: string;
+}
+
+export class PosVoidDto {
+  @ApiPropertyOptional({ example: 'خطأ في الفاتورة' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  reason?: string;
+}
+
+export class PosSalesQueryDto {
+  @ApiPropertyOptional({ example: '2026-10-23', description: 'Business day; today by default' })
+  @IsOptional()
+  @IsDateString({ strict: true })
+  date?: string;
+
+  @ApiPropertyOptional({ description: 'Every cashier (managers); otherwise only your own sales' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  all?: boolean;
+}
+
+export class ShiftFloatDto {
+  @ApiProperty({ example: 'YER' })
+  @IsCurrencyCode()
+  currency: string;
+
+  @ApiProperty({ example: '20000' })
+  @IsAmount()
+  amount: string;
+
+  @ApiProperty({ description: 'Safe the float is taken from' })
+  @IsUUID()
+  fromBoxId: string;
+}
+
+export class OpenShiftDto {
+  @ApiPropertyOptional({ type: [ShiftFloatDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ShiftFloatDto)
+  @ArrayMaxSize(10)
+  floats?: ShiftFloatDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
+}
+
+export class ShiftCountDto {
+  @ApiProperty({ example: 'YER' })
+  @IsCurrencyCode()
+  currency: string;
+
+  @ApiProperty({ example: '85000', description: 'Cash counted in the drawer' })
+  @IsAmount()
+  counted: string;
+}
+
+export class ShiftHandOverDto {
+  @ApiProperty({ example: 'YER' })
+  @IsCurrencyCode()
+  currency: string;
+
+  @ApiProperty({ description: 'Safe or bank the counted cash goes to' })
+  @IsUUID()
+  toBoxId: string;
+}
+
+export class CloseShiftDto {
+  @ApiProperty({ type: [ShiftCountDto] })
+  @ValidateNested({ each: true })
+  @Type(() => ShiftCountDto)
+  @ArrayMaxSize(10)
+  counts: ShiftCountDto[];
+
+  @ApiPropertyOptional({ type: [ShiftHandOverDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ShiftHandOverDto)
+  @ArrayMaxSize(10)
+  handOver?: ShiftHandOverDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
+}
+
+export class ShiftsQueryDto {
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
+}
+
+/** The employee's own till layout. Button ids are chosen by the app (e.g. "cash", "transfer"). */
+export class PosSettingsDto {
+  @ApiPropertyOptional({ type: [String], description: 'Checkout buttons in the order shown' })
+  @IsOptional()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  @ArrayMaxSize(40)
+  checkoutButtons?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Checkout buttons hidden by the employee' })
+  @IsOptional()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  @ArrayMaxSize(40)
+  hiddenButtons?: string[];
+
+  @ApiPropertyOptional({ example: 'YER', description: 'Currency the till opens with' })
+  @IsOptional()
+  @IsCurrencyCode()
+  saleCurrency?: string;
 }

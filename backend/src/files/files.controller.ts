@@ -48,6 +48,17 @@ export class FilesController {
     return { ...saved, url: fileUrl(requestBaseUrl(req), saved.id) };
   }
 
+  /** Private staff upload (e.g. the photo of a deposit slip taken at the till); staff only can read it. */
+  @StaffOnly()
+  @Post('admin/files/private')
+  @UseInterceptors(upload)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody(uploadDoc)
+  async staffPrivateUpload(@UploadedFile() file: UploadedPart, @CurrentUser() u: AuthPrincipal) {
+    const saved = await this.files.saveImage(file, { userId: u.id, isPublic: false });
+    return { ...saved, url: `admin/files/${saved.id}` };
+  }
+
   /** Product video upload (public), up to 30 MB. */
   @RequirePermissions('products.write')
   @Post('admin/files/video')

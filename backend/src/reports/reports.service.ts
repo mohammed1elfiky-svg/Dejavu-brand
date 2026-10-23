@@ -153,6 +153,147 @@ export class ReportsService {
     };
   }
 
+  // ---------------------------------------------------- product reports ---
+
+  /**
+   * Best sellers of the period (pieces, revenue net of tax and returns, cost, profit) and
+   * dead stock: products with pieces on the shelf that sold nothing for [deadDays].
+   */
+  async products(q: PeriodQueryDto & { deadDays?: number; limit?: number }) {
+    const { from, to } = this.period(q);
+    const limit = Math.min(Math.max(q.limit ?? 30, 1), 200);
+    const deadDays = Math.max(q.deadDays ?? 60, 1);
+    const top = await this.prisma.$queryRaw<
+      { id: string; name: string; sku: number | null; units: number; revenue: string; cost: string; on_hand: number; image: string | null }[]
+    >`
+      WITH sold AS (
+        SELECT o.id,
+               (COALESCE((SELECT MIN(h.created_at) FROM order_status_history h WHERE h.order_id = o.id AND h.to_status = 'SHIPPED'), o.placed_at)
+                 AT TIME ZONE 'UTC' AT TIME ZONE ${this.tz})::date AS day
+        FROM orders o WHERE o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')
+      )
+      SELECT p.id::text, MAX(p.name_ar) AS name, MAX(p.sku_number) AS sku,
+             SUM(i.quantity - i.returned_qty)::int AS units,
+             COALESCE(SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)), 0)::text AS revenue,
+             COALESCE(SUM(i.unit_cost * (i.quantity - i.returned_qty)), 0)::text AS cost,
+             COALESCE((SELECT SUM(sl.on_hand) FROM stock_levels sl JOIN product_variants pv ON pv.id = sl.variant_id WHERE pv.product_id = p.id), 0)::int AS on_hand,
+             (SELECT pi.url FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.sort_order LIMIT 1) AS image
+      FROM sold s
+      JOIN order_items i ON i.order_id = s.id
+      JOIN product_variants v ON v.id = i.variant_id
+      JOIN products p ON p.id = v.product_id
+      WHERE s.day BETWEEN ${from}::date AND ${to}::date
+      GROUP BY p.id
+      HAVING SUM(i.quantity - i.returned_qty) > 0
+      ORDER BY 4 DESC, 5 DESC
+      LIMIT ${limit}`;
+
+    const dead = await this.prisma.$queryRaw<
+      { id: string; name: string; sku: number | null; on_hand: number; stock_value: string; last_sold: Date | null; image: string | null }[]
+    >`
+      SELECT p.id::text, p.name_ar AS name, p.sku_number AS sku,
+             SUM(sl.on_hand)::int AS on_hand,
+             SUM(sl.on_hand * v.avg_cost)::text AS stock_value,
+             (SELECT MAX(o.placed_at) FROM order_items i JOIN orders o ON o.id = i.order_id JOIN product_variants pv ON pv.id = i.variant_id
+                WHERE pv.product_id = p.id AND o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')) AS last_sold,
+             (SELECT pi.url FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.sort_order LIMIT 1) AS image
+      FROM products p
+      JOIN product_variants v ON v.product_id = p.id
+      JOIN stock_levels sl ON sl.variant_id = v.id
+      WHERE p.status = 'ACTIVE' AND p.created_at < now() - make_interval(days => ${deadDays})
+      GROUP BY p.id
+      HAVING SUM(sl.on_hand) > 0
+         AND COALESCE((SELECT MAX(o.placed_at) FROM order_items i JOIN orders o ON o.id = i.order_id JOIN product_variants pv ON pv.id = i.variant_id
+                WHERE pv.product_id = p.id AND o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')), 'epoch') < now() - make_interval(days => ${deadDays})
+      ORDER BY 5 DESC
+      LIMIT ${limit}`;
+
+    return {
+      from,
+      to,
+      deadDays,
+      topSellers: top.map((r) => {
+        const revenue = money(r.revenue);
+        const cost = money(r.cost);
+        const profit = revenue.sub(cost);
+        return {
+          productId: r.id,
+          nameAr: r.name,
+          skuNumber: r.sku,
+          imageUrl: r.image,
+          units: r.units,
+          revenue,
+          cost,
+          grossProfit: profit,
+          /** Profit as % of revenue. */
+          margin: revenue.isZero() ? dec(0) : profit.div(revenue).mul(100).toDecimalPlaces(1),
+          onHand: r.on_hand,
+        };
+      }),
+      deadStock: dead.map((r) => ({
+        productId: r.id,
+        nameAr: r.name,
+        skuNumber: r.sku,
+        imageUrl: r.image,
+        onHand: r.on_hand,
+        stockValue: money(r.stock_value),
+        lastSoldAt: r.last_sold,
+      })),
+    };
+  }
+
+  /**
+   * What to order again: for each size/colour sold in the last [days], the daily rate,
+   * what is on the shelf and already on order, and the pieces needed to cover [coverDays].
+   */
+  async reorder(q: { days?: number; coverDays?: number }) {
+    const days = Math.min(Math.max(q.days ?? 30, 7), 365);
+    const cover = Math.min(Math.max(q.coverDays ?? 30, 1), 365);
+    const rows = await this.prisma.$queryRaw<
+      { variant_id: string; product_id: string; name: string; sku: string; size: string | null; color: string | null; sold: number; on_hand: number; incoming: number; supplier: string | null; image: string | null }[]
+    >`
+      SELECT v.id::text AS variant_id, p.id::text AS product_id, p.name_ar AS name, v.sku, v.size, v.color,
+             SUM(i.quantity - i.returned_qty)::int AS sold,
+             COALESCE((SELECT SUM(sl.on_hand) FROM stock_levels sl WHERE sl.variant_id = v.id), 0)::int AS on_hand,
+             COALESCE((SELECT SUM(pi.quantity - pi.received_qty) FROM purchase_order_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id
+                        WHERE pi.variant_id = v.id AND po.status IN ('DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED')), 0)::int AS incoming,
+             (SELECT s.name FROM purchase_order_items pi JOIN purchase_orders po ON po.id = pi.purchase_order_id JOIN suppliers s ON s.id = po.supplier_id
+                WHERE pi.variant_id = v.id AND po.status <> 'CANCELLED' ORDER BY po.order_date DESC LIMIT 1) AS supplier,
+             (SELECT pim.url FROM product_images pim WHERE pim.product_id = p.id ORDER BY pim.sort_order LIMIT 1) AS image
+      FROM order_items i
+      JOIN orders o ON o.id = i.order_id
+      JOIN product_variants v ON v.id = i.variant_id
+      JOIN products p ON p.id = v.product_id
+      WHERE o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED') AND o.placed_at >= now() - make_interval(days => ${days}) AND p.status = 'ACTIVE'
+      GROUP BY v.id, p.id
+      HAVING SUM(i.quantity - i.returned_qty) > 0`;
+    const items = rows
+      .map((r) => {
+        const perDay = r.sold / days;
+        const need = Math.ceil(perDay * cover) - r.on_hand - r.incoming;
+        return {
+          variantId: r.variant_id,
+          productId: r.product_id,
+          nameAr: r.name,
+          sku: r.sku,
+          size: r.size,
+          color: r.color,
+          imageUrl: r.image,
+          sold: r.sold,
+          perDay: Math.round(perDay * 100) / 100,
+          onHand: r.on_hand,
+          incoming: r.incoming,
+          /** Days the shelf lasts at this pace. */
+          daysLeft: perDay > 0 ? Math.floor(r.on_hand / perDay) : null,
+          suggested: Math.max(need, 0),
+          lastSupplier: r.supplier,
+        };
+      })
+      .filter((r) => r.suggested > 0)
+      .sort((a, b) => (a.daysLeft ?? 9999) - (b.daysLeft ?? 9999) || b.suggested - a.suggested);
+    return { days, coverDays: cover, items };
+  }
+
   // --------------------------------------------------------- revenue report ---
 
   /**
@@ -399,6 +540,20 @@ export class ReportsService {
       (await this.prisma.cashBoxEntry.groupBy({ by: ['cashBoxId'], _sum: { amount: true } })).map((r) => [r.cashBoxId, r._sum.amount]),
     );
     const mtd = this.profitAndLoss(await this.accountTotals(monthStart, today));
+    const active = await this.prisma.currency.findMany({ where: { isActive: true, isBase: false }, orderBy: { sortOrder: 'asc' }, select: { code: true, nameAr: true } });
+    const rates = await Promise.all(
+      active.map(async (c) => {
+        const r = await this.prisma.exchangeRate.findFirst({ where: { currency: c.code }, orderBy: { effectiveAt: 'desc' }, select: { rate: true, effectiveAt: true } });
+        return {
+          currency: c.code,
+          nameAr: c.nameAr,
+          rate: r?.rate ?? null,
+          effectiveAt: r?.effectiveAt ?? null,
+          /** Not updated in the last 24 hours. */
+          stale: !r || Date.now() - r.effectiveAt.getTime() > 24 * 3600_000,
+        };
+      }),
+    );
 
     return {
       date: today,
@@ -406,6 +561,8 @@ export class ReportsService {
       ordersByStatus: Object.fromEntries(byStatus.map((s) => [s.status, s._count])),
       pendingReturns,
       lowStockVariants: lowStock[0]?.n ?? 0,
+      /** Exchange rates and whether each is out of date. */
+      rates,
       // Cash boxes show what they hold in their own currency (e.g. 100 USD), with the SAR book value.
       cashAndBank: totals
         .filter((a) => isCash.has(a.id))

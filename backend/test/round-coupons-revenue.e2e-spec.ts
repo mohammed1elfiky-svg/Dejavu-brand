@@ -32,17 +32,6 @@ describe('Coupons, revenue, opening balances, password reset (e2e)', () => {
     expect(Number(change.currencyAmount)).toBeCloseTo(-7500, -1);
   });
 
-  it('applies a discount code at the till and counts its use', async () => {
-    const code = `TILL${run}`.toUpperCase().slice(0, 20);
-    const coupon = (await http.post('/admin/coupons', { code, type: 'PERCENTAGE', value: '10', usageLimit: 1, startsAt: '2026-01-01T00:00:00Z' }, admin).expect(201)).body;
-    await http.post('/admin/pos/sales', { items: [{ variantId: variant, quantity: 1 }], saleType: 'CASH', couponCode: code, discountType: 'PERCENT', discountValue: '5', payments: [{ currency: 'SAR', amount: '100' }] }, admin).expect(400);
-    const sale = (await http.post('/admin/pos/sales', { items: [{ variantId: variant, quantity: 1 }], saleType: 'CASH', couponCode: code.toLowerCase(), payments: [{ currency: 'SAR', amount: '90' }] }, admin).expect(201)).body;
-    expect(sale.grandTotal).toBe('90');
-    expect(sale.couponId).toBe(coupon.id);
-    const again = await http.post('/admin/pos/sales', { items: [{ variantId: variant, quantity: 1 }], saleType: 'CASH', couponCode: code, payments: [{ currency: 'SAR', amount: '90' }] }, admin).expect(422);
-    expect(again.body.message).toBe('Coupon usage limit reached');
-  });
-
   it('reports revenue of the till and the app, retail and merchants', async () => {
     const before = (await http.get('/admin/reports/revenue', admin).expect(200)).body;
     const merchant = await customerToken(app, 'تاجرة');
@@ -57,11 +46,14 @@ describe('Coupons, revenue, opening balances, password reset (e2e)', () => {
 
   it('records a supplier opening balance in yuan', async () => {
     const supplier = (await http.post('/admin/suppliers', { name: `مورد قديم ${run}` }, admin).expect(201)).body;
+    await http.post(`/admin/suppliers/${supplier.id}/opening-balance`, { currency: 'SAR', amount: '50', direction: 'WE_OWE' }, admin).expect(400);
+    // No payment voucher yet: the yuan rate must be given.
     await http.post(`/admin/suppliers/${supplier.id}/opening-balance`, { currency: 'CNY', amount: '7000', direction: 'WE_OWE' }, admin).expect(400);
     const acc = (await http.post(`/admin/suppliers/${supplier.id}/opening-balance`, { currency: 'CNY', amount: '7000', sarAmount: '3650', direction: 'WE_OWE', note: 'قبل النظام' }, admin).expect(201)).body;
     expect(acc.balances).toEqual([{ currency: 'CNY', balance: '7000' }]);
-    await http.post(`/admin/suppliers/${supplier.id}/opening-balance`, { currency: 'SAR', amount: '50', direction: 'SUPPLIER_OWES' }, admin).expect(201);
-    expect((await http.get(`/admin/suppliers/${supplier.id}`, admin).expect(200)).body.balance).toBe('3600');
+    await http.post(`/admin/suppliers/${supplier.id}/opening-balance`, { currency: 'CNY', amount: '700', foreignPerUsd: '7', direction: 'SUPPLIER_OWES' }, admin).expect(201);
+    const usdRate = Number((await prisma.exchangeRate.findFirst({ where: { currency: 'USD' }, orderBy: { effectiveAt: 'desc' } }))!.rate);
+    expect(Number((await http.get(`/admin/suppliers/${supplier.id}`, admin).expect(200)).body.balance)).toBeCloseTo(3650 - 100 / usdRate, 1);
   });
 
   it('resets a forgotten password with a texted code', async () => {

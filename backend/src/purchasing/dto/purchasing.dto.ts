@@ -152,6 +152,16 @@ export class PurchaseOrderDto {
   @ValidateNested({ each: true })
   @Type(() => LocalNewProductDto)
   newProducts?: LocalNewProductDto[];
+
+  @ApiPropertyOptional({ enum: ['USD', 'CNY', 'SAR'], default: 'SAR', description: 'Currency the prices and shipping are in; costs and the books are kept in SAR' })
+  @IsOptional()
+  @IsIn(['USD', 'CNY', 'SAR'])
+  currency?: 'USD' | 'CNY' | 'SAR';
+
+  @ApiPropertyOptional({ example: '7.2', description: 'CNY only: yuan per dollar; the last payment voucher rate by default' })
+  @IsOptional()
+  @IsDecimalText(6)
+  foreignPerUsd?: string;
 }
 
 export class LocalNewVariantDto {
@@ -329,6 +339,11 @@ export class QuickPurchaseDto extends PurchaseOrderDto {
   @IsOptional()
   @IsUUID()
   payAccountId?: string;
+
+  @ApiPropertyOptional({ description: 'Orders in USD / CNY: the dollar box paid from (payAmount is then in USD)' })
+  @IsOptional()
+  @IsUUID()
+  payBoxId?: string;
 }
 
 // ------------------------------------------------------------- imports ---
@@ -645,19 +660,23 @@ export class UpdateImportOrderDto {
 
 /** A supplier balance from before the system. */
 export class SupplierOpeningBalanceDto {
-  @ApiProperty({ example: 'CNY' })
-  @IsString()
-  @Matches(/^[A-Za-z]{3}$/, { message: 'currency must be a 3-letter code' })
-  currency: string;
+  @ApiProperty({ enum: ['CNY', 'USD'], description: 'Suppliers are dealt with in yuan or dollars only' })
+  @IsIn(['CNY', 'USD'])
+  currency: 'CNY' | 'USD';
 
   @ApiProperty({ example: '12000' })
   @IsDecimalText(2)
   amount: string;
 
-  @ApiPropertyOptional({ example: '6250', description: 'SAR value; required for a currency without a rate (e.g. yuan)' })
+  @ApiPropertyOptional({ example: '6250', description: 'SAR value, if you want to set it yourself (otherwise from the rates)' })
   @IsOptional()
   @IsDecimalText(2)
   sarAmount?: string;
+
+  @ApiPropertyOptional({ example: '7.2', description: 'Yuan per dollar for a CNY balance; the last payment voucher rate by default' })
+  @IsOptional()
+  @IsDecimalText(6)
+  foreignPerUsd?: string;
 
   @ApiProperty({ enum: ['WE_OWE', 'SUPPLIER_OWES'], description: 'WE_OWE: we owe the supplier; SUPPLIER_OWES: we paid ahead' })
   @IsIn(['WE_OWE', 'SUPPLIER_OWES'])

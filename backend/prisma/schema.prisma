@@ -271,6 +271,8 @@ model User {
   passwordHash String     @map("password_hash")
   /// Currency the till opens with for this employee (cashiers YER, sales staff SAR); null = SAR.
   saleCurrency String?    @map("sale_currency")
+  /// The employee's own till layout: order / hidden buttons of the checkout page.
+  posSettings  Json?      @map("pos_settings")
   status       UserStatus @default(ACTIVE)
   lastLoginAt  DateTime?  @map("last_login_at")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -298,6 +300,7 @@ model User {
   cashBoxes             CashBox[]
   topUpsReviewed        WalletTopUp[]
   cashBoxAccess         CashBoxAccess[]
+  shifts                CashierShift[]
 
   @@map("users")
 }
@@ -857,6 +860,8 @@ model Order {
   deliveredAt     DateTime?     @map("delivered_at")
   cancelledAt     DateTime?     @map("cancelled_at")
   cancelReason    String?       @map("cancel_reason")
+  /// Till sales: the id the device gave the sale, so a sale sent again (offline queue) is not booked twice.
+  clientRef       String?       @unique @map("client_ref")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
   customer      Customer             @relation(fields: [customerId], references: [id])
@@ -1440,6 +1445,8 @@ model Currency {
   /// Offered to shoppers in the customer app (the till can always use active currencies).
   showInCustomerApp Boolean  @default(true) @map("show_in_customer_app")
   sortOrder         Int      @default(0) @map("sort_order")
+  /// Picture shown next to the currency (a note or coin); null = the app's built-in picture.
+  imageUrl          String?  @map("image_url")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -1770,4 +1777,48 @@ model PhoneOtp {
 
   @@index([phone, createdAt])
   @@map("phone_otps")
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+/// A cashier's shift: the float handed over at the start, the cash counted at the end.
+model CashierShift {
+  id         String      @id @default(uuid()) @db.Uuid
+  number     String      @unique
+  userId     String      @map("user_id") @db.Uuid
+  status     ShiftStatus @default(OPEN)
+  openedAt   DateTime    @default(now()) @map("opened_at")
+  closedAt   DateTime?   @map("closed_at")
+  closedById String?     @map("closed_by_id") @db.Uuid
+  note       String?
+
+  user  User               @relation(fields: [userId], references: [id])
+  lines CashierShiftLine[]
+
+  @@index([userId, status])
+  @@index([openedAt])
+  @@map("cashier_shifts")
+}
+
+/// One drawer (currency) of a shift.
+model CashierShiftLine {
+  id         String   @id @default(uuid()) @db.Uuid
+  shiftId    String   @map("shift_id") @db.Uuid
+  cashBoxId  String   @map("cash_box_id") @db.Uuid
+  currency   String
+  /// Float handed to the cashier at the start.
+  opening    Decimal  @default(0) @db.Decimal(18, 2)
+  /// What the books say the drawer holds when it is counted.
+  expected   Decimal? @db.Decimal(18, 2)
+  counted    Decimal? @db.Decimal(18, 2)
+  /// counted − expected (+ over, − short).
+  difference Decimal? @db.Decimal(18, 2)
+
+  shift CashierShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, currency])
+  @@map("cashier_shift_lines")
 }

@@ -13,6 +13,8 @@ import {
   CreateCashBoxDto,
   CustomerReceiptDto,
   CustomerExchangeDto,
+  DebtRemindersDto,
+  DebtorsQueryDto,
   OpeningBalanceDto,
   RejectTopUpDto,
   TopUpRequestDto,
@@ -102,6 +104,26 @@ export class AdminTreasuryController {
 }
 
 @ApiTags('Admin · Customers')
+/** Customers who owe money, and texting them a reminder. */
+@ApiTags('Admin · Customer accounts')
+@Controller('admin/debtors')
+export class AdminDebtorsController {
+  constructor(private readonly accounts: CustomerAccountsService) {}
+
+  @RequirePermissions('customers.read')
+  @Get()
+  list(@Query() q: DebtorsQueryDto) {
+    return this.accounts.debtors(q.minDays ?? 0);
+  }
+
+  @RequirePermissions('customers.write')
+  @Post('reminders')
+  @HttpCode(HttpStatus.OK)
+  remind(@Body() dto: DebtRemindersDto, @CurrentUser() u: AuthPrincipal) {
+    return this.accounts.remind(dto.customerIds, u.id);
+  }
+}
+
 @Controller('admin/customers/:id/account')
 export class AdminCustomerAccountController {
   constructor(private readonly accounts: CustomerAccountsService) {}

@@ -190,7 +190,7 @@ export class CustomersService {
   async updateCoupon(id: string, dto: UpdateCouponDto, userId: string) {
     const before = await this.prisma.coupon.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Coupon not found');
-    this.validateCoupon({ ...before, value: before.value.toString(), ...dto } as CreateCouponDto);
+    this.validateCoupon({ ...before, value: before.value.toString(), ...dto } as unknown as CreateCouponDto);
     const coupon = await this.prisma.coupon.update({ where: { id }, data: dto });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Coupon', entityId: id, before, after: coupon });
     return coupon;

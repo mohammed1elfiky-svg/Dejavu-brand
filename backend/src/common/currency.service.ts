@@ -58,6 +58,8 @@ export interface CurrencyInput {
   isActive?: boolean;
   showInCustomerApp?: boolean;
   sortOrder?: number;
+  /** Picture of a note or coin; null clears it. */
+  imageUrl?: string | null;
 }
 
 @Injectable()
@@ -123,6 +125,7 @@ export class CurrencyService implements OnModuleInit {
       isActive: c.isActive,
       showInCustomerApp: c.showInCustomerApp,
       sortOrder: c.sortOrder,
+      imageUrl: c.imageUrl,
       rate: c.isBase ? '1' : latest ? dec(latest.rate).toString() : null,
       updatedAt: latest?.effectiveAt ?? null,
     };
@@ -150,6 +153,7 @@ export class CurrencyService implements OnModuleInit {
         isActive: dto.isActive ?? true,
         showInCustomerApp: dto.showInCustomerApp ?? false,
         sortOrder: dto.sortOrder ?? 10,
+        imageUrl: dto.imageUrl ?? null,
       },
     });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'Currency', entityId: code, after: row });
@@ -174,6 +178,7 @@ export class CurrencyService implements OnModuleInit {
         isActive: dto.isActive,
         showInCustomerApp: dto.showInCustomerApp,
         sortOrder: dto.sortOrder,
+        imageUrl: dto.imageUrl,
       },
     });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Currency', entityId: code, before, after: row });

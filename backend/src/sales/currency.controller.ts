@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags, PartialType, OmitType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { AuthPrincipal, CurrentUser, Public, RequirePermissions, StaffOnly } from '../common/decorators/auth.decorators';
 import { CurrencyService } from '../common/currency.service';
 
@@ -66,6 +66,14 @@ export class CreateCurrencyDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  @ApiPropertyOptional({ example: 'https://…/files/…', description: 'Picture of a note or coin shown next to the currency; "" removes it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string | null;
 
   @ApiPropertyOptional({ example: '0.266667', description: 'Initial rate: units per 1 SAR' })
   @IsOptional()

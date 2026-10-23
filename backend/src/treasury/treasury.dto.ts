@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { CashBoxKind, TopUpStatus } from '../generated/prisma/client';
 import { IsAmount, IsCurrencyCode } from '../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -318,4 +318,21 @@ export class OpeningBalanceDto {
   @IsString()
   @MaxLength(255)
   note?: string;
+}
+
+export class DebtorsQueryDto {
+  @ApiPropertyOptional({ example: 30, description: 'Only customers who have not paid for at least this many days' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  minDays?: number;
+}
+
+export class DebtRemindersDto {
+  @ApiProperty({ type: [String] })
+  @IsUUID('all', { each: true })
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  customerIds: string[];
 }

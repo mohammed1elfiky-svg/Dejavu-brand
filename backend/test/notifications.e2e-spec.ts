@@ -96,7 +96,8 @@ describe('Notifications (e2e)', () => {
   });
 
   it('marks everything as handled by the push dispatcher', async () => {
-    await app.get(NotificationsService).dispatch();
+    // Other suites leave notifications waiting too; the dispatcher works through them in batches.
+    for (let i = 0; i < 20 && (await prisma.notification.count({ where: { pushedAt: null } })); i++) await app.get(NotificationsService).dispatch();
     expect(await prisma.notification.count({ where: { customerId: shopper.customerId, pushedAt: null } })).toBe(0);
   });
 });

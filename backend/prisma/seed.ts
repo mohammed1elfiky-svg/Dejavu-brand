@@ -79,6 +79,7 @@ const ACCOUNTS: AccountSeed[] = [
   { code: "5207", ar: "التغليف", en: "Packaging", parent: "52" },
   { code: "5208", ar: "مصروفات الإهلاك", en: "Depreciation Expense", parent: "52" },
   { code: "5209", ar: "عمولات وكلاء الشراء", en: "Purchasing Agent Commissions", parent: "52", key: "SUPPLIER_COMMISSION" },
+  { code: "5210", ar: "عجز وزيادة الصناديق", en: "Cash Over & Short", parent: "52", key: "CASH_OVER_SHORT" },
   { code: "5299", ar: "مصروفات متنوعة", en: "Miscellaneous", parent: "52" },
 ];
 
@@ -97,14 +98,14 @@ const PERMISSIONS: Record<string, string[]> = {
   dashboard: ["dashboard.view"],
   catalog: ["products.read", "products.write", "categories.write"],
   inventory: ["stock.read", "stock.adjust", "stock.transfer", "stock.count"],
-  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage", "promotions.manage", "pos.sell"],
+  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage", "promotions.manage", "pos.sell", "pos.edit_sales"],
   customers: ["customers.read", "customers.write"],
   purchasing: ["suppliers.manage", "purchases.read", "purchases.write", "purchases.receive"],
   payments: ["payments.read", "payments.record", "supplier_payments.record", "cashboxes.manage", "wallet.manage"],
   expenses: ["expenses.read", "expenses.write", "expenses.approve"],
   accounting: ["accounts.manage", "journal.read", "journal.write", "journal.post", "journal.reverse", "periods.close"],
   reports: ["reports.sales", "reports.inventory", "reports.financial"],
-  system: ["users.manage", "roles.manage", "settings.manage", "audit.read", "notifications.send"],
+  system: ["users.manage", "roles.manage", "settings.manage", "audit.read", "notifications.send", "system.backup"],
 };
 
 const ROLES: Record<string, { description: string; permissions: string[] | "*" }> = {
@@ -125,11 +126,11 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
   },
   sales: {
     description: "Order handling and customer service",
-    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales", "pos.sell"],
+    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales", "pos.sell", "pos.edit_sales"],
   },
   cashier: {
     description: "Point of sale: sells at the till and sees only their own cash drawers",
-    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell", "orders.read"],
+    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell", "pos.edit_sales", "orders.read"],
   },
 };
 

@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { CustomerAccountsService } from './customer-accounts.service';
 import {
   AdminCustomerAccountController,
+  AdminDebtorsController,
   AdminTreasuryController,
   AdminWalletController,
   StoreBankAccountsController,
@@ -12,7 +13,7 @@ import { WalletService } from './wallet.service';
 
 @Global()
 @Module({
-  controllers: [AdminTreasuryController, AdminCustomerAccountController, AdminWalletController, StoreBankAccountsController, StoreWalletController],
+  controllers: [AdminTreasuryController, AdminDebtorsController, AdminCustomerAccountController, AdminWalletController, StoreBankAccountsController, StoreWalletController],
   providers: [TreasuryService, CustomerAccountsService, WalletService],
   exports: [TreasuryService, CustomerAccountsService],
 })

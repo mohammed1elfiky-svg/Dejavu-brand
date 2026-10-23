@@ -246,7 +246,7 @@ export class TreasuryService {
     return this.getTransfer(id);
   }
 
-  private async transferIn(
+  async transferIn(
     tx: Tx,
     dto: { fromBoxId: string; toBoxId: string; amount: string; toAmount?: string; note?: string },
     user: { id: string; permissions: string[] },

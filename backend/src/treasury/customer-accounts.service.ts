@@ -39,6 +39,68 @@ export class CustomerAccountsService {
       .filter((r) => !r.balance.isZero() || !r.bookValue.isZero());
   }
 
+  /**
+   * Customers who owe money: balances per currency (+ = owes), the SAR total, and when
+   * they last paid or bought, oldest debt first in time since their last payment.
+   */
+  async debtors(minDays = 0) {
+    const rows = await this.prisma.$queryRaw<
+      { customer_id: string; currency: string; balance: string; base: string }[]
+    >`SELECT customer_id::text, currency, SUM(amount)::text AS balance, SUM(base_amount)::text AS base
+      FROM customer_account_entries GROUP BY 1, 2 HAVING SUM(amount) > 0`;
+    const ids = [...new Set(rows.map((r) => r.customer_id))];
+    if (!ids.length) return { items: [], totalOwed: money(0) };
+    const [customers, payments, purchases] = await Promise.all([
+      this.prisma.customer.findMany({ where: { id: { in: ids } }, select: { id: true, code: true, name: true, phone: true, isMerchant: true } }),
+      this.prisma.customerAccountEntry.groupBy({ by: ['customerId'], where: { customerId: { in: ids }, amount: { lt: 0 } }, _max: { createdAt: true } }),
+      this.prisma.customerAccountEntry.groupBy({ by: ['customerId'], where: { customerId: { in: ids }, amount: { gt: 0 } }, _max: { createdAt: true }, _min: { createdAt: true } }),
+    ]);
+    const now = Date.now();
+    const items = customers
+      .filter((c) => c.code !== 'CUS-WALKIN')
+      .map((c) => {
+        const mine = rows.filter((r) => r.customer_id === c.id);
+        const lastPaymentAt = payments.find((p) => p.customerId === c.id)?._max.createdAt ?? null;
+        const bought = purchases.find((p) => p.customerId === c.id);
+        const since = lastPaymentAt ?? bought?._min.createdAt ?? null;
+        return {
+          ...c,
+          balances: mine.map((r) => ({ currency: r.currency, balance: inCurrency(r.balance, r.currency) })),
+          owedSar: money(mine.reduce((t, r) => t.add(dec(r.base)), dec(0))),
+          lastPaymentAt,
+          lastPurchaseAt: bought?._max.createdAt ?? null,
+          /** Days since the last payment (or since the first purchase on account when never paid). */
+          daysSincePayment: since ? Math.floor((now - since.getTime()) / 86_400_000) : null,
+        };
+      })
+      .filter((d) => (d.daysSincePayment ?? 0) >= minDays)
+      .sort((a, b) => (b.daysSincePayment ?? 0) - (a.daysSincePayment ?? 0) || b.owedSar.cmp(a.owedSar));
+    return { items, totalOwed: money(items.reduce((t, d) => t.add(d.owedSar), dec(0))) };
+  }
+
+  /** Texts each customer what they still owe, from the store phone. */
+  async remind(customerIds: string[], userId: string) {
+    let queued = 0;
+    const skipped: { customerId: string; reason: string }[] = [];
+    for (const id of [...new Set(customerIds)]) {
+      const customer = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, name: true, phone: true } });
+      if (!customer?.phone) {
+        skipped.push({ customerId: id, reason: 'no phone' });
+        continue;
+      }
+      const owed = (await this.balances(id)).filter((b) => b.balance.gt(0));
+      if (!owed.length) {
+        skipped.push({ customerId: id, reason: 'owes nothing' });
+        continue;
+      }
+      const lines = owed.map((b) => formatIn(b.balance, b.currency)).join(' + ');
+      await this.sms.enqueue(customer.phone, `Dejavu: عزيزنا ${customer.name}، نذكّرك بأن المتبقي عليك: ${lines}.\nنسعد بسدادك في أقرب وقت، وشكراً لتعاملك معنا.`, 'OTHER');
+      queued++;
+    }
+    await this.audit.log({ userId, action: 'CREATE', entityType: 'DebtReminder', after: { customerIds, queued } });
+    return { queued, skipped };
+  }
+
   async statement(customerId: string, q: PaginationQueryDto & { currency?: string }) {
     const where = { customerId, currency: q.currency };
     const [items, total] = await Promise.all([

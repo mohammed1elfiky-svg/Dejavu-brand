@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -350,7 +350,47 @@ export class CreateCouponDto {
   isActive?: boolean;
 }
 
-export class UpdateCouponDto extends PartialType(CreateCouponDto) {}
+const clear = ({ value }: { value: unknown }) => (value === '' ? null : value);
+
+/** Edit a coupon; "" removes an optional limit (min order, max discount, usage limits, end date). */
+export class UpdateCouponDto extends PartialType(OmitType(CreateCouponDto, ['minOrderAmount', 'maxDiscount', 'usageLimit', 'perCustomerLimit', 'endsAt'] as const)) {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(clear)
+  @ValidateIf((_, v) => v !== null)
+  @IsAmount()
+  minOrderAmount?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(clear)
+  @ValidateIf((_, v) => v !== null)
+  @IsAmount()
+  maxDiscount?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(clear)
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  usageLimit?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(clear)
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  perCustomerLimit?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(clear)
+  @ValidateIf((_, v) => v !== null)
+  @IsDateString()
+  endsAt?: string | null;
+}
 
 export class ShippingZoneDto {
   @ApiProperty({ example: 'القاهرة' })

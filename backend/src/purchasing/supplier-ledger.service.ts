@@ -93,16 +93,14 @@ export class SupplierLedgerService {
     await this.prisma.$transaction(async (tx) => {
       const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
       if (!supplier) throw new NotFoundException('Supplier not found');
-      const currency = dto.currency.toUpperCase();
+      const currency = dto.currency;
       const amount = money(dto.amount);
       if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
-      const known = await tx.currency.findUnique({ where: { code: currency }, select: { code: true } });
-      const sar = dto.sarAmount
-        ? money(dto.sarAmount)
-        : known
-          ? toBase(amount, currency, await this.currencies.rate(currency, tx))
-          : null;
-      if (!sar || !sar.gt(0)) throw new BadRequestException(`Enter what ${currency} ${amount.toFixed()} is worth in SAR`);
+      // Yuan go through the dollar (the last payment rate unless given); dollars at the USD rate.
+      const perUsd = currency === 'USD' ? dec(1) : dto.foreignPerUsd ? dec(dto.foreignPerUsd) : await this.lastRate(tx, supplier.id);
+      if (!dto.sarAmount && !perUsd?.gt(0)) throw new BadRequestException('Enter the yuan rate of the dollar (no payment voucher has one yet)');
+      const sar = dto.sarAmount ? money(dto.sarAmount) : toBase(amount.div(perUsd!), 'USD', await this.currencies.rate('USD', tx));
+      if (!sar.gt(0)) throw new BadRequestException('Amount must be greater than zero');
       const weOwe = dto.direction === 'WE_OWE';
       const entry = await this.ledger.post(tx, {
         description: `Opening balance of ${supplier.name}: ${amount.toFixed()} ${currency} ${weOwe ? 'owed to the supplier' : 'owed by the supplier'}${dto.note ? ` — ${dto.note}` : ''}`,
@@ -149,7 +147,9 @@ export class SupplierLedgerService {
     const usd = inCurrency(dto.usdAmount, 'USD');
     if (!usd.gt(0)) throw new BadRequestException('Amount must be greater than zero');
     const goods = (dto.applyTo ?? 'GOODS') === 'GOODS';
-    const rate = dto.foreignPerUsd ? dec(dto.foreignPerUsd) : null;
+    // Goods owed in dollars are paid one for one; goods owed in yuan at the day's rate.
+    const inUsd = goods && dto.foreignCurrency === 'USD';
+    const rate = inUsd ? dec(1) : dto.foreignPerUsd ? dec(dto.foreignPerUsd) : null;
     if (goods && !rate?.gt(0)) throw new BadRequestException('Enter the yuan rate of the dollar for this payment');
     const held = await this.treasury.balanceOf(tx, { boxId: box.id });
     if (held.amount.lt(usd)) throw new UnprocessableEntityException(`Not enough money in ${box.name} (${held.amount.toFixed()} USD)`);
@@ -164,7 +164,7 @@ export class SupplierLedgerService {
         kind: SupplierVoucherKind.PAYMENT,
         usdAmount: usd,
         foreignCurrency: goods ? currency : null,
-        foreignPerUsd: goods ? rate : null,
+        foreignPerUsd: goods && !inUsd ? rate : null,
         foreignAmount: goods ? credited : null,
         cashBoxId: box.id,
         note: dto.note,
@@ -176,7 +176,7 @@ export class SupplierLedgerService {
     // What left the box (at its book value) is what the payable goes down by.
     const booked = out.reduce((t, l) => t.add(dec(l.credit ?? 0)).sub(dec(l.debit ?? 0)), dec(0));
     const entry = await this.ledger.post(tx, {
-      description: `Payment voucher ${number} to ${supplier.name}: ${usd.toFixed()} USD${goods ? ` at ${rate!.toFixed()} ${currency}` : ' (commission)'}`,
+      description: `Payment voucher ${number} to ${supplier.name}: ${usd.toFixed()} USD${inUsd ? '' : goods ? ` at ${rate!.toFixed()} ${currency}` : ' (commission)'}`,
       sourceType: 'SUPPLIER_PAYMENT',
       sourceId: voucher.id,
       userId: user.id,
@@ -190,7 +190,7 @@ export class SupplierLedgerService {
         amount: credited.neg(),
         sourceType: 'VOUCHER',
         sourceId: voucher.id,
-        note: `سند صرف ${number}: ${usd.toFixed()} $${goods ? ` × ${rate!.toFixed()}` : ' (عمولة)'}${dto.note ? ` — ${dto.note}` : ''}`,
+        note: `سند صرف ${number}: ${usd.toFixed()} $${inUsd ? '' : goods ? ` × ${rate!.toFixed()}` : ' (عمولة)'}${dto.note ? ` — ${dto.note}` : ''}`,
       },
     });
     await this.audit.log({ userId: user.id, action: 'CREATE', entityType: 'SupplierVoucher', entityId: voucher.id, after: dto }, tx);

@@ -25,6 +25,7 @@ export type SystemAccount =
   | 'CAPITAL'
   | 'RETAINED_EARNINGS'
   | 'OPENING_BALANCE'
+  | 'CASH_OVER_SHORT'
   | 'SALES'
   | 'SALES_RETURNS'
   | 'SALES_DISCOUNTS'

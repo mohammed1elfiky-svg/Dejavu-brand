@@ -1,6 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
-  Coupon,
   CouponType,
   OrderChannel,
   OrderStatus,
@@ -23,8 +22,9 @@ import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { PosFreeReturnDto, PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
 import { ReturnsService } from './returns.service';
-import { CartService } from './cart.service';
-import { PricingCoupon, priceOrder, revenueSplit } from './pricing';
+import { ShiftService } from './shift.service';
+import { startOfBusinessDay } from '../common/utils/dates';
+import { priceOrder, revenueSplit } from './pricing';
 import { getSetting } from './settings';
 
 /** Customer code of the anonymous walk-in buyer that cash sales without a customer go to. */
@@ -84,7 +84,7 @@ export class PosService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly returns: ReturnsService,
-    private readonly cart: CartService,
+    private readonly shifts: ShiftService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -145,6 +145,14 @@ export class PosService {
   // ----------------------------------------------------------------- sale ---
 
   async sell(dto: PosSaleDto, cashierId: string) {
+    // A sale queued offline and sent again is booked once.
+    if (dto.clientRef) {
+      const seen = await this.prisma.order.findUnique({ where: { clientRef: dto.clientRef }, select: { id: true, cashierId: true } });
+      if (seen) {
+        if (seen.cashierId !== cashierId) throw new ConflictException('This sale was already sent by another cashier');
+        return this.receipt(seen.id);
+      }
+    }
     await this.treasury.ensureCashierBoxes(cashierId);
     const orderId = await this.prisma.$transaction((tx) => this.sellIn(tx, dto, cashierId));
     return this.receipt(orderId);
@@ -182,18 +190,7 @@ export class PosService {
         taxRate: v.product.taxRate?.isActive ? v.product.taxRate.rate : 0,
       }));
       const pricesIncludeTax = await getSetting(tx, 'tax.pricesIncludeTax', true);
-      let discount: PricingCoupon | null = this.discountOf(dto, invoiceCurrency.code, rate);
-      // A discount code works at the till as in the app (one per sale; walk-ins share no per-customer limit).
-      let coupon: Coupon | null = null;
-      if (dto.couponCode) {
-        if (discount) throw new BadRequestException('Use either a discount code or a typed discount');
-        const walkIn = customerId === (await this.walkInId(tx));
-        const subtotal = priceOrder({ lines: basket, shippingFee: 0, pricesIncludeTax }).subtotal;
-        const check = await this.cart.checkCoupon(tx, dto.couponCode, customerId, subtotal.toString(), !walkIn);
-        if (typeof check === 'string') throw new UnprocessableEntityException(check);
-        coupon = check;
-        discount = { type: coupon.type, value: coupon.value, maxDiscount: coupon.maxDiscount };
-      }
+      const discount = this.discountOf(dto, invoiceCurrency.code, rate);
       const pricing = priceOrder({ lines: basket, coupon: discount, shippingFee: 0, pricesIncludeTax });
       const total = pricing.grandTotal;
 
@@ -231,6 +228,13 @@ export class PosService {
       // ---- the invoice, then the stock it hands over ----
       const number = await this.sequences.next(tx, 'POS');
       const now = new Date();
+      let placedAt = now;
+      if (dto.soldAt) {
+        placedAt = new Date(dto.soldAt);
+        if (placedAt > new Date(now.getTime() + 5 * 60_000) || placedAt < new Date(now.getTime() - 7 * 24 * 3600_000)) {
+          throw new BadRequestException('soldAt must be within the last 7 days');
+        }
+      }
       const order = await tx.order.create({
         data: {
           number,
@@ -238,7 +242,6 @@ export class PosService {
           warehouseId: warehouse.id,
           channel: OrderChannel.POS,
           cashierId,
-          couponId: coupon?.id,
           status: OrderStatus.COMPLETED,
           paymentStatus: PaymentStatus.PAID,
           paymentMethod:
@@ -257,7 +260,8 @@ export class PosService {
           grandTotal: total,
           amountPaid: total,
           internalNote: dto.note,
-          placedAt: now,
+          placedAt,
+          clientRef: dto.clientRef,
           confirmedAt: now,
           deliveredAt: now,
           items: {
@@ -281,10 +285,6 @@ export class PosService {
         },
         include: { items: true },
       });
-      if (coupon) {
-        await tx.couponUsage.create({ data: { couponId: coupon.id, customerId, orderId: order.id } });
-        await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } });
-      }
       const costs: Decimal[] = [];
       for (const item of [...order.items].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
         const issued = await this.stock.stockOut(tx, {
@@ -333,7 +333,9 @@ export class PosService {
         );
         payments.push({
           ...(await this.payment(tx, order.id, t.method, t.boxAccountId, t.currency, t.amount, t.rate, t.sar)),
-          ...(t.method === PaymentMethod.BANK_TRANSFER && dto.reference ? { gatewayPayload: { reference: dto.reference } } : {}),
+          ...(t.method === PaymentMethod.BANK_TRANSFER && (dto.reference || dto.slipFileId)
+            ? { gatewayPayload: { ...(dto.reference && { reference: dto.reference }), ...(dto.slipFileId && { slipFileId: dto.slipFileId }) } }
+            : {}),
         });
       }
       if (change.gt(0)) {
@@ -620,6 +622,106 @@ export class PosService {
         ...(await this.treasury.moneyLines(tx, { account: { id: box.accountId }, currency: cashCurrency, amount: cash.neg(), sar: sar.neg() })),
       ],
     });
+  }
+
+  // ------------------------------------------------- today's invoices ---
+
+  /** Till sales of one business day: the cashier's own, or everyone's for managers. */
+  async salesOf(day: { from: Date; to: Date }, user: { id: string; permissions: string[] }, all = false) {
+    const everyone = all && user.permissions.includes('cashboxes.manage');
+    const rows = await this.prisma.order.findMany({
+      where: { channel: OrderChannel.POS, placedAt: { gte: day.from, lt: day.to }, ...(everyone ? {} : { cashierId: user.id }) },
+      orderBy: { placedAt: 'desc' },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        grandTotal: true,
+        currency: true,
+        exchangeRate: true,
+        paymentMethod: true,
+        placedAt: true,
+        cancelledAt: true,
+        cancelReason: true,
+        internalNote: true,
+        customer: { select: { id: true, name: true, code: true } },
+        cashier: { select: { id: true, name: true } },
+        _count: { select: { items: true } },
+      },
+    });
+    return rows.map(({ _count, ...o }) => ({
+      ...o,
+      itemCount: _count.items,
+      grandTotalInCurrency: toCurrency(o.grandTotal, o.currency, o.exchangeRate),
+      isVoided: o.status === OrderStatus.CANCELLED,
+    }));
+  }
+
+  /**
+   * Deletes a till sale: its journal entries are reversed (sales, cost, the money in the
+   * drawers and on the customer's account) and the pieces go back on the shelf.
+   */
+  async voidSale(id: string, reason: string | undefined, user: { id: string; permissions: string[] }) {
+    await this.prisma.$transaction((tx) => this.voidIn(tx, id, reason, user));
+    return this.receipt(id);
+  }
+
+  /** Corrects a till sale: the old invoice is deleted and the corrected one rung up in its place. */
+  async editSale(id: string, dto: PosSaleDto, user: { id: string; permissions: string[] }) {
+    await this.treasury.ensureCashierBoxes(user.id);
+    const newId = await this.prisma.$transaction(async (tx) => {
+      const old = await this.voidIn(tx, id, 'تعديل الفاتورة', user);
+      const created = await this.sellIn(tx, { ...dto, clientRef: undefined, soldAt: undefined }, old.cashierId ?? user.id);
+      const replacement = await tx.order.findUniqueOrThrow({ where: { id: created }, select: { number: true } });
+      await tx.order.update({ where: { id }, data: { cancelReason: `عُدّلت بالفاتورة ${replacement.number}` } });
+      await tx.order.update({ where: { id: created }, data: { internalNote: [`بدل الفاتورة ${old.number}`, dto.note].filter(Boolean).join(' — ') } });
+      return created;
+    });
+    return this.receipt(newId);
+  }
+
+  private async voidIn(tx: Tx, id: string, reason: string | undefined, user: { id: string; permissions: string[] }) {
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id}::uuid FOR UPDATE`;
+    const order = await tx.order.findUnique({ where: { id }, include: { items: true } });
+    if (!order || order.channel !== OrderChannel.POS) throw new NotFoundException('Sale not found');
+    if (order.status === OrderStatus.CANCELLED) throw new UnprocessableEntityException('This sale was already deleted');
+    const manager = user.permissions.includes('cashboxes.manage');
+    if (!manager) {
+      if (order.cashierId !== user.id) throw new ForbiddenException('You can only change your own sales');
+      const today = startOfBusinessDay(process.env.STORE_TIMEZONE ?? 'Asia/Aden');
+      if (order.placedAt < today) throw new UnprocessableEntityException("Only today's sales can be changed");
+      if (await this.shifts.inClosedShift(tx, order.cashierId, order.placedAt)) throw new UnprocessableEntityException('The shift of this sale is closed');
+    }
+    if (order.items.some((i) => i.returnedQty > 0) || (await tx.salesReturn.count({ where: { orderId: id } }))) {
+      throw new UnprocessableEntityException('Pieces of this sale were returned; it cannot be changed');
+    }
+    const entries = await tx.journalEntry.findMany({ where: { sourceId: id, status: 'POSTED' }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+    for (const e of entries) await this.ledger.reverse(tx, e.id, user.id, `Sale ${order.number} deleted`);
+    for (const item of [...order.items].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
+      await this.stock.stockIn(tx, {
+        type: StockMovementType.SALES_RETURN,
+        variantId: item.variantId,
+        warehouseId: order.warehouseId!,
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        sourceType: 'ORDER',
+        sourceId: order.id,
+        note: `حذف الفاتورة ${order.number}`,
+        userId: user.id,
+      });
+    }
+    await tx.payment.updateMany({ where: { orderId: id }, data: { status: TransactionStatus.CANCELLED } });
+    await tx.order.update({
+      where: { id },
+      data: {
+        status: OrderStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason: reason ?? 'حذف من الكاشير',
+        statusHistory: { create: { fromStatus: order.status, toStatus: OrderStatus.CANCELLED, note: reason ?? 'POS sale deleted', changedById: user.id } },
+      },
+    });
+    await this.audit.log({ userId: user.id, action: 'CANCEL', entityType: 'PosSale', entityId: id, before: { number: order.number, grandTotal: order.grandTotal }, after: { reason } }, tx);
+    return order;
   }
 
   /** What the till prints: lines, totals in the invoice currency, tenders and change. */

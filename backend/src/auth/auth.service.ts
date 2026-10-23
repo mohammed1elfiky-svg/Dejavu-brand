@@ -50,6 +50,7 @@ export class AuthService {
         phone: true,
         status: true,
         saleCurrency: true,
+        posSettings: true,
         roles: { select: { role: { select: { id: true, name: true } } } },
       },
     });

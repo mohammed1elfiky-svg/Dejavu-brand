@@ -7,7 +7,9 @@ import { CatalogService } from '../catalog/catalog.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { parseDateOnly } from '../common/utils/dates';
-import { dec, money } from '../common/utils/money';
+import { Decimal, dec, money } from '../common/utils/money';
+import { CurrencyService } from '../common/currency.service';
+import { SupplierLedgerService } from './supplier-ledger.service';
 import { StockService } from '../inventory/stock.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import {
@@ -63,6 +65,8 @@ export class PurchasingService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly catalog: CatalogService,
+    private readonly currencies: CurrencyService,
+    private readonly supplierLedger: SupplierLedgerService,
   ) {}
 
   // ------------------------------------------------------------ suppliers ---
@@ -160,9 +164,10 @@ export class PurchasingService {
   }
 
   async createOrder(dto: PurchaseOrderDto, userId: string) {
-    const fresh = await this.draftProducts(dto, userId);
+    const fx = await this.fxOf(dto);
+    const fresh = await this.draftProducts(dto, userId, fx?.factor);
     if (!dto.items.length && !fresh.length) throw new BadRequestException('Add at least one item');
-    const prepared = await this.prepare({ ...dto, items: [...dto.items, ...fresh] });
+    const prepared = await this.prepare(this.inSar({ ...dto, items: [...dto.items, ...fresh] }, fx));
     const created = new Set(fresh.map((f) => f.variantId));
     prepared.items = prepared.items.map((i) => ({ ...i, createdProduct: created.has(i.variantId) }));
     const id = await this.prisma.$transaction(async (tx) => {
@@ -183,7 +188,7 @@ export class PurchasingService {
   async updateOrder(id: string, dto: PurchaseOrderDto, userId: string) {
     if (dto.newProducts?.length) throw new BadRequestException('Add new products when creating the order');
     if (!dto.items.length) throw new BadRequestException('Add at least one item');
-    const prepared = await this.prepare(dto);
+    const prepared = await this.prepare(this.inSar(dto, await this.fxOf(dto)));
     await this.prisma.$transaction(async (tx) => {
       const po = await this.lock(tx, id);
       if (po.status !== PurchaseOrderStatus.DRAFT) throw new BadRequestException('Only draft purchase orders can be edited');
@@ -241,14 +246,32 @@ export class PurchasingService {
    * everything into stock and (optionally) pays the supplier, in one call.
    */
   async quickPurchase(dto: QuickPurchaseDto, userId: string) {
-    const { receiveNow, payMethod, payAmount, payAccountId, ...order } = dto;
+    const { receiveNow, payMethod, payAmount, payAccountId, payBoxId, ...order } = dto;
+    const foreign = (order.currency ?? 'SAR') !== 'SAR';
+    if (foreign && payMethod && !payBoxId) throw new BadRequestException('Pay suppliers in dollars from a dollar box (payBoxId)');
     const po = await this.createOrder(order, userId);
     await this.placeOrder(po.id, userId);
     if (receiveNow !== false) {
       const items = await this.prisma.purchaseOrderItem.findMany({ where: { purchaseOrderId: po.id }, select: { id: true, quantity: true } });
       await this.receive(po.id, { items: items.map((i) => ({ itemId: i.id, quantity: i.quantity })), note: 'Received on purchase' }, userId);
     }
-    if (payMethod) {
+    if (payMethod && foreign) {
+      // A payment voucher in dollars, at the order's yuan rate when the order is in yuan.
+      const fresh = await this.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, select: { grandTotal: true, sarPerUsd: true, foreignPerUsd: true, number: true } });
+      const usd = payAmount ?? money(dec(fresh.grandTotal).div(fresh.sarPerUsd!)).toString();
+      await this.supplierLedger.pay(
+        {
+          supplierId: dto.supplierId,
+          usdAmount: usd,
+          cashBoxId: payBoxId!,
+          foreignCurrency: order.currency,
+          foreignPerUsd: order.currency === 'CNY' ? fresh.foreignPerUsd!.toString() : undefined,
+          applyTo: 'GOODS',
+          note: fresh.number,
+        },
+        { id: userId, permissions: ['cashboxes.manage'] },
+      );
+    } else if (payMethod) {
       const fresh = await this.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, select: { grandTotal: true } });
       await this.paySupplier(
         { supplierId: dto.supplierId, purchaseOrderId: po.id, method: payMethod, amount: payAmount ?? fresh.grandTotal.toString(), accountId: payAccountId },
@@ -323,6 +346,20 @@ export class PurchasingService {
           { account: 'AP', credit: inventory.add(tax), supplierId: po.supplierId },
         ],
       });
+
+      // Orders in dollars / yuan: what was received goes on the supplier's own account in that currency.
+      if (po.foreignCurrency && po.foreignPerUsd && po.sarPerUsd) {
+        const factor = dec(po.sarPerUsd).div(po.foreignPerUsd);
+        const goods = items.reduce((t, i, k) => t.add(dec(i.unitPriceForeign ?? dec(i.unitCost).div(factor)).mul(after[k] - before[k])), dec(0));
+        const subtotalForeign = items.reduce((t, i) => t.add(dec(i.unitPriceForeign ?? dec(i.unitCost).div(factor)).mul(i.quantity)), dec(0));
+        const shipping = subtotalForeign.isZero() ? dec(0) : dec(po.shippingCost).div(factor).mul(goods).div(subtotalForeign);
+        const value = money(goods.add(shipping));
+        if (value.gt(0)) {
+          await tx.supplierAccountEntry.create({
+            data: { supplierId: po.supplierId, currency: po.foreignCurrency, amount: value, sourceType: 'PURCHASE_ORDER', sourceId: po.id, note: [`استلام ${po.number}`, po.note].filter(Boolean).join(' — ') },
+          });
+        }
+      }
 
       const complete = after.every((q, i) => q === items[i].quantity);
       await tx.purchaseOrder.update({
@@ -438,7 +475,33 @@ export class PurchasingService {
    * Items bought for the first time become draft products right away (SKU number, variant
    * SKUs and barcodes assigned now, so labels can be printed); they go on sale once received.
    */
-  private async draftProducts(dto: PurchaseOrderDto, userId: string) {
+  /**
+   * Orders from suppliers are priced in dollars or yuan: SAR per unit of the order's
+   * currency (yuan through the dollar), or null for SAR orders.
+   */
+  private async fxOf(dto: PurchaseOrderDto) {
+    const currency = dto.currency ?? 'SAR';
+    if (currency === 'SAR') return null;
+    const usdPerSar = await this.currencies.rate('USD').catch(() => null);
+    if (!usdPerSar || usdPerSar.isZero()) throw new UnprocessableEntityException('Set the USD rate first');
+    const sarPerUsd = dec(1).div(usdPerSar).toDecimalPlaces(6);
+    const foreignPerUsd = currency === 'USD' ? dec(1) : dto.foreignPerUsd ? dec(dto.foreignPerUsd) : await this.supplierLedger.lastRate(this.prisma, dto.supplierId);
+    if (!foreignPerUsd || !foreignPerUsd.gt(0)) throw new BadRequestException('Enter the yuan rate of the dollar (no payment voucher has one yet)');
+    return { currency, foreignPerUsd, sarPerUsd, factor: sarPerUsd.div(foreignPerUsd) };
+  }
+
+  /** The order with its prices and shipping turned into SAR, remembering the original prices. */
+  private inSar<T extends PurchaseOrderDto>(dto: T, fx: Awaited<ReturnType<PurchasingService['fxOf']>>): T & { fx?: typeof fx } {
+    if (!fx) return dto;
+    return {
+      ...dto,
+      fx,
+      items: dto.items.map((i) => ({ ...i, unitCost: dec(i.unitCost).mul(fx.factor).toDecimalPlaces(4).toString(), foreignPrice: i.unitCost })),
+      shippingCost: dto.shippingCost ? money(dec(dto.shippingCost).mul(fx.factor)).toString() : undefined,
+    };
+  }
+
+  private async draftProducts(dto: PurchaseOrderDto, userId: string, factor?: Decimal) {
     const lines: { variantId: string; quantity: number; unitCost: string }[] = [];
     for (const p of dto.newProducts ?? []) {
       const product = await this.catalog.createProduct(
@@ -447,7 +510,7 @@ export class PurchasingService {
           brandId: p.brandId,
           nameAr: p.nameAr,
           basePrice: p.basePrice,
-          costPrice: p.unitCost,
+          costPrice: factor ? dec(p.unitCost).mul(factor).toDecimalPlaces(4).toString() : p.unitCost,
           status: ProductStatus.DRAFT,
           images: p.imageUrl ? [{ url: p.imageUrl }] : undefined,
           variants: p.variants.map((v) => ({ size: v.size, color: v.color, colorHex: v.colorHex, barcode: v.barcode })),
@@ -459,7 +522,7 @@ export class PurchasingService {
     return lines;
   }
 
-  private async prepare(dto: PurchaseOrderDto) {
+  private async prepare(dto: PurchaseOrderDto & { fx?: Awaited<ReturnType<PurchasingService['fxOf']>> }) {
     const supplier = await this.prisma.supplier.findUnique({ where: { id: dto.supplierId } });
     if (!supplier || !supplier.isActive) throw new NotFoundException('Supplier not found or inactive');
     const warehouse = dto.warehouseId
@@ -485,11 +548,15 @@ export class PurchasingService {
         taxTotal: t.taxTotal,
         shippingCost: t.shippingCost,
         grandTotal: t.grandTotal,
+        foreignCurrency: dto.fx?.currency ?? null,
+        foreignPerUsd: dto.fx?.foreignPerUsd ?? null,
+        sarPerUsd: dto.fx?.sarPerUsd ?? null,
       },
       items: dto.items.map((i, idx) => ({
         variantId: i.variantId,
         quantity: i.quantity,
         unitCost: i.unitCost,
+        unitPriceForeign: (i as { foreignPrice?: string }).foreignPrice ?? null,
         taxRate: lines[idx].taxRate,
         lineTotal: t.lines[idx].lineTotal,
       })),

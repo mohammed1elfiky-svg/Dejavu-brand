@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import com.dejavu.core.ui.theme.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +33,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +75,9 @@ import com.dejavu.core.ui.SummaryRow
 import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.toLoad
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -177,6 +181,10 @@ class PurchaseOrderViewModel(private val id: String, private val repo: Purchasin
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _deleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** Fires once the order was deleted. */
+    val deleted = _deleted.asSharedFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
@@ -200,6 +208,14 @@ class PurchaseOrderViewModel(private val id: String, private val repo: Purchasin
         }
     }
 
+    /** Deletes an order nothing was received for (it leaves the supplier account). */
+    fun delete() = act {
+        repo.cancelOrder(id).orSay()?.let {
+            say("تم حذف الطلبية ${it.number}")
+            _deleted.tryEmit(Unit)
+        }
+    }
+
     private fun act(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
@@ -211,7 +227,7 @@ class PurchaseOrderViewModel(private val id: String, private val repo: Purchasin
 }
 
 @Composable
-fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, openImportReceive: (String) -> Unit = {}) {
+fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, openImportReceive: (String) -> Unit = {}, editImport: (String) -> Unit = {}) {
     val vm = adminViewModel(key = "po:$id") { PurchaseOrderViewModel(id, it.purchasing) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -219,9 +235,11 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
     val receiving = remember { mutableStateMapOf<String, Int>() }
     var paying by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     CollectMessages(vm, snackbar)
+    LaunchedEffect(vm) { vm.deleted.collect { onBack() } }
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -230,6 +248,10 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar((state as? Load.Ready)?.value?.number ?: "أمر شراء", onBack) }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { po ->
             val canReceive = po.canReceive && session.can(Perm.PURCHASES_RECEIVE) && !po.isImport
+            val nothingReceived = po.items.all { it.receivedQty == 0 }
+            val canWrite = session.can(PURCHASES_WRITE)
+            val canEdit = canWrite && po.isImport && po.status == PurchaseOrderStatus.ORDERED && nothingReceived
+            val canDelete = canWrite && nothingReceived && (po.status == PurchaseOrderStatus.DRAFT || po.status == PurchaseOrderStatus.ORDERED)
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
@@ -252,7 +274,7 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         InfoCard {
                             Text("طلبية استيراد · ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                             po.foreignPerUsd?.let { SummaryRow("سعر الدولار", "$it ${po.foreignCurrency ?: ""} · ${po.sarPerUsd ?: "—"} ر.س") }
-                            SummaryRow("عمولة المورد", "${po.commissionPercent}%")
+                            if (!Money.isZero(po.commissionPercent)) SummaryRow("عمولة المورد", "${po.commissionPercent}%")
                             if (!Money.isZero(po.domesticShipping)) SummaryRow("الشحن الداخلي", "${po.domesticShipping} ${po.foreignCurrency ?: ""}")
                             po.totalCbm?.let { SummaryRow("الحجم / سعر CBM", "$it م³ · ${po.cbmRateUsd ?: "—"} \$") }
                             if (!Money.isZero(po.freightCost)) SummaryRow("الشحن الخارجي والجمارك", Money.format(po.freightCost))
@@ -264,6 +286,18 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         }
                     }
                 }
+                if (canEdit || canDelete) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (canEdit) OutlinedButton(onClick = { editImport(po.id) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("تعديل الطلبية") }
+                            if (canDelete) {
+                                OutlinedButton(onClick = { confirmDelete = true }, enabled = !busy, modifier = Modifier.weight(1f)) {
+                                    Text("حذف الطلبية", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
                 item {
                     OutlinedButton(
                         enabled = !exporting,
@@ -271,7 +305,10 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                             exporting = true
                             scope.launch {
                                 runCatching {
-                                    val rows = po.items.map { ChecklistRow(it.variant.product.nameAr, it.option, it.variant.sku, it.quantity, it.variant.product.images.firstOrNull()?.url) }
+                                    val rows = po.items.map {
+                                        val option = listOfNotNull(it.option.ifBlank { null }, it.note?.ifBlank { null }).joinToString(" · ")
+                                        ChecklistRow(it.variant.product.nameAr, option, it.variant.sku, it.quantity, it.variant.product.images.firstOrNull()?.url)
+                                    }
                                     sharePdf(context, checklistPdf(context, "قائمة مطابقة ${po.number}", "${po.supplier.name} · ${formatDate(po.orderDate)}", rows), "مطابقة ${po.number}")
                                 }
                                 exporting = false
@@ -284,6 +321,7 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                 items(po.items, key = { it.id }) { line ->
                     InfoCard {
                         Text(line.variant.product.nameAr, style = MaterialTheme.typography.titleSmall)
+                        line.note?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
                         Text("${line.option.ifBlank { "" }}${if (line.option.isNotBlank()) " · " else ""}${line.variant.sku} · ${Money.format(line.unitCost)} للقطعة", style = MaterialTheme.typography.bodySmall)
                         line.unitPriceForeign?.let { Text("سعر المورد: $it ${po.foreignCurrency ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
                         line.landedUnitCost?.let { Text("التكلفة الفعلية للقطعة: ${Money.format(it)}", style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
@@ -318,6 +356,21 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     }
                 }
                 item { JournalEntriesCard(po.journalEntries) }
+            }
+            if (confirmDelete) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = { Text("حذف الطلبية ${po.number}") },
+                    text = {
+                        Text(
+                            "ستُحذف الطلبية وتخرج من حساب المورد" +
+                                (if (po.items.any { it.createdProduct }) "، وتُؤرشف الأصناف الجديدة التي أُنشئت لها" else "") +
+                                ". لا يمكن التراجع.",
+                        )
+                    },
+                    confirmButton = { TextButton(onClick = { confirmDelete = false; vm.delete() }) { Text("حذف", color = MaterialTheme.colorScheme.error) } },
+                    dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("تراجع") } },
+                )
             }
             if (paying) MoneyDialog("سداد للمورد", SUPPLIER_METHODS, po.balanceDue, "سداد", { paying = false }) { amount, method, ref -> vm.pay(po, amount, method, ref) }
         }

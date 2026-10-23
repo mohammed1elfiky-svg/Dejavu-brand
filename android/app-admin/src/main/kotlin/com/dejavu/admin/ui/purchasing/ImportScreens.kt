@@ -3,6 +3,7 @@
 package com.dejavu.admin.ui.purchasing
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,9 +18,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -44,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,10 +83,12 @@ import com.dejavu.core.admin.ImportReceiveRequest
 import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.PendingItems
 import com.dejavu.core.admin.PurchaseOrderDetail
+import com.dejavu.core.admin.PurchaseOrderStatus
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.Supplier
 import com.dejavu.core.admin.SupplierDetail
-import com.dejavu.core.admin.UpdateSupplierRequest
+import com.dejavu.core.admin.UpdateImportOrderRequest
+import com.dejavu.core.admin.VariantPlanner
 import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
@@ -113,6 +119,9 @@ private fun plain(v: BigDecimal): String = v.stripTrailingZeros().toPlainString(
 
 private fun sar(v: String) = Money.formatBase(v)
 
+/** At most this many size × colour combinations for one new item. */
+private const val MAX_COMBINATIONS = 80
+
 @Composable
 private fun NumberField(label: String, value: String, modifier: Modifier = Modifier, hint: String? = null, integer: Boolean = false, onChange: (String) -> Unit) {
     OutlinedTextField(
@@ -132,6 +141,12 @@ private fun Thumb(url: String?, size: Int = 52) {
     Box(Modifier.size(size.dp).clip(RoundedCornerShape(12.dp)).background(Lux.Champagne), contentAlignment = Alignment.Center) {
         if (url != null) AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size.dp))
     }
+}
+
+@Composable
+private fun ColorDot(hex: String) {
+    val color = runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(Color.Gray)
+    Box(Modifier.size(16.dp).background(color, CircleShape).border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
 }
 
 // ============================================================== suppliers ===
@@ -155,7 +170,7 @@ class SuppliersViewModel(private val repo: PurchasingRepository) : BaseViewModel
     }
 }
 
-/** Suppliers with their balance and commission; opens a supplier's file. */
+/** Suppliers with their balance; opens a supplier's file. */
 @Composable
 fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (String) -> Unit) {
     val vm = adminViewModel { SuppliersViewModel(it.purchasing) }
@@ -195,10 +210,7 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
                                     Text(s.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text("${s.code}${s.phone?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(sar(s.balance), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
-                                    if (!Money.isZero(s.commissionPercent)) Text("عمولة ${s.commissionPercent}%", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
-                                }
+                                Text(sar(s.balance), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                             }
                         }
                     }
@@ -206,15 +218,15 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
             }
         }
     }
-    if (adding) SupplierDialog(onDismiss = { adding = false }) { name, phone, commission -> adding = false; vm.create(name, phone, commission, openSupplier) }
+    // Commission is billed in USD per period on the supplier's account, not as a percent.
+    if (adding) SupplierDialog(onDismiss = { adding = false }) { name, phone -> adding = false; vm.create(name, phone, "", openSupplier) }
 }
 
 @Composable
-private fun SupplierDialog(onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
+private fun SupplierDialog(onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
-    var commission by rememberSaveable { mutableStateOf("") }
-    val ok = name.trim().length >= 2 && (commission.isBlank() || num(commission)?.let { it < BigDecimal(100) } == true)
+    val ok = name.trim().length >= 2
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("مورد جديد") },
@@ -229,10 +241,10 @@ private fun SupplierDialog(onDismiss: () -> Unit, onSave: (String, String, Strin
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                NumberField("نسبة عمولة المورد %", commission, Modifier.fillMaxWidth(), hint = "تُضاف إلى تكلفة البضاعة المستوردة منه") { commission = it }
+                Text("العمولة تُضاف بالدولار من كشف حساب المورد عند المطابقة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(name, phone, commission) }, enabled = ok) { Text("حفظ") } },
+        confirmButton = { TextButton(onClick = { onSave(name, phone) }, enabled = ok) { Text("حفظ") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
     )
 }
@@ -250,26 +262,24 @@ class SupplierViewModel(private val id: String, private val repo: PurchasingRepo
             _state.value = runCatching { supplier.await().getOrThrow() to pending.await().getOrThrow() }.toLoad()
         }
     }
-
-    fun setCommission(percent: String) {
-        viewModelScope.launch {
-            repo.updateSupplier(id, UpdateSupplierRequest(commissionPercent = percent.ifBlank { "0" })).orSay()?.let {
-                say("تم حفظ نسبة العمولة")
-                load()
-            }
-        }
-    }
 }
 
-/** A supplier's file: balance, commission, goods still being shipped and the orders. */
+/** A supplier's file: balance, the account statement, goods still being shipped and the orders. */
 @Composable
-fun SupplierScreen(id: String, canManage: Boolean, canOrder: Boolean, onBack: () -> Unit, openOrder: (String) -> Unit, newImport: (String) -> Unit) {
+fun SupplierScreen(
+    id: String,
+    canManage: Boolean,
+    canOrder: Boolean,
+    onBack: () -> Unit,
+    openOrder: (String) -> Unit,
+    newImport: (String) -> Unit,
+    openAccount: (String) -> Unit,
+) {
     val vm = adminViewModel(key = "supplier:$id") { SupplierViewModel(id, it.purchasing) }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var editing by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
@@ -298,10 +308,8 @@ fun SupplierScreen(id: String, canManage: Boolean, canOrder: Boolean, onBack: ()
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("${s.code}${s.phone?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                         SummaryRow("الرصيد المستحق للمورد", sar(s.balance), strong = true, valueColor = Lux.GoldDeep)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("نسبة العمولة: ${s.commissionPercent}%", Modifier.weight(1f))
-                            if (canManage) TextButton(onClick = { editing = true }) { Text("تعديل") }
-                        }
+                        Button(onClick = { openAccount(id) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("كشف حساب المورد") }
+                        Text("سندات الصرف بالدولار وسعر اليوان، وعمولة المطابقة", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
                 item {
@@ -353,32 +361,34 @@ fun SupplierScreen(id: String, canManage: Boolean, canOrder: Boolean, onBack: ()
                     }
                 }
             }
-            if (editing) {
-                var value by rememberSaveable { mutableStateOf(s.commissionPercent) }
-                AlertDialog(
-                    onDismissRequest = { editing = false },
-                    title = { Text("نسبة عمولة المورد") },
-                    text = { NumberField("النسبة %", value, Modifier.fillMaxWidth()) { value = it } },
-                    confirmButton = {
-                        TextButton(enabled = value.isBlank() || num(value)?.let { it < BigDecimal(100) } == true, onClick = { editing = false; vm.setCommission(value) }) { Text("حفظ") }
-                    },
-                    dismissButton = { TextButton(onClick = { editing = false }) { Text("إلغاء") } },
-                )
-            }
         }
     }
 }
 
-// ======================================================= new import order ===
+// ========================================================= import lines ===
 
-/** One line of the order being written. */
+/** One line of the order being written or edited. */
 sealed interface ImportLine {
     val key: String
     val pieces: Int
     val priceForeign: String
 
-    data class Existing(val product: AdminProduct, val variant: AdminVariant, val quantity: String, override val priceForeign: String) : ImportLine {
-        override val key get() = variant.id
+    /** Factory name / note shown on the supplier's statement. */
+    val note: String
+
+    /** An item that exists already (including new items an order being edited created). */
+    data class Existing(
+        val variantId: String,
+        val name: String,
+        val option: String,
+        val sku: String,
+        val imageUrl: String?,
+        val quantity: String,
+        override val priceForeign: String,
+        override val note: String = "",
+        val createdProduct: Boolean = false,
+    ) : ImportLine {
+        override val key get() = variantId
         override val pieces get() = quantity.toIntOrNull() ?: 0
     }
 
@@ -390,52 +400,27 @@ sealed interface ImportLine {
         override val priceForeign: String,
         val imageUrl: String?,
         val variants: List<ImportNewVariant>,
+        override val note: String = "",
         override val key: String = "new:" + System.nanoTime(),
     ) : ImportLine {
         override val pieces get() = variants.sumOf { it.quantity }
     }
 }
 
-class NewImportViewModel(
-    private val presetSupplierId: String?,
-    private val repo: PurchasingRepository,
-    private val inventory: InventoryRepository,
-) : BaseViewModel() {
-    private val _suppliers = MutableStateFlow<List<Supplier>>(emptyList())
-    val suppliers = _suppliers.asStateFlow()
+/** The lines of an import order and the item pickers, shared by writing and editing an order. */
+abstract class ImportLinesViewModel(protected val inventory: InventoryRepository) : BaseViewModel() {
     private val _categories = MutableStateFlow<List<Pair<AdminCategory, Int>>>(emptyList())
     val categories = _categories.asStateFlow()
     private val _results = MutableStateFlow<List<AdminProduct>>(emptyList())
     val results = _results.asStateFlow()
-    private val _busy = MutableStateFlow(false)
-    val busy = _busy.asStateFlow()
     private val _uploading = MutableStateFlow(false)
     val uploading = _uploading.asStateFlow()
-    private val _created = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val created = _created.asSharedFlow()
 
-    var supplierId by mutableStateOf(presetSupplierId)
     var currency by mutableStateOf("CNY")
-    var foreignPerUsd by mutableStateOf("7.2")
-    var sarPerUsd by mutableStateOf("")
-    var commission by mutableStateOf("")
-    var domestic by mutableStateOf("")
-    var invoiceNo by mutableStateOf("")
     val lines = mutableStateListOf<ImportLine>()
 
-    fun load() {
-        viewModelScope.launch {
-            repo.suppliers().getOrNull()?.items?.let { list ->
-                _suppliers.value = list
-                list.firstOrNull { it.id == supplierId }?.let { if (commission.isBlank()) commission = it.commissionPercent }
-            }
-        }
+    protected fun loadCategories() {
         viewModelScope.launch { inventory.categories().getOrNull()?.let { _categories.value = it } }
-    }
-
-    fun pickSupplier(s: Supplier) {
-        supplierId = s.id
-        commission = s.commissionPercent
     }
 
     fun search(q: String) {
@@ -444,7 +429,15 @@ class NewImportViewModel(
 
     fun addExisting(p: AdminProduct, v: AdminVariant) {
         if (lines.any { it.key == v.id }) return say("هذا المقاس مضاف بالفعل")
-        lines += ImportLine.Existing(p, v, "1", "")
+        lines += ImportLine.Existing(
+            variantId = v.id,
+            name = p.nameAr,
+            option = listOfNotNull(v.size, v.color).joinToString(" · "),
+            sku = v.sku,
+            imageUrl = p.images.firstOrNull()?.url,
+            quantity = "1",
+            priceForeign = "",
+        )
     }
 
     fun addNew(line: ImportLine.New) {
@@ -467,36 +460,177 @@ class NewImportViewModel(
         }
     }
 
-    /** Goods value in the order currency and its rough SAR equivalent (before freight). */
+    /** Goods value in the order currency. */
+    fun goodsValue(): BigDecimal = lines.fold(BigDecimal.ZERO) { acc, l -> acc + (num(l.priceForeign) ?: BigDecimal.ZERO) * BigDecimal(l.pieces) }
+
+    /** Says what is missing and returns false, or true when every line is complete. */
+    protected fun linesValid(): Boolean {
+        if (lines.isEmpty()) {
+            say("أضف صنفاً واحداً على الأقل")
+            return false
+        }
+        if (lines.any { it.pieces <= 0 }) {
+            say("اكتب الكمية لكل صنف")
+            return false
+        }
+        if (lines.any { num(it.priceForeign) == null }) {
+            say("اكتب سعر الشراء لكل صنف")
+            return false
+        }
+        return true
+    }
+
+    protected fun itemRequests(): List<ImportItemRequest> = lines.filterIsInstance<ImportLine.Existing>().map {
+        ImportItemRequest(it.variantId, it.pieces, plain(num(it.priceForeign)!!), note = it.note.trim().ifBlank { null })
+    }
+
+    protected fun newProductRequests(): List<ImportNewProduct> = lines.filterIsInstance<ImportLine.New>().map {
+        ImportNewProduct(it.categoryId, it.nameAr.trim(), it.basePrice.trim(), plain(num(it.priceForeign)!!), it.variants, imageUrl = it.imageUrl, note = it.note.trim().ifBlank { null })
+    }
+}
+
+/** The "+ existing item / + new item" buttons and one card per line. */
+private fun LazyListScope.importLineItems(vm: ImportLinesViewModel, addExisting: () -> Unit, addNew: () -> Unit) {
+    item {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = addExisting, modifier = Modifier.weight(1f)) { Text("+ صنف موجود") }
+            OutlinedButton(onClick = addNew, modifier = Modifier.weight(1f)) { Text("+ صنف جديد") }
+        }
+    }
+    if (vm.lines.isEmpty()) {
+        item { Text("أضف الأصناف المطلوبة من المورد. الأصناف الجديدة تُحفظ كمسودة ولا تظهر في الكاشير أو المتجر إلا بعد الاستلام.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
+    }
+    itemsIndexed(vm.lines, key = { _, l -> l.key }) { i, l ->
+        ImportLineCard(l, vm.currency, onChange = { vm.update(i, it) }, onRemove = { vm.remove(i) })
+    }
+}
+
+@Composable
+private fun ImportLineCard(l: ImportLine, currency: String, onChange: (ImportLine) -> Unit, onRemove: () -> Unit) {
+    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            when (l) {
+                is ImportLine.Existing -> Thumb(l.imageUrl, 44)
+                is ImportLine.New -> Thumb(l.imageUrl, 44)
+            }
+            Column(Modifier.weight(1f)) {
+                when (l) {
+                    is ImportLine.Existing -> {
+                        Text("${l.name}${if (l.createdProduct) " (صنف جديد)" else ""}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOf(l.option, l.sku).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    }
+                    is ImportLine.New -> {
+                        Text("${l.nameAr} (جديد)", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${l.categoryName} · بيع ${sar(l.basePrice)} · " + l.variants.joinToString("، ") { v -> listOfNotNull(v.size, v.color).joinToString(" ").ifBlank { "قطعة" } + " ×${v.quantity}" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Lux.InkSoft,
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (l) {
+                is ImportLine.Existing -> NumberField("الكمية", l.quantity, Modifier.weight(1f), integer = true) { onChange(l.copy(quantity = it)) }
+                is ImportLine.New -> Text("${l.pieces} قطعة", Modifier.weight(1f).padding(top = 18.dp), style = MaterialTheme.typography.titleSmall)
+            }
+            NumberField("سعر القطعة ($currency)", l.priceForeign, Modifier.weight(1.3f)) { p ->
+                onChange(
+                    when (l) {
+                        is ImportLine.Existing -> l.copy(priceForeign = p)
+                        is ImportLine.New -> l.copy(priceForeign = p)
+                    },
+                )
+            }
+        }
+        OutlinedTextField(
+            value = l.note,
+            onValueChange = { n ->
+                val v = n.take(200)
+                onChange(
+                    when (l) {
+                        is ImportLine.Existing -> l.copy(note = v)
+                        is ImportLine.New -> l.copy(note = v)
+                    },
+                )
+            },
+            label = { Text("اسم المصنع / ملاحظة") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+// ======================================================= new import order ===
+
+class NewImportViewModel(
+    private val presetSupplierId: String?,
+    private val repo: PurchasingRepository,
+    inventory: InventoryRepository,
+) : ImportLinesViewModel(inventory) {
+    private val _suppliers = MutableStateFlow<List<Supplier>>(emptyList())
+    val suppliers = _suppliers.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+    private val _created = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val created = _created.asSharedFlow()
+
+    var supplierId by mutableStateOf(presetSupplierId)
+
+    /** Optional: the rate is fixed by the payment vouchers. */
+    var foreignPerUsd by mutableStateOf("")
+    var sarPerUsd by mutableStateOf("")
+    var domestic by mutableStateOf("")
+    var invoiceNo by mutableStateOf("")
+    var note by mutableStateOf("")
+
+    /** The supplier's latest payment-voucher rate (used for the estimate when none is typed). */
+    var lastRate by mutableStateOf<String?>(null)
+        private set
+
+    fun load() {
+        viewModelScope.launch { repo.suppliers().getOrNull()?.items?.let { _suppliers.value = it } }
+        loadCategories()
+        supplierId?.let(::loadLastRate)
+    }
+
+    private fun loadLastRate(id: String) {
+        lastRate = null
+        viewModelScope.launch { lastRate = repo.supplierAccount(id).getOrNull()?.lastRate }
+    }
+
+    fun pickSupplier(s: Supplier) {
+        supplierId = s.id
+        loadLastRate(s.id)
+    }
+
+    /** Goods value in the order currency and its rough SAR equivalent (before freight), when a rate is known. */
     fun estimate(): Pair<BigDecimal, BigDecimal?> {
-        val value = lines.fold(BigDecimal.ZERO) { acc, l -> acc + (num(l.priceForeign) ?: BigDecimal.ZERO) * BigDecimal(l.pieces) }
-        val rate = num(foreignPerUsd)?.takeIf { it.signum() > 0 } ?: return value to null
+        val value = goodsValue()
+        val rate = (num(foreignPerUsd) ?: lastRate?.let(::num))?.takeIf { it.signum() > 0 } ?: return value to null
         val sarRate = num(sarPerUsd)?.takeIf { it.signum() > 0 } ?: BigDecimal("3.75")
-        val pct = (num(commission) ?: BigDecimal.ZERO).divide(BigDecimal(100))
-        return value to (value * (BigDecimal.ONE + pct) + (num(domestic) ?: BigDecimal.ZERO)).multiply(sarRate).divide(rate, 2, java.math.RoundingMode.HALF_UP)
+        return value to (value + (num(domestic) ?: BigDecimal.ZERO)).multiply(sarRate).divide(rate, 2, java.math.RoundingMode.HALF_UP)
     }
 
     fun save() {
         val sid = supplierId ?: return say("اختر المورد")
-        if (lines.isEmpty()) return say("أضف صنفاً واحداً على الأقل")
-        if (num(foreignPerUsd)?.signum() != 1) return say("اكتب سعر صرف الدولار بعملة المورد")
-        if (lines.any { it.pieces <= 0 }) return say("اكتب الكمية لكل صنف")
-        if (lines.any { num(it.priceForeign) == null }) return say("اكتب سعر الشراء لكل صنف")
+        if (foreignPerUsd.isNotBlank() && num(foreignPerUsd)?.signum() != 1) return say("سعر صرف الدولار غير صحيح")
+        if (!linesValid()) return
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
             val request = ImportOrderRequest(
                 supplierId = sid,
                 foreignCurrency = currency.trim().uppercase().ifBlank { null },
-                foreignPerUsd = plain(num(foreignPerUsd)!!),
+                foreignPerUsd = num(foreignPerUsd)?.takeIf { it.signum() > 0 }?.let(::plain),
                 sarPerUsd = num(sarPerUsd)?.takeIf { it.signum() > 0 }?.let(::plain),
-                commissionPercent = num(commission)?.let(::plain),
                 domesticShipping = num(domestic)?.let(::plain),
                 supplierInvoiceNo = invoiceNo.trim().ifBlank { null },
-                items = lines.filterIsInstance<ImportLine.Existing>().map { ImportItemRequest(it.variant.id, it.pieces, plain(num(it.priceForeign)!!)) },
-                newProducts = lines.filterIsInstance<ImportLine.New>().map {
-                    ImportNewProduct(it.categoryId, it.nameAr.trim(), it.basePrice.trim(), plain(num(it.priceForeign)!!), it.variants, imageUrl = it.imageUrl)
-                },
+                note = note.trim().ifBlank { null },
+                items = itemRequests(),
+                newProducts = newProductRequests(),
             )
             repo.createImport(request).orSay()?.let {
                 say("تم إنشاء طلبية ${it.number}")
@@ -552,70 +686,33 @@ fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                         )
-                        NumberField("${vm.currency} لكل 1 دولار", vm.foreignPerUsd, Modifier.weight(1.4f)) { vm.foreignPerUsd = it }
+                        NumberField(
+                            "${vm.currency} لكل 1 دولار",
+                            vm.foreignPerUsd,
+                            Modifier.weight(1.4f),
+                            hint = "اختياري — يُحدَّد من سند الصرف" + (vm.lastRate?.let { " (آخر سعر $it)" } ?: ""),
+                        ) { vm.foreignPerUsd = it }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         NumberField("ريال لكل 1 دولار", vm.sarPerUsd, Modifier.weight(1f), hint = "فارغ = سعر الإعدادات") { vm.sarPerUsd = it }
-                        NumberField("عمولة المورد %", vm.commission, Modifier.weight(1f)) { vm.commission = it }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         NumberField("الشحن الداخلي (${vm.currency})", vm.domestic, Modifier.weight(1f), hint = "داخل بلد المورد") { vm.domestic = it }
-                        OutlinedTextField(
-                            value = vm.invoiceNo,
-                            onValueChange = { vm.invoiceNo = it.take(60) },
-                            label = { Text("رقم فاتورة المورد") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
                     }
+                    OutlinedTextField(
+                        value = vm.invoiceNo,
+                        onValueChange = { vm.invoiceNo = it.take(60) },
+                        label = { Text("رقم فاتورة المورد") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = vm.note,
+                        onValueChange = { vm.note = it.take(500) },
+                        label = { Text("ملاحظة على الطلبية (اختياري)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
                 }
             }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { addingExisting = true }, modifier = Modifier.weight(1f)) { Text("+ صنف موجود") }
-                    OutlinedButton(onClick = { addingNew = true }, modifier = Modifier.weight(1f)) { Text("+ صنف جديد") }
-                }
-            }
-            if (vm.lines.isEmpty()) {
-                item { Text("أضف الأصناف المطلوبة من المورد. الأصناف الجديدة تُحفظ كمسودة ولا تظهر في الكاشير أو المتجر إلا بعد الاستلام.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
-            }
-            itemsIndexed(vm.lines, key = { _, l -> l.key }) { i, l ->
-                GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        when (l) {
-                            is ImportLine.Existing -> Thumb(l.product.images.firstOrNull()?.url, 44)
-                            is ImportLine.New -> Thumb(l.imageUrl, 44)
-                        }
-                        Column(Modifier.weight(1f)) {
-                            when (l) {
-                                is ImportLine.Existing -> {
-                                    Text(l.product.nameAr, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${l.variant.title} · ${l.variant.sku}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
-                                }
-                                is ImportLine.New -> {
-                                    Text("${l.nameAr} (جديد)", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "${l.categoryName} · بيع ${sar(l.basePrice)} · " + l.variants.joinToString("، ") { v -> listOfNotNull(v.size, v.color).joinToString(" ").ifBlank { "قطعة" } + " ×${v.quantity}" },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Lux.InkSoft,
-                                    )
-                                }
-                            }
-                        }
-                        IconButton(onClick = { vm.remove(i) }) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error) }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (l is ImportLine.Existing) {
-                            NumberField("الكمية", l.quantity, Modifier.weight(1f), integer = true) { vm.update(i, l.copy(quantity = it)) }
-                        } else {
-                            Text("${l.pieces} قطعة", Modifier.weight(1f).padding(top = 18.dp), style = MaterialTheme.typography.titleSmall)
-                        }
-                        NumberField("سعر القطعة (${vm.currency})", l.priceForeign, Modifier.weight(1.3f)) { p ->
-                            vm.update(i, if (l is ImportLine.Existing) l.copy(priceForeign = p) else (l as ImportLine.New).copy(priceForeign = p))
-                        }
-                    }
-                }
-            }
+            importLineItems(vm, addExisting = { addingExisting = true }, addNew = { addingNew = true })
         }
     }
 
@@ -628,7 +725,7 @@ fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -
                     if (suppliers.isEmpty()) Text("أضف الموردين من شاشة الموردين أولاً")
                     suppliers.forEach { s ->
                         Text(
-                            "${s.name}${if (!Money.isZero(s.commissionPercent)) " · عمولة ${s.commissionPercent}%" else ""}",
+                            s.name,
                             modifier = Modifier.fillMaxWidth().clickable { pickingSupplier = false; vm.pickSupplier(s) }.padding(vertical = 10.dp),
                         )
                     }
@@ -642,7 +739,7 @@ fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -
 }
 
 @Composable
-private fun ExistingItemDialog(vm: NewImportViewModel, onDismiss: () -> Unit) {
+private fun ExistingItemDialog(vm: ImportLinesViewModel, onDismiss: () -> Unit) {
     val results by vm.results.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(query) { vm.search(query) }
@@ -668,26 +765,38 @@ private fun ExistingItemDialog(vm: NewImportViewModel, onDismiss: () -> Unit) {
     )
 }
 
+/** Sizes × colours → one variant each, like the product editor; then a quantity per combination. */
 @Composable
-private fun NewItemDialog(vm: NewImportViewModel, categories: List<Pair<AdminCategory, Int>>, onDismiss: () -> Unit) {
+private fun NewItemDialog(vm: ImportLinesViewModel, categories: List<Pair<AdminCategory, Int>>, onDismiss: () -> Unit) {
     val uploading by vm.uploading.collectAsStateWithLifecycle()
     var name by rememberSaveable { mutableStateOf("") }
     var categoryId by rememberSaveable { mutableStateOf<String?>(null) }
     var basePrice by rememberSaveable { mutableStateOf("") }
     var price by rememberSaveable { mutableStateOf("") }
     var imageUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    var note by rememberSaveable { mutableStateOf("") }
+    var sizesText by rememberSaveable { mutableStateOf("") }
+    var colorsText by rememberSaveable { mutableStateOf("") }
+    var bulkQty by rememberSaveable { mutableStateOf("") }
     var pickingCategory by remember { mutableStateOf(false) }
-    val variants = remember { mutableStateListOf(Triple("", "", "1")) }
+    // Quantity typed per "size|color"; a combination not typed yet orders 1 piece.
+    val quantities = remember { mutableStateMapOf<String, String>() }
     val picker = rememberImagePicker(maxSide = 1200) { bytes -> vm.upload(bytes) { imageUrl = it } }
     val category = categories.firstOrNull { it.first.id == categoryId }?.first
-    val parsed = variants.map { (size, color, qty) -> ImportNewVariant(size.trim().ifBlank { null }, color.trim().ifBlank { null }, quantity = qty.toIntOrNull() ?: 0) }
-    val ok = name.trim().length >= 2 && category != null && num(basePrice)?.signum() == 1 && num(price) != null && parsed.all { it.quantity > 0 } &&
-        parsed.map { it.size to it.color }.toSet().size == parsed.size
+    val sizes = VariantPlanner.split(sizesText)
+    val colors = VariantPlanner.split(colorsText)
+    val combos = VariantPlanner.plan("item", sizes, colors)
+    fun keyOf(p: VariantPlanner.Planned) = "${p.size.orEmpty()}|${p.color.orEmpty()}"
+    val parsed = combos.map { p -> ImportNewVariant(p.size, p.color, p.colorHex, quantity = (quantities[keyOf(p)] ?: "1").toIntOrNull() ?: 0) }
+    val ordered = parsed.filter { it.quantity > 0 }
+    val blank = combos.any { (quantities[keyOf(it)] ?: "1").isBlank() }
+    val ok = name.trim().length >= 2 && category != null && num(basePrice)?.signum() == 1 && num(price) != null &&
+        ordered.isNotEmpty() && !blank && combos.size <= MAX_COMBINATIONS
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("صنف جديد") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Thumb(imageUrl, 64)
                     OutlinedButton(onClick = picker.fromGallery, enabled = !uploading) {
@@ -700,21 +809,67 @@ private fun NewItemDialog(vm: NewImportViewModel, categories: List<Pair<AdminCat
                     NumberField("سعر الشراء (${vm.currency})", price, Modifier.weight(1f)) { price = it }
                     NumberField("سعر البيع (ر.س)", basePrice, Modifier.weight(1f)) { basePrice = it }
                 }
-                Text("المقاسات والألوان والكميات", style = MaterialTheme.typography.labelLarge)
-                variants.forEachIndexed { i, (size, color, qty) ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(value = size, onValueChange = { variants[i] = Triple(it.take(30), color, qty) }, label = { Text("المقاس") }, singleLine = true, modifier = Modifier.weight(1f))
-                        OutlinedTextField(value = color, onValueChange = { variants[i] = Triple(size, it.take(40), qty) }, label = { Text("اللون") }, singleLine = true, modifier = Modifier.weight(1f))
-                        NumberField("الكمية", qty, Modifier.weight(0.8f), integer = true) { variants[i] = Triple(size, color, it) }
-                        if (variants.size > 1) IconButton(onClick = { variants.removeAt(i) }) { Icon(Icons.Filled.Delete, contentDescription = "حذف") }
+                OutlinedTextField(value = note, onValueChange = { note = it.take(200) }, label = { Text("اسم المصنع / ملاحظة") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+                Text("المقاسات والألوان", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(
+                    value = sizesText,
+                    onValueChange = { sizesText = it.take(300) },
+                    label = { Text("المقاسات (افصل بفاصلة)") },
+                    supportingText = { Text("مثال: S, M, L أو 38, 40 · فارغ = مقاس واحد") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    VariantPlanner.SIZE_PRESETS.forEach { (label, preset) ->
+                        FilterChip(selected = false, onClick = { sizesText = preset.joinToString(", ") }, label = { Text(label) })
                     }
                 }
-                TextButton(onClick = { variants += Triple("", "", "1") }) { Text("+ مقاس / لون آخر") }
+                OutlinedTextField(
+                    value = colorsText,
+                    onValueChange = { colorsText = it.take(300) },
+                    label = { Text("الألوان (افصل بفاصلة)") },
+                    supportingText = { Text("اختر من الألوان أدناه أو اكتب لوناً آخر · فارغ = بدون لون") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    VariantPlanner.COLORS.forEach { (colorName, codeHex) ->
+                        val selected = colorName in colors
+                        FilterChip(
+                            selected = selected,
+                            onClick = { colorsText = (if (selected) colors - colorName else colors + colorName).joinToString("، ") },
+                            label = { Text(colorName) },
+                            leadingIcon = { ColorDot(codeHex.second) },
+                        )
+                    }
+                }
+
+                Text("الكمية لكل مقاس / لون (${combos.size})", style = MaterialTheme.typography.labelLarge)
+                if (combos.size > MAX_COMBINATIONS) {
+                    Text("عدد كبير من التركيبات — قلّل المقاسات أو الألوان (الحد $MAX_COMBINATIONS)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                } else {
+                    if (combos.size > 1) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            NumberField("كمية للكل", bulkQty, Modifier.weight(1f), integer = true) { bulkQty = it }
+                            TextButton(enabled = bulkQty.toIntOrNull() != null, onClick = { combos.forEach { quantities[keyOf(it)] = bulkQty } }) { Text("تطبيق على الكل") }
+                        }
+                    }
+                    combos.forEach { p ->
+                        val k = keyOf(p)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            p.colorHex?.let { ColorDot(it) }
+                            Text(p.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            NumberField("الكمية", quantities[k] ?: "1", Modifier.weight(0.8f), integer = true) { quantities[k] = it }
+                        }
+                    }
+                    if (combos.size > 1) Text("اكتب 0 لتركيبة غير مطلوبة", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                }
             }
         },
         confirmButton = {
             TextButton(enabled = ok && !uploading, onClick = {
-                vm.addNew(ImportLine.New(name, category!!.id, category.nameAr, plain(num(basePrice)!!), price, imageUrl, parsed))
+                vm.addNew(ImportLine.New(name, category!!.id, category.nameAr, plain(num(basePrice)!!), price, imageUrl, ordered, note = note.trim()))
                 onDismiss()
             }) { Text("إضافة") }
         },
@@ -738,6 +893,153 @@ private fun NewItemDialog(vm: NewImportViewModel, categories: List<Pair<AdminCat
             confirmButton = { TextButton(onClick = { pickingCategory = false }) { Text("إغلاق") } },
         )
     }
+}
+
+// ====================================================== edit import order ===
+
+/** True when an import order can still be changed: ordered (or draft) and nothing received yet. */
+internal fun PurchaseOrderDetail.importEditable(): Boolean =
+    isImport && (status == PurchaseOrderStatus.ORDERED || status == PurchaseOrderStatus.DRAFT) && items.all { it.receivedQty == 0 }
+
+class EditImportViewModel(
+    private val id: String,
+    private val repo: PurchasingRepository,
+    inventory: InventoryRepository,
+) : ImportLinesViewModel(inventory) {
+    private val _order = MutableStateFlow<Load<PurchaseOrderDetail>>(Load.Loading)
+    val order = _order.asStateFlow()
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+    private val _saved = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val saved = _saved.asSharedFlow()
+
+    var domestic by mutableStateOf("")
+    var invoiceNo by mutableStateOf("")
+    var note by mutableStateOf("")
+    private var filled = false
+
+    fun load() {
+        loadCategories()
+        viewModelScope.launch {
+            val r = repo.order(id)
+            r.getOrNull()?.let { po ->
+                if (!filled) {
+                    filled = true
+                    currency = po.foreignCurrency ?: "CNY"
+                    domestic = num(po.domesticShipping)?.let(::plain).orEmpty()
+                    invoiceNo = po.supplierInvoiceNo.orEmpty()
+                    note = po.note.orEmpty()
+                    lines.clear()
+                    lines.addAll(
+                        po.items.map {
+                            ImportLine.Existing(
+                                variantId = it.variantId,
+                                name = it.variant.product.nameAr,
+                                option = it.option,
+                                sku = it.variant.sku,
+                                imageUrl = it.variant.product.images.firstOrNull()?.url,
+                                quantity = it.quantity.toString(),
+                                priceForeign = it.unitPriceForeign?.let(::num)?.let(::plain).orEmpty(),
+                                note = it.note.orEmpty(),
+                                createdProduct = it.createdProduct,
+                            )
+                        },
+                    )
+                }
+            }
+            _order.value = r.toLoad()
+        }
+    }
+
+    fun save() {
+        if (!linesValid()) return
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            val request = UpdateImportOrderRequest(
+                items = itemRequests(),
+                newProducts = newProductRequests(),
+                domesticShipping = plain(num(domestic) ?: BigDecimal.ZERO),
+                supplierInvoiceNo = invoiceNo.trim().ifBlank { null },
+                note = note.trim().ifBlank { null },
+            )
+            repo.updateImport(id, request).orSay()?.let {
+                say("تم حفظ تعديل الطلبية ${it.number}")
+                _saved.tryEmit(it.id)
+            }
+            _busy.value = false
+        }
+    }
+}
+
+/** Changes an import order that has not arrived: lines, quantities, prices, notes and inland shipping. */
+@Composable
+fun EditImportScreen(id: String, onBack: () -> Unit, saved: () -> Unit) {
+    val vm = adminViewModel(key = "import-edit:$id") { EditImportViewModel(id, it.purchasing, it.inventory) }
+    val order by vm.order.collectAsStateWithLifecycle()
+    val categories by vm.categories.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var addingExisting by remember { mutableStateOf(false) }
+    var addingNew by remember { mutableStateOf(false) }
+    CollectMessages(vm, snackbar)
+    LaunchedEffect(vm) { vm.load() }
+    LaunchedEffect(vm) { vm.saved.collect { saved() } }
+    val editable = (order as? Load.Ready)?.value?.importEditable() == true
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar((order as? Load.Ready)?.value?.number?.let { "تعديل الطلبية $it" } ?: "تعديل الطلبية", onBack) },
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            if (editable) {
+                GlassCard(Modifier.fillMaxWidth().padding(12.dp), contentPadding = 12.dp) {
+                    SummaryRow("قيمة البضاعة", "${plain(vm.goodsValue())} ${vm.currency}", strong = true, valueColor = Lux.GoldDeep)
+                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Button(onClick = vm::save, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("حفظ التعديلات") }
+                }
+            }
+        },
+    ) { padding ->
+        LoadContent(order, onRetry = vm::load, modifier = Modifier.padding(padding)) { po ->
+            if (!po.importEditable()) {
+                Column(Modifier.padding(padding).padding(16.dp)) {
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("لا يمكن تعديل هذه الطلبية", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                        Text("التعديل متاح فقط لطلبيات الاستيراد التي لم يُستلم منها شيء بعد.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("رجوع") }
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    item {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Text("${po.supplier.name} · ${formatDate(po.orderDate)} · ${vm.currency}", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                                NumberField("الشحن الداخلي (${vm.currency})", vm.domestic, Modifier.weight(1f), hint = "داخل بلد المورد") { vm.domestic = it }
+                                OutlinedTextField(
+                                    value = vm.invoiceNo,
+                                    onValueChange = { vm.invoiceNo = it.take(60) },
+                                    label = { Text("رقم فاتورة المورد") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            OutlinedTextField(
+                                value = vm.note,
+                                onValueChange = { vm.note = it.take(500) },
+                                label = { Text("ملاحظة على الطلبية (اختياري)") },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    importLineItems(vm, addExisting = { addingExisting = true }, addNew = { addingNew = true })
+                }
+            }
+        }
+    }
+    if (addingExisting) ExistingItemDialog(vm, onDismiss = { addingExisting = false })
+    if (addingNew) NewItemDialog(vm, categories, onDismiss = { addingNew = false })
 }
 
 // ============================================================== receiving ===

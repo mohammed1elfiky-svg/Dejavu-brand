@@ -643,6 +643,10 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
     val account = _account.asStateFlow()
     private val _currencies = MutableStateFlow(listOf(Currency.SAR))
     val currencies = _currencies.asStateFlow()
+    private val _rates = MutableStateFlow<Map<Currency, BigDecimal>>(emptyMap())
+
+    /** Units per 1 SAR of each active currency with a rate (to suggest exchange amounts). */
+    val rates = _rates.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
 
@@ -653,6 +657,9 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
         viewModelScope.launch {
             repo.activeCurrencies().onSuccess { cs ->
                 _currencies.value = (listOf(Currency.SAR) + cs.register().map { Currency.of(it.code) }).distinct()
+                _rates.value = cs.currencies.mapNotNull { r ->
+                    r.rate?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }?.let { Currency.of(r.code.code) to it }
+                }.toMap() + (Currency.SAR to BigDecimal.ONE)
             }
         }
     }
@@ -699,12 +706,29 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
     }
 
     /** Money taken from the customer at the till: settles their debt, any excess becomes wallet credit. */
-    fun collect(currency: Currency, amount: String, done: () -> Unit) {
+    fun collect(currency: Currency, amount: String, sendSms: Boolean, done: () -> Unit) {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            repo.customerReceipt(id, currency, amount).orSay()?.let {
-                say("تم تحصيل ${Money.plain(Money.parse(amount), currency)}")
+            repo.customerReceipt(id, currency, amount, sendSms = sendSms).orSay()?.let {
+                val sms = if (sendSms) "، وأُضيفت رسالة نصية للعميل إلى قائمة الإرسال" else ""
+                say("تم تحصيل ${Money.plain(Money.parse(amount), currency)}$sms")
+                done()
+                _account.value = repo.customerAccount(id).toLoad()
+                repo.customer(id).onSuccess { c -> _state.value = Load.Ready(c) }
+            }
+            _busy.value = false
+        }
+    }
+
+    /** Exchanges [amount] of [from] in the customer's account for [toAmount] of [to]. */
+    fun exchange(from: Currency, amount: String, to: Currency, toAmount: String, note: String, sendSms: Boolean, done: () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            repo.customerExchange(id, from, amount, to, toAmount, note, sendSms).orSay()?.let { r ->
+                val sms = if (r.smsQueued) "، وأُضيفت رسالة نصية للعميل إلى قائمة الإرسال" else ""
+                say("تمت المصارفة: ${Money.plain(Money.parse(amount), from)} ← ${Money.plain(Money.parse(toAmount), to)}$sms")
                 done()
                 _account.value = repo.customerAccount(id).toLoad()
                 repo.customer(id).onSuccess { c -> _state.value = Load.Ready(c) }
@@ -735,21 +759,30 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     val state by vm.state.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
     val currencies by vm.currencies.collectAsStateWithLifecycle()
+    val rates by vm.rates.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val canCollect = adminContainer().session.can(Perm.POS_SELL)
     val canEdit = adminContainer().session.can(Perm.CUSTOMERS_WRITE)
     val canOpening = adminContainer().session.can("journal.write")
+    val canExchange = canEdit && adminContainer().session.can(Perm.PAYMENTS_RECORD)
     val snackbar = remember { SnackbarHostState() }
     var collecting by remember { mutableStateOf(false) }
     var opening by remember { mutableStateOf(false) }
+    var exchanging by remember { mutableStateOf(false) }
+    val hasPhone = (state as? Load.Ready)?.value?.phone?.isNotBlank() == true
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
     }
     if (collecting) {
-        CollectDialog(currencies, onDismiss = { collecting = false }) { currency, amount ->
-            vm.collect(currency, amount) { collecting = false }
+        CollectDialog(currencies, hasPhone, onDismiss = { collecting = false }) { currency, amount, sendSms ->
+            vm.collect(currency, amount, sendSms) { collecting = false }
+        }
+    }
+    if (exchanging) {
+        CustomerExchangeDialog(currencies, rates, hasPhone, busy, onDismiss = { exchanging = false }) { from, amount, to, toAmount, note, sendSms ->
+            vm.exchange(from, amount, to, toAmount, note, sendSms) { exchanging = false }
         }
     }
     if (opening) {
@@ -803,6 +836,7 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                         onRetry = vm::loadAccount,
                         onCollect = { collecting = true },
                         onOpening = if (canOpening) ({ opening = true }) else null,
+                        onExchange = if (canExchange && currencies.size > 1) ({ exchanging = true }) else null,
                     )
                 }
                 item { Text("آخر الطلبات", style = MaterialTheme.typography.titleSmall) }
@@ -902,6 +936,7 @@ private fun CustomerAccountCard(
     onRetry: () -> Unit,
     onCollect: () -> Unit,
     onOpening: (() -> Unit)? = null,
+    onExchange: (() -> Unit)? = null,
 ) {
     InfoCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -910,8 +945,15 @@ private fun CustomerAccountCard(
                 Button(onClick = onCollect) { Text("تحصيل دفعة") }
             }
         }
-        if (onOpening != null) {
-            OutlinedButton(onClick = onOpening, modifier = Modifier.fillMaxWidth()) { Text("رصيد افتتاحي") }
+        if (onOpening != null || onExchange != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onOpening != null) {
+                    OutlinedButton(onClick = onOpening, modifier = Modifier.weight(1f)) { Text("رصيد افتتاحي") }
+                }
+                if (onExchange != null) {
+                    OutlinedButton(onClick = onExchange, modifier = Modifier.weight(1f)) { Text("مصارفة") }
+                }
+            }
         }
         when (state) {
             Load.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
@@ -958,9 +1000,10 @@ private fun CustomerAccountCard(
 }
 
 @Composable
-private fun CollectDialog(currencies: List<Currency>, onDismiss: () -> Unit, onConfirm: (Currency, String) -> Unit) {
+private fun CollectDialog(currencies: List<Currency>, hasPhone: Boolean, onDismiss: () -> Unit, onConfirm: (Currency, String, Boolean) -> Unit) {
     var currency by remember { mutableStateOf(currencies.firstOrNull() ?: Currency.SAR) }
     var amount by rememberSaveable { mutableStateOf("") }
+    var sendSms by rememberSaveable { mutableStateOf(hasPhone) }
     val value = validAmount(amount, currency)
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -984,10 +1027,11 @@ private fun CollectDialog(currencies: List<Currency>, onDismiss: () -> Unit, onC
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                SmsCheckbox(sendSms, enabled = hasPhone) { sendSms = it }
             }
         },
         confirmButton = {
-            TextButton(onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString()) }, enabled = value != null) { Text("تحصيل") }
+            TextButton(onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString(), sendSms && hasPhone) }, enabled = value != null) { Text("تحصيل") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
@@ -1051,6 +1095,148 @@ private fun OpeningBalanceDialog(
                 onClick = { if (value != null) onConfirm(currency, value.stripTrailingZeros().toPlainString(), owes, note.trim()) },
                 enabled = value != null && !busy,
             ) { Text("تسجيل") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
+}
+
+/** "Text the customer" option of the account vouchers (sent from the store's gateway phone). */
+@Composable
+private fun SmsCheckbox(checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked && enabled, onCheckedChange = onChange, enabled = enabled)
+        Column {
+            Text("إرسال رسالة نصية للعميل")
+            if (!enabled) Text("لا يوجد رقم جوال للعميل", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Suggested amount of [to] for [amount] of [from], from the rates (units per 1 SAR); null without both rates. */
+private fun exchangeSuggestion(amount: BigDecimal?, from: Currency, to: Currency, rates: Map<Currency, BigDecimal>): BigDecimal? {
+    if (amount == null) return null
+    val fromRate = rates[from] ?: return null
+    val toRate = rates[to] ?: return null
+    return amount.multiply(toRate).divide(fromRate, to.decimals, RoundingMode.HALF_UP).takeIf { it.signum() > 0 }
+}
+
+/** Currency exchange inside the customer's account: their [from] balance becomes [to] balance. */
+@Composable
+private fun CustomerExchangeDialog(
+    currencies: List<Currency>,
+    rates: Map<Currency, BigDecimal>,
+    hasPhone: Boolean,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (from: Currency, amount: String, to: Currency, toAmount: String, note: String, sendSms: Boolean) -> Unit,
+) {
+    var from by remember { mutableStateOf(currencies.firstOrNull() ?: Currency.SAR) }
+    var to by remember { mutableStateOf(currencies.firstOrNull { it != from } ?: Currency.SAR) }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var toAmount by rememberSaveable { mutableStateOf("") }
+    // Until the user types the received amount, it follows the rates.
+    var toEdited by rememberSaveable { mutableStateOf(false) }
+    var note by rememberSaveable { mutableStateOf("") }
+    var sendSms by rememberSaveable { mutableStateOf(hasPhone) }
+    val value = validAmount(amount, from)
+    val suggested = exchangeSuggestion(value, from, to, rates)
+    val toText = if (toEdited) toAmount else suggested?.stripTrailingZeros()?.toPlainString().orEmpty()
+    val toValue = validAmount(toText, to)
+    val ok = value != null && toValue != null && from != to && !busy
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("مصارفة في حساب العميل") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("من عملة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    currencies.forEach { c ->
+                        FilterChip(
+                            selected = c == from,
+                            onClick = {
+                                if (c != from) {
+                                    if (c == to) to = from
+                                    from = c
+                                    toEdited = false
+                                }
+                            },
+                            label = { Text(c.nameAr) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = decimalInput(it) },
+                    label = { Text("المبلغ (${from.symbol})") },
+                    isError = amount.isNotBlank() && value == null,
+                    supportingText = if (from.decimals == 0) ({ Text("بدون كسور") }) else null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("إلى عملة", style = MaterialTheme.typography.labelMedium, color = Lux.InkSoft)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    currencies.filter { it != from }.forEach { c ->
+                        FilterChip(
+                            selected = c == to,
+                            onClick = {
+                                if (c != to) {
+                                    to = c
+                                    toEdited = false
+                                }
+                            },
+                            label = { Text(c.nameAr) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = toText,
+                    onValueChange = {
+                        toAmount = decimalInput(it)
+                        toEdited = true
+                    },
+                    label = { Text("المبلغ المقابل (${to.symbol})") },
+                    isError = toText.isNotBlank() && toValue == null,
+                    supportingText = {
+                        Text(
+                            when {
+                                suggested == null -> "أدخل المبلغ بالعملة الأخرى"
+                                toEdited -> "حسب السعر: ${Money.plain(suggested, to)}"
+                                else -> "محسوب من أسعار الصرف، يمكنك تعديله"
+                            },
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(255) },
+                    label = { Text("ملاحظة (اختياري)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                SmsCheckbox(sendSms, enabled = hasPhone) { sendSms = it }
+                Text(
+                    "يُخصم المبلغ من رصيد العميل بالعملة الأولى ويُضاف المقابل لرصيده بالعملة الثانية، دون أي حركة على الصناديق.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (value != null && toValue != null) {
+                        onConfirm(from, value.stripTrailingZeros().toPlainString(), to, toValue.stripTrailingZeros().toPlainString(), note.trim(), sendSms && hasPhone)
+                    }
+                },
+                enabled = ok,
+            ) { Text("مصارفة") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )

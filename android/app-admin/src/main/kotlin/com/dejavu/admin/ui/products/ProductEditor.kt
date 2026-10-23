@@ -134,6 +134,12 @@ data class ProductForm(
     val savedVideo: String = "",
     val visibility: ProductVisibility = ProductVisibility.ALL,
     val descriptionAr: String = "",
+    /** Bag size in cm, free text (e.g. 30 × 20 × 10); blank = none. */
+    val bagSize: String = "",
+    val savedBagSize: String = "",
+    /** Heel height in cm (e.g. 7.5); blank = none. */
+    val heelHeight: String = "",
+    val savedHeelHeight: String = "",
     val price: String = "",
     val compareAt: String = "",
     /** Cost per piece (SAR), shared by all variants. */
@@ -312,6 +318,8 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         videoUrl = f.videoUrl.trim().ifBlank { null },
                         instagramUrl = f.instagramUrl.trim().ifBlank { null },
                         visibility = f.visibility,
+                        bagSize = f.bagSize.trim().ifBlank { null },
+                        heelHeightCm = f.heelHeight.trim().ifBlank { null },
                     ),
                 ).orSay()?.let { p ->
                     announce(f, p.notifiedCustomers)
@@ -337,6 +345,9 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                         videoUrl = f.videoUrl.trim().ifBlank { if (f.savedVideo.isNotBlank()) "" else null },
                         instagramUrl = f.instagramUrl.trim().ifBlank { if (f.savedInstagram.isNotBlank()) "" else null },
                         visibility = f.visibility,
+                        // "" clears a value that was set; an unchanged blank is left out.
+                        bagSize = f.bagSize.trim().ifBlank { if (f.savedBagSize.isNotBlank()) "" else null },
+                        heelHeightCm = f.heelHeight.trim().ifBlank { if (f.savedHeelHeight.isNotBlank()) "" else null },
                     ),
                 ).orSay()?.let { p ->
                     announce(f, p.notifiedCustomers)
@@ -364,6 +375,7 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         f.compareAt.isNotBlank() && !isAmount(f.compareAt) -> "السعر قبل الخصم غير صحيح"
         f.costPrice.isNotBlank() && !isAmount(f.costPrice) -> "التكلفة غير صحيحة"
         f.wholesalePrice.isNotBlank() && !isAmount(f.wholesalePrice) -> "سعر التاجر غير صحيح"
+        f.heelHeight.isNotBlank() && !isHeelHeight(f.heelHeight) -> "ارتفاع الكعب غير صحيح (مثل 7.5 سم)"
         f.images.size > MAX_IMAGES -> "الحد الأقصى $MAX_IMAGES صور"
         !isNew -> null
         f.variants.isEmpty() -> "أضف المقاسات والألوان ثم اضغط \"توليد المتغيرات\""
@@ -376,6 +388,11 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
         else -> null
     }
 }
+
+/** Heel height in cm: up to two digits and one decimal, e.g. 7 or 7.5. */
+private fun isHeelHeight(v: String) = Regex("""\d{1,2}(\.\d)?""").matches(v.trim())
+
+private fun cleanHeel(v: String?): String = v?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString() ?: v.orEmpty()
 
 private fun VariantRow.toRequest(): NewVariantRequest {
     val qty = quantity.toIntOrNull()?.takeIf { it > 0 }
@@ -402,6 +419,10 @@ private fun AdminProduct.toForm() = ProductForm(
     savedVideo = videoUrl.orEmpty(),
     visibility = visibility,
     descriptionAr = descriptionAr.orEmpty(),
+    bagSize = bagSize.orEmpty(),
+    savedBagSize = bagSize.orEmpty(),
+    heelHeight = cleanHeel(heelHeightCm),
+    savedHeelHeight = cleanHeel(heelHeightCm),
     price = basePrice,
     compareAt = compareAtPrice.orEmpty(),
     costPrice = costPrice.takeIf { !Money.isZero(it) }.orEmpty(),
@@ -477,6 +498,13 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        Field("مقاس الشنطة (سم) (اختياري)", form.bagSize, hint = "مثل 30 × 20 × 10") { v -> vm.edit { it.copy(bagSize = v.take(60)) } }
+                        Field(
+                            "ارتفاع الكعب (سم) (اختياري)",
+                            form.heelHeight,
+                            decimal = true,
+                            hint = if (form.heelHeight.isNotBlank() && !isHeelHeight(form.heelHeight)) "رقم حتى خانتين وكسر عشري واحد، مثل 7.5" else "مثل 7.5",
+                        ) { v -> vm.edit { it.copy(heelHeight = v.take(4)) } }
                     }
                 }
                 item { SectionTitle("السعر والتكلفة (ر.س)") }

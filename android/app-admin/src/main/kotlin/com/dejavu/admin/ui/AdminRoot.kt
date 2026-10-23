@@ -81,6 +81,9 @@ import com.dejavu.admin.ui.inventory.ProductsScreen
 import com.dejavu.admin.ui.brands.BrandsScreen
 import com.dejavu.admin.ui.system.WipeDataScreen
 import com.dejavu.admin.ui.printers.PrinterSettingsScreen
+import com.dejavu.admin.ui.purchasing.EditImportScreen
+import com.dejavu.admin.ui.purchasing.SupplierAccountScreen
+import com.dejavu.admin.ui.sms.SmsGatewayScreen
 import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
 import com.dejavu.admin.ui.purchasing.NewImportScreen
 import com.dejavu.admin.ui.purchasing.SupplierScreen
@@ -159,6 +162,9 @@ object R {
     const val SUPPLIER = "supplier/{id}"
     const val IMPORT_NEW = "import-new/{id}"
     const val IMPORT_RECEIVE = "import-receive/{id}"
+    const val IMPORT_EDIT = "import-edit/{id}"
+    const val SUPPLIER_ACCOUNT = "supplier-account/{id}"
+    const val SMS = "sms"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -304,14 +310,18 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     onBack = back,
                     openOrder = { open(R.PURCHASE, it) },
                     newImport = { open(R.IMPORT_NEW, it) },
+                    openAccount = { open(R.SUPPLIER_ACCOUNT, it) },
                 )
             }
             composable(R.IMPORT_NEW) { e ->
                 NewImportScreen(e.arguments?.getString("id")?.takeIf { it != "-" }, back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.IMPORT_NEW) { inclusive = true } } })
             }
             composable(R.IMPORT_RECEIVE) { e -> ImportReceiveScreen(e.arguments?.getString("id").orEmpty(), back, done = back) }
+            composable(R.IMPORT_EDIT) { e -> EditImportScreen(e.arguments?.getString("id").orEmpty(), back, saved = back) }
+            composable(R.SUPPLIER_ACCOUNT) { e -> SupplierAccountScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.SMS) { SmsGatewayScreen(back) }
             composable(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
-            composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }) }
+            composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }, editImport = { open(R.IMPORT_EDIT, it) }) }
             composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }
             composable(R.EXPENSE) { e -> ExpenseDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.NEW_EXPENSE) { NewExpenseScreen(back, created = { id -> nav.navigate(R.of(R.EXPENSE, id)) { popUpTo(R.EXPENSES) } }) }

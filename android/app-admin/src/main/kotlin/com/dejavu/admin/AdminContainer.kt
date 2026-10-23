@@ -11,6 +11,7 @@ import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.admin.PosRepository
 import com.dejavu.core.admin.PromotionRepository
 import com.dejavu.core.admin.PurchasingRepository
+import com.dejavu.core.admin.SmsRepository
 import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.admin.WalletAdminRepository
 import com.dejavu.core.admin.StaffRepository

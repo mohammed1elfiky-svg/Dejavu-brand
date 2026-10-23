@@ -59,6 +59,7 @@ class AdminContainer(private val context: Context) {
     val wallet = WalletAdminRepository(api)
     val promotions = PromotionRepository(api)
     val staff = StaffRepository(api)
+    val sms = SmsRepository(api)
 
     /** Receipt and barcode-label printers of this device. */
     val printers = PrinterStore(context)

@@ -78,8 +78,26 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
     suspend fun login(phone: String, password: String): Result<Customer> =
         apiCall { api.login(LoginRequest(phone.normalizedPhone(), password)) }.map(::start)
 
-    suspend fun register(name: String, phone: String, password: String, email: String?): Result<Customer> =
-        apiCall { api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null })) }.map(::start)
+    suspend fun register(
+        name: String,
+        phone: String,
+        password: String,
+        email: String? = null,
+        governorate: String? = null,
+        area: String? = null,
+        otp: String? = null,
+    ): Result<Customer> = apiCall {
+        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }))
+    }.map(::start)
+
+    /** Governorates for the sign-up form. */
+    suspend fun governorates() = apiCall { api.governorates() }
+
+    /** Whether sign-up needs a code texted to the phone. */
+    suspend fun otpRequired() = apiCall { api.otpRequired() }.map { it.required }
+
+    /** Texts a sign-up code to [phone] (sent from the store's phone). */
+    suspend fun sendOtp(phone: String) = apiCall { api.sendOtp(com.dejavu.core.model.OtpRequest(phone.normalizedPhone())) }
 
     suspend fun logout() {
         tokens.current()?.let { t -> apiCall { api.logout(RefreshRequest(t.refreshToken)) } }

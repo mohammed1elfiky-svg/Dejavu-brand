@@ -266,7 +266,28 @@ data class CustomerAccount(val balances: List<AccountBalance> = emptyList(), val
 data class AccountBalances(val balances: List<AccountBalance> = emptyList())
 
 @Serializable
-data class CustomerReceiptRequest(val currency: Currency, val amount: String, val cashBoxId: String? = null, val note: String? = null)
+data class CustomerReceiptRequest(
+    val currency: Currency,
+    val amount: String,
+    val cashBoxId: String? = null,
+    val note: String? = null,
+    /** Text the customer the amount and the balance left (sent from the store phone). */
+    val sendSms: Boolean? = null,
+)
+
+/** Converts part of a customer's balance into another currency at the agreed amount. */
+@Serializable
+data class CustomerExchangeRequest(
+    val fromCurrency: Currency,
+    val amount: String,
+    val toCurrency: Currency,
+    val toAmount: String,
+    val note: String? = null,
+    val sendSms: Boolean? = null,
+)
+
+@Serializable
+data class CustomerExchangeResult(val balances: List<AccountBalance> = emptyList(), val smsQueued: Boolean = false)
 
 // ---------------------------------------------------------- wallet top-ups ---
 
@@ -507,6 +528,8 @@ data class PosReturnRequest(
     val refundTo: String = "CASH",
     /** SAR or the sale's currency. */
     val refundCurrency: Currency? = null,
+    /** Box (cash or bank) of the refund currency to pay from; null = the cashier's drawer. */
+    val refundBoxId: String? = null,
     /** Exchange: the pieces taken instead. */
     val newItems: List<PosItem>? = null,
     /** Exchange: what the customer pays on top. */
@@ -550,6 +573,8 @@ data class FreeReturnRequest(
     /** CASH (from the drawer) or ACCOUNT (kept as the customer's credit). */
     val refundTo: String = "CASH",
     val refundCurrency: Currency? = null,
+    /** Box (cash or bank) of the refund currency to pay from; null = the cashier's drawer. */
+    val refundBoxId: String? = null,
     val newItems: List<PosItem>? = null,
     val payments: List<PosTender>? = null,
     val paymentMethod: String? = null,

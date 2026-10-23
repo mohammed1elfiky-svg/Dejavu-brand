@@ -105,6 +105,14 @@ interface AdminApi {
     @POST("admin/purchase-orders/import") suspend fun createImport(@Body body: ImportOrderRequest): PurchaseOrderDetail
     @POST("admin/purchase-orders/{id}/import-costs") suspend fun importCosts(@Path("id") id: String, @Body body: ImportReceiveRequest): ImportCosts
     @POST("admin/purchase-orders/{id}/import-receive") suspend fun importReceive(@Path("id") id: String, @Body body: ImportReceiveRequest): PurchaseOrderDetail
+    @PUT("admin/purchase-orders/{id}/import") suspend fun updateImport(@Path("id") id: String, @Body body: UpdateImportOrderRequest): PurchaseOrderDetail
+    @POST("admin/purchase-orders/{id}/cancel") suspend fun cancelPurchaseOrder(@Path("id") id: String): PurchaseOrderDetail
+    @GET("admin/suppliers/{id}/account") suspend fun supplierAccount(@Path("id") id: String): SupplierAccount
+    @POST("admin/supplier-vouchers/payment") suspend fun paymentVoucher(@Body body: SupplierPaymentVoucherRequest): SupplierVoucher
+    @POST("admin/supplier-vouchers/commission") suspend fun commissionVoucher(@Body body: SupplierCommissionRequest): SupplierVoucher
+    @PUT("admin/supplier-vouchers/{id}/payment") suspend fun editPaymentVoucher(@Path("id") id: String, @Body body: SupplierPaymentVoucherRequest): SupplierVoucher
+    @PUT("admin/supplier-vouchers/{id}/commission") suspend fun editCommissionVoucher(@Path("id") id: String, @Body body: SupplierCommissionRequest): SupplierVoucher
+    @POST("admin/supplier-vouchers/{id}/cancel") suspend fun cancelVoucher(@Path("id") id: String): SupplierVoucher
     @POST("admin/purchase-orders/quick") suspend fun quickPurchase(@Body body: QuickPurchaseRequest): PurchaseOrderDetail
     @GET("admin/reports/inventory-valuation") suspend fun inventoryValuation(): InventoryValuation
     @Multipart @POST("admin/files/video") suspend fun uploadVideo(@Part file: MultipartBody.Part): UploadedFile
@@ -143,6 +151,7 @@ interface AdminApi {
     @GET("admin/customers/{id}") suspend fun customer(@Path("id") id: String): AdminCustomerDetail
     @GET("admin/customers/{id}/account") suspend fun customerAccount(@Path("id") id: String, @Query("page") page: Int = 1): CustomerAccount
     @POST("admin/customers/{id}/account/receipts") suspend fun customerReceipt(@Path("id") id: String, @Body body: CustomerReceiptRequest): AccountBalances
+    @POST("admin/customers/{id}/account/exchange") suspend fun customerExchange(@Path("id") id: String, @Body body: CustomerExchangeRequest): CustomerExchangeResult
     @POST("admin/customers/{id}/account/opening-balance") suspend fun openingBalance(@Path("id") id: String, @Body body: OpeningBalanceRequest): AccountBalances
 
     @PATCH("admin/customers/{id}") suspend fun updateCustomer(@Path("id") id: String, @Body body: UpdateCustomerRequest): AdminCustomerDetail
@@ -195,6 +204,13 @@ interface AdminApi {
     @POST("admin/promotions") suspend fun createPromotion(@Body body: PromotionRequest): Promotion
     @PATCH("admin/promotions/{id}") suspend fun updatePromotion(@Path("id") id: String, @Body body: PromotionRequest): Promotion
     @DELETE("admin/promotions/{id}") suspend fun deletePromotion(@Path("id") id: String): Response<Unit>
+
+    // SMS sent from the store phone (this app is the gateway)
+    @POST("admin/sms/claim") suspend fun claimSms(@Query("limit") limit: Int = 10): List<SmsToSend>
+    @POST("admin/sms/{id}/result") suspend fun smsResult(@Path("id") id: String, @Body body: SmsResultRequest): Response<Unit>
+    @GET("admin/sms") suspend fun smsList(@Query("status") status: String? = null): List<OutgoingSms>
+    @GET("admin/sms/settings") suspend fun smsSettings(): SmsSettings
+    @PUT("admin/sms/settings") suspend fun updateSmsSettings(@Body body: SmsSettingsRequest): SmsSettings
 
     // files
     @Multipart @POST("admin/files") suspend fun uploadImage(@Part file: MultipartBody.Part): UploadedFile

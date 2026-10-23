@@ -56,6 +56,15 @@ interface DejavuApi {
     @POST("auth/customer/register")
     suspend fun register(@Body body: RegisterRequest): AuthResponse
 
+    @GET("auth/governorates")
+    suspend fun governorates(): List<com.dejavu.core.model.Governorate>
+
+    @GET("auth/customer/otp")
+    suspend fun otpRequired(): com.dejavu.core.model.OtpRequired
+
+    @POST("auth/customer/otp")
+    suspend fun sendOtp(@Body body: com.dejavu.core.model.OtpRequest): com.dejavu.core.model.OtpSent
+
     @POST("auth/customer/login")
     suspend fun login(@Body body: LoginRequest): AuthResponse
 

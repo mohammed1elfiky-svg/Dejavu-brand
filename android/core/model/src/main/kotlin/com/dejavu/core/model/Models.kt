@@ -12,7 +12,33 @@ import kotlinx.serialization.Serializable
 // ------------------------------------------------------------------ auth ---
 
 @Serializable
-data class RegisterRequest(val name: String, val phone: String, val password: String, val email: String? = null)
+data class RegisterRequest(
+    val name: String,
+    val phone: String,
+    val password: String,
+    val email: String? = null,
+    /** One of [Governorate.name]. */
+    val governorate: String? = null,
+    /** Taiz only: الحوبان or المدينة. */
+    val area: String? = null,
+    /** Code texted to the phone, when sign-up asks for one. */
+    val otp: String? = null,
+)
+
+/** GET auth/governorates: Yemeni governorates and the rial each uses (Taiz is split in areas). */
+@Serializable
+data class Governorate(val name: String, val currency: String, val areas: List<Area> = emptyList()) {
+    @Serializable data class Area(val name: String, val currency: String)
+}
+
+@Serializable
+data class OtpRequired(val required: Boolean = false)
+
+@Serializable
+data class OtpRequest(val phone: String)
+
+@Serializable
+data class OtpSent(val sent: Boolean = true, val expiresInMinutes: Int = 10)
 
 @Serializable
 data class LoginRequest(val phone: String, val password: String)
@@ -40,6 +66,10 @@ data class Customer(
     /** Merchant (wholesale) customer: wholesale prices and may order on credit. */
     val isMerchant: Boolean = false,
     val creditLimit: String? = null,
+    val governorate: String? = null,
+    val area: String? = null,
+    /** The rial of the customer's region (YER old notes / YEQ new notes); null = unknown. */
+    val preferredCurrency: String? = null,
 )
 
 // --------------------------------------------------------------- catalog ---
@@ -108,6 +138,10 @@ data class StoreProduct(
     val promotion: PromotionTag? = null,
     /** Prices shown are the merchant's wholesale prices. */
     val merchantPrice: Boolean = false,
+    /** Bag size in cm, e.g. "30 × 20 × 10". */
+    val bagSize: String? = null,
+    /** Heel height in cm, e.g. "7.5". */
+    val heelHeightCm: String? = null,
 ) {
     /** Photos to show for [color]: the ones tagged with it first, then the general ones. */
     fun imagesFor(color: String?): List<ProductImage> {

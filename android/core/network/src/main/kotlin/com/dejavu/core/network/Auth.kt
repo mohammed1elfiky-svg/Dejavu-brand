@@ -31,7 +31,7 @@ class InMemoryTokenStore(initial: Tokens? = null) : TokenStore {
 }
 
 /** Endpoints that authenticate by their body, never by a bearer token. */
-private val TOKEN_FREE = listOf("/auth/customer/login", "/auth/customer/register", "/auth/staff/login", "/auth/refresh", "/auth/logout")
+private val TOKEN_FREE = listOf("/auth/customer/login", "/auth/customer/register", "/auth/customer/otp", "/auth/governorates", "/auth/staff/login", "/auth/refresh", "/auth/logout")
 
 /** Only the tokens of a refresh response: staff and customer sessions return different profiles. */
 @Serializable

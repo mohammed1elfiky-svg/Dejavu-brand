@@ -410,6 +410,10 @@ data class AdminProduct(
     val costPrice: String = "0",
     /** After a save with notifyCustomers: how many customers were notified (0 = not published, nothing sent). */
     val notifiedCustomers: Int? = null,
+    /** Bag size in cm as shown to shoppers, e.g. "30 × 20 × 10". */
+    val bagSize: String? = null,
+    /** Heel height in cm, e.g. "7.5". */
+    val heelHeightCm: String? = null,
 )
 
 @Serializable
@@ -435,6 +439,10 @@ data class UpdateProductRequest(
     val slug: String? = null,
     val descriptionAr: String? = null,
     val descriptionEn: String? = null,
+    /** "" clears it. */
+    val bagSize: String? = null,
+    /** "" clears it. */
+    val heelHeightCm: String? = null,
 )
 
 /** Category tree node from GET admin/categories. */
@@ -538,6 +546,8 @@ data class CreateProductRequest(
     val videoUrl: String? = null,
     val instagramUrl: String? = null,
     val visibility: ProductVisibility? = null,
+    val bagSize: String? = null,
+    val heelHeightCm: String? = null,
 )
 
 @Serializable
@@ -689,6 +699,8 @@ data class PurchaseItem(
     val landedUnitCost: String? = null,
     /** A new product created with this order (a draft until received). */
     val createdProduct: Boolean = false,
+    /** Import orders: the factory / note shown on the supplier's statement. */
+    val note: String? = null,
 ) {
     @Serializable data class Variant(val sku: String, val size: String? = null, val color: String? = null, val product: Name) {
         @Serializable
@@ -738,7 +750,7 @@ data class PurchaseOrderDetail(
 // ------------------------------------------------------------- imports ---
 
 @Serializable
-data class ImportItemRequest(val variantId: String, val quantity: Int, val unitPriceForeign: String)
+data class ImportItemRequest(val variantId: String, val quantity: Int, val unitPriceForeign: String, val note: String? = null)
 
 @Serializable
 data class ImportNewVariant(val size: String? = null, val color: String? = null, val colorHex: String? = null, val quantity: Int)
@@ -753,16 +765,19 @@ data class ImportNewProduct(
     val variants: List<ImportNewVariant>,
     val imageUrl: String? = null,
     val brandId: String? = null,
+    /** Factory name / note, shown on the supplier's statement. */
+    val note: String? = null,
 )
 
 @Serializable
 data class ImportOrderRequest(
     val supplierId: String,
-    val foreignPerUsd: String,
+    /** Optional: the yuan rate is set on the payment vouchers; null = the last voucher's rate. */
+    val foreignPerUsd: String? = null,
     val foreignCurrency: String? = null,
     /** Null = the current USD rate from the currency settings. */
     val sarPerUsd: String? = null,
-    /** Null = the supplier's commission. */
+    /** Commission is billed in USD per period (supplier vouchers); normally left null (0). */
     val commissionPercent: String? = null,
     val domesticShipping: String? = null,
     val supplierInvoiceNo: String? = null,
@@ -1051,3 +1066,120 @@ data class ExchangeRates(val base: Currency, val currencies: List<CurrencyRate>,
 
 @Serializable
 data class SetRateRequest(val rate: String, val note: String? = null)
+
+/** PUT admin/purchase-orders/{id}/import: lines (existing new-item lines are sent again in items), costs and notes. */
+@Serializable
+data class UpdateImportOrderRequest(
+    val items: List<ImportItemRequest>,
+    val newProducts: List<ImportNewProduct> = emptyList(),
+    val domesticShipping: String? = null,
+    val supplierInvoiceNo: String? = null,
+    val note: String? = null,
+)
+
+// ------------------------------------------------- supplier own account ---
+
+/** GET admin/suppliers/{id}/account: what is matched with the supplier, per currency (+ = we owe). */
+@Serializable
+data class SupplierAccount(
+    val balances: List<Balance> = emptyList(),
+    val entries: List<Entry> = emptyList(),
+    val vouchers: List<SupplierVoucher> = emptyList(),
+    /** Yuan per dollar of the latest payment voucher. */
+    val lastRate: String? = null,
+) {
+    @Serializable data class Balance(val currency: String, val balance: String)
+
+    @Serializable
+    data class Entry(
+        val id: String,
+        val currency: String,
+        /** + adds to what we owe (orders, commission), − takes off (payments, shortages). */
+        val amount: String,
+        /** PURCHASE_ORDER, SHORTAGE or VOUCHER. */
+        val sourceType: String,
+        val sourceId: String? = null,
+        val note: String? = null,
+        val createdAt: String,
+    )
+}
+
+@Serializable
+enum class SupplierVoucherKind { PAYMENT, COMMISSION }
+
+@Serializable
+data class SupplierVoucher(
+    val id: String,
+    val number: String,
+    val supplierId: String,
+    val kind: SupplierVoucherKind,
+    val usdAmount: String,
+    val foreignCurrency: String? = null,
+    val foreignPerUsd: String? = null,
+    val foreignAmount: String? = null,
+    val cashBoxId: String? = null,
+    val periodFrom: String? = null,
+    val periodTo: String? = null,
+    val note: String? = null,
+    val cancelledAt: String? = null,
+    val createdAt: String,
+) {
+    val isCancelled: Boolean get() = cancelledAt != null
+}
+
+/** Payment voucher: dollars from a USD box at the day's yuan rate. */
+@Serializable
+data class SupplierPaymentVoucherRequest(
+    val supplierId: String,
+    val usdAmount: String,
+    val cashBoxId: String,
+    /** Required when applyTo = GOODS. */
+    val foreignPerUsd: String? = null,
+    val foreignCurrency: String? = null,
+    /** GOODS (takes yuan off) or COMMISSION (pays the dollar commission). */
+    val applyTo: String = "GOODS",
+    val note: String? = null,
+)
+
+/** The agent's commission in USD for a period (yyyy-MM-dd). */
+@Serializable
+data class SupplierCommissionRequest(
+    val supplierId: String,
+    val usdAmount: String,
+    val periodFrom: String,
+    val periodTo: String,
+    val note: String? = null,
+)
+
+// ------------------------------------------------------------------- SMS ---
+
+/** A text the gateway phone sends now. */
+@Serializable
+data class SmsToSend(val id: String, val phone: String, val body: String, val purpose: String)
+
+@Serializable
+data class SmsResultRequest(val ok: Boolean, val error: String? = null)
+
+@Serializable
+data class OutgoingSms(
+    val id: String,
+    val phone: String,
+    val body: String,
+    val purpose: String,
+    /** PENDING, SENDING, SENT or FAILED. */
+    val status: String,
+    val error: String? = null,
+    val createdAt: String,
+    val sentAt: String? = null,
+)
+
+@Serializable
+data class SmsSettings(
+    val requirePhoneOtp: Boolean = false,
+    val gatewaySeenAt: String? = null,
+    val gatewayOnline: Boolean = false,
+    val pending: Int = 0,
+)
+
+@Serializable
+data class SmsSettingsRequest(val requirePhoneOtp: Boolean? = null)

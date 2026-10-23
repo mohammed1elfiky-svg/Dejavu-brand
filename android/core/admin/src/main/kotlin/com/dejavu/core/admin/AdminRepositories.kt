@@ -256,6 +256,25 @@ class PurchasingRepository(private val api: AdminApi) {
     /** "Receive and confirm matching": stock in at the landed cost. */
     suspend fun importReceive(id: String, request: ImportReceiveRequest) = apiCall { api.importReceive(id, request) }
 
+    /** Changes an import order that hasn't arrived (lines, notes, inland shipping). */
+    suspend fun updateImport(id: String, request: UpdateImportOrderRequest) = apiCall { api.updateImport(id, request) }
+
+    /** Deletes an order nothing was received for: it leaves the supplier account; new items made for it are archived. */
+    suspend fun cancelOrder(id: String) = apiCall { api.cancelPurchaseOrder(id) }
+
+    /** The supplier's own account in yuan / dollars, with vouchers. */
+    suspend fun supplierAccount(supplierId: String) = apiCall { api.supplierAccount(supplierId) }
+
+    /** Payment voucher (new, or a correction of [editId]). */
+    suspend fun paymentVoucher(request: SupplierPaymentVoucherRequest, editId: String? = null) =
+        apiCall { if (editId == null) api.paymentVoucher(request) else api.editPaymentVoucher(editId, request) }
+
+    /** Commission in USD for a period (new, or a correction of [editId]). */
+    suspend fun commissionVoucher(request: SupplierCommissionRequest, editId: String? = null) =
+        apiCall { if (editId == null) api.commissionVoucher(request) else api.editCommissionVoucher(editId, request) }
+
+    suspend fun cancelVoucher(id: String) = apiCall { api.cancelVoucher(id) }
+
     /** Buys, receives and (optionally) pays in one step — the till-style purchase screen. */
     suspend fun quickPurchase(request: QuickPurchaseRequest) = apiCall { api.quickPurchase(request) }
     suspend fun orders(status: PurchaseOrderStatus? = null, page: Int = 1) = apiCall { api.purchaseOrders(status?.name, page) }
@@ -310,8 +329,12 @@ class FinanceRepository(private val api: AdminApi) {
     suspend fun updateCustomer(id: String, request: UpdateCustomerRequest) = apiCall { api.updateCustomer(id, request) }
 
     /** Money taken from a customer at the till: pays off their debt, any excess becomes wallet credit. */
-    suspend fun customerReceipt(id: String, currency: Currency, amount: String, cashBoxId: String? = null, note: String? = null) =
-        apiCall { api.customerReceipt(id, CustomerReceiptRequest(currency, amount.trim(), cashBoxId, note?.ifBlank { null })) }
+    suspend fun customerReceipt(id: String, currency: Currency, amount: String, cashBoxId: String? = null, note: String? = null, sendSms: Boolean = false) =
+        apiCall { api.customerReceipt(id, CustomerReceiptRequest(currency, amount.trim(), cashBoxId, note?.ifBlank { null }, sendSms.takeIf { it })) }
+
+    /** Exchanges [amount] of [from] in the customer's account for [toAmount] of [to]. */
+    suspend fun customerExchange(id: String, from: Currency, amount: String, to: Currency, toAmount: String, note: String? = null, sendSms: Boolean = false) =
+        apiCall { api.customerExchange(id, CustomerExchangeRequest(from, amount.trim(), to, toAmount.trim(), note?.trim()?.ifBlank { null }, sendSms.takeIf { it })) }
 
     /** Balance from before the system: [owes] = the customer owes the store, else the store holds their money. */
     suspend fun openingBalance(id: String, currency: Currency, amount: String, owes: Boolean, note: String? = null) =
@@ -419,4 +442,16 @@ class PromotionRepository(private val api: AdminApi) {
         val res = api.deletePromotion(id)
         if (!res.isSuccessful) throw HttpException(res)
     }
+}
+
+/** Texts sent from this phone's SIM (the store phone is the SMS gateway). */
+class SmsRepository(private val api: AdminApi) {
+    suspend fun claim(limit: Int = 10) = apiCall { api.claimSms(limit) }
+    suspend fun report(id: String, ok: Boolean, error: String? = null) = apiCall {
+        val res = api.smsResult(id, SmsResultRequest(ok, error?.take(300)))
+        if (!res.isSuccessful) throw HttpException(res)
+    }
+    suspend fun recent(status: String? = null) = apiCall { api.smsList(status) }
+    suspend fun settings() = apiCall { api.smsSettings() }
+    suspend fun setRequireOtp(on: Boolean) = apiCall { api.updateSmsSettings(SmsSettingsRequest(requirePhoneOtp = on)) }
 }

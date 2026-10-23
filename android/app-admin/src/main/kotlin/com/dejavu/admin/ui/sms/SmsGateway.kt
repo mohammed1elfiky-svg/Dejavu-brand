@@ -331,8 +331,8 @@ class SmsGatewayService : Service() {
 class SmsGatewayViewModel(private val repo: SmsRepository) : BaseViewModel() {
     private val _settings = MutableStateFlow<Load<SmsSettings>>(Load.Loading)
     val settings = _settings.asStateFlow()
-    private val _messages = MutableStateFlow<Load<List<OutgoingSms>>>(Load.Loading)
-    val messages = _messages.asStateFlow()
+    private val _texts = MutableStateFlow<Load<List<OutgoingSms>>>(Load.Loading)
+    val texts = _texts.asStateFlow()
     private val _status = MutableStateFlow<String?>(null)
 
     /** Status filter of the list (null = all). */
@@ -355,8 +355,8 @@ class SmsGatewayViewModel(private val repo: SmsRepository) : BaseViewModel() {
         val status = _status.value
         viewModelScope.launch {
             repo.recent(status).fold(
-                { if (status == _status.value) _messages.value = Load.Ready(it) },
-                { if (status == _status.value && _messages.value !is Load.Ready) _messages.value = Load.Failed(it.userMessage()) },
+                { if (status == _status.value) _texts.value = Load.Ready(it) },
+                { if (status == _status.value && _texts.value !is Load.Ready) _texts.value = Load.Failed(it.userMessage()) },
             )
         }
     }
@@ -364,7 +364,7 @@ class SmsGatewayViewModel(private val repo: SmsRepository) : BaseViewModel() {
     fun filter(status: String?) {
         if (status == _status.value) return
         _status.value = status
-        _messages.value = Load.Loading
+        _texts.value = Load.Loading
         loadMessages()
     }
 
@@ -415,7 +415,7 @@ fun SmsGatewayScreen(onBack: () -> Unit) {
     val vm = adminViewModel { SmsGatewayViewModel(it.sms) }
     val context = LocalContext.current
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val messages by vm.messages.collectAsStateWithLifecycle()
+    val messages by vm.texts.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }

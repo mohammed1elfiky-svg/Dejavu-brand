@@ -96,6 +96,13 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
     /** Whether sign-up needs a code texted to the phone. */
     suspend fun otpRequired() = apiCall { api.otpRequired() }.map { it.required }
 
+    /** Forgotten password: texts a reset code to the registered [phone]. */
+    suspend fun sendResetCode(phone: String) = apiCall { api.sendResetCode(com.dejavu.core.model.OtpRequest(phone.normalizedPhone())) }
+
+    /** Sets [newPassword] with the texted [code] and signs in. */
+    suspend fun resetPassword(phone: String, code: String, newPassword: String): Result<Customer> =
+        apiCall { api.resetPassword(com.dejavu.core.model.PasswordResetRequest(phone.normalizedPhone(), code.trim(), newPassword)) }.map(::start)
+
     /** Texts a sign-up code to [phone] (sent from the store's phone). */
     suspend fun sendOtp(phone: String) = apiCall { api.sendOtp(com.dejavu.core.model.OtpRequest(phone.normalizedPhone())) }
 

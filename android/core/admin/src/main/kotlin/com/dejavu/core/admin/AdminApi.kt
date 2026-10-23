@@ -40,6 +40,7 @@ interface AdminApi {
     @GET("admin/reports/dashboard") suspend fun dashboard(): Dashboard
     @GET("admin/reports/income-statement") suspend fun incomeStatement(@Query("from") from: String?, @Query("to") to: String?): IncomeStatement
     @GET("admin/reports/balance-sheet") suspend fun balanceSheet(@Query("asOf") asOf: String? = null): BalanceSheet
+    @GET("admin/reports/revenue") suspend fun revenue(@Query("from") from: String?, @Query("to") to: String?): RevenueReport
     @GET("admin/reports/sales") suspend fun sales(@Query("groupBy") groupBy: String, @Query("from") from: String?, @Query("to") to: String?): SalesReport
 
     // orders
@@ -79,6 +80,10 @@ interface AdminApi {
     @PATCH("admin/variants/{id}") suspend fun updateVariant(@Path("id") id: String, @Body body: UpdateVariantRequest): AdminVariant
     @GET("admin/categories") suspend fun categories(): List<AdminCategory>
     @POST("admin/categories") suspend fun createCategory(@Body body: CreateCategoryRequest): AdminCategory
+    @PATCH("admin/categories/{id}") suspend fun updateCategory(@Path("id") id: String, @Body body: UpdateCategoryRequest): AdminCategory
+    @GET("admin/coupons") suspend fun coupons(): List<AdminCoupon>
+    @POST("admin/coupons") suspend fun createCoupon(@Body body: CouponRequest): AdminCoupon
+    @PATCH("admin/coupons/{id}") suspend fun updateCoupon(@Path("id") id: String, @Body body: CouponRequest): AdminCoupon
     @GET("admin/brands") suspend fun brands(): List<AdminBrand>
     @POST("admin/brands") suspend fun createBrand(@Body body: BrandRequest): AdminBrand
     @PATCH("admin/brands/{id}") suspend fun updateBrand(@Path("id") id: String, @Body body: BrandRequest): AdminBrand
@@ -107,6 +112,7 @@ interface AdminApi {
     @POST("admin/purchase-orders/{id}/import-receive") suspend fun importReceive(@Path("id") id: String, @Body body: ImportReceiveRequest): PurchaseOrderDetail
     @PUT("admin/purchase-orders/{id}/import") suspend fun updateImport(@Path("id") id: String, @Body body: UpdateImportOrderRequest): PurchaseOrderDetail
     @POST("admin/purchase-orders/{id}/cancel") suspend fun cancelPurchaseOrder(@Path("id") id: String): PurchaseOrderDetail
+    @POST("admin/suppliers/{id}/opening-balance") suspend fun supplierOpeningBalance(@Path("id") id: String, @Body body: SupplierOpeningBalanceRequest): SupplierAccount
     @GET("admin/suppliers/{id}/account") suspend fun supplierAccount(@Path("id") id: String): SupplierAccount
     @POST("admin/supplier-vouchers/payment") suspend fun paymentVoucher(@Body body: SupplierPaymentVoucherRequest): SupplierVoucher
     @POST("admin/supplier-vouchers/commission") suspend fun commissionVoucher(@Body body: SupplierCommissionRequest): SupplierVoucher

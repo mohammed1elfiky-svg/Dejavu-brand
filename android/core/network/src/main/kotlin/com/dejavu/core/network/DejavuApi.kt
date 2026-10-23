@@ -65,6 +65,12 @@ interface DejavuApi {
     @POST("auth/customer/otp")
     suspend fun sendOtp(@Body body: com.dejavu.core.model.OtpRequest): com.dejavu.core.model.OtpSent
 
+    @POST("auth/customer/otp/reset")
+    suspend fun sendResetCode(@Body body: com.dejavu.core.model.OtpRequest): com.dejavu.core.model.OtpSent
+
+    @POST("auth/customer/password-reset")
+    suspend fun resetPassword(@Body body: com.dejavu.core.model.PasswordResetRequest): AuthResponse
+
     @POST("auth/customer/login")
     suspend fun login(@Body body: LoginRequest): AuthResponse
 

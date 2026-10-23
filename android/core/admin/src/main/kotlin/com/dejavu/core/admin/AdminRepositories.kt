@@ -123,6 +123,9 @@ class DashboardRepository(private val api: AdminApi) {
     suspend fun incomeStatement(from: String? = null, to: String? = null) = apiCall { api.incomeStatement(from, to) }
     suspend fun balanceSheet() = apiCall { api.balanceSheet() }
     suspend fun sales(groupBy: String, from: String? = null, to: String? = null) = apiCall { api.sales(groupBy, from, to) }
+
+    /** Revenue of till and app sales, retail and merchants (dates yyyy-MM-dd; null = this month). */
+    suspend fun revenue(from: String? = null, to: String? = null) = apiCall { api.revenue(from, to) }
 }
 
 class AdminOrderRepository(private val api: AdminApi) {
@@ -211,6 +214,9 @@ class InventoryRepository(private val api: AdminApi) {
         return apiCall { api.categories() }.onSuccess { categoriesCache = it }.map { it.flatMap { c -> c.flatten() } }
     }
 
+    /** Renames a category or shows / hides it in the customer app. */
+    suspend fun updateCategory(id: String, request: UpdateCategoryRequest) = apiCall { api.updateCategory(id, request) }.onSuccess { categoriesCache = null }
+
     suspend fun createCategory(nameAr: String, nameEn: String, parentId: String? = null) =
         apiCall { api.createCategory(CreateCategoryRequest(nameAr.trim(), nameEn.trim(), VariantPlanner.slugOf(nameEn), parentId)) }
             .onSuccess { categoriesCache = null }
@@ -261,6 +267,9 @@ class PurchasingRepository(private val api: AdminApi) {
 
     /** Deletes an order nothing was received for: it leaves the supplier account; new items made for it are archived. */
     suspend fun cancelOrder(id: String) = apiCall { api.cancelPurchaseOrder(id) }
+
+    /** A supplier balance from before the system. */
+    suspend fun supplierOpeningBalance(supplierId: String, request: SupplierOpeningBalanceRequest) = apiCall { api.supplierOpeningBalance(supplierId, request) }
 
     /** The supplier's own account in yuan / dollars, with vouchers. */
     suspend fun supplierAccount(supplierId: String) = apiCall { api.supplierAccount(supplierId) }
@@ -454,4 +463,11 @@ class SmsRepository(private val api: AdminApi) {
     suspend fun recent(status: String? = null) = apiCall { api.smsList(status) }
     suspend fun settings() = apiCall { api.smsSettings() }
     suspend fun setRequireOtp(on: Boolean) = apiCall { api.updateSmsSettings(SmsSettingsRequest(requirePhoneOtp = on)) }
+}
+
+/** Discount codes for the app and the till. */
+class CouponRepository(private val api: AdminApi) {
+    suspend fun list() = apiCall { api.coupons() }
+    suspend fun create(request: CouponRequest) = apiCall { api.createCoupon(request) }
+    suspend fun update(id: String, request: CouponRequest) = apiCall { api.updateCoupon(id, request) }
 }

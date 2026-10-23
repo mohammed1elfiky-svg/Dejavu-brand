@@ -37,6 +37,10 @@ data class OtpRequired(val required: Boolean = false)
 @Serializable
 data class OtpRequest(val phone: String)
 
+/** Forgotten password: the texted code and the new password. */
+@Serializable
+data class PasswordResetRequest(val phone: String, val code: String, val newPassword: String)
+
 @Serializable
 data class OtpSent(val sent: Boolean = true, val expiresInMinutes: Int = 10)
 

@@ -34,11 +34,21 @@ object ServerMessages {
         "Upload the deposit receipt first" to "أرفق صورة إيصال الإيداع أولاً",
         "Bank account not found" to "الحساب البنكي غير متاح",
         "This order exceeds your credit limit" to "الطلب يتجاوز حد الشراء الآجل لحسابك، سدّد جزءاً من المستحق أو تواصل معنا",
+        "No account uses this phone number" to "لا يوجد حساب بهذا الرقم",
+        "Wrong verification code" to "رمز التحقق غير صحيح",
+        "The verification code expired; request a new one" to "انتهت صلاحية الرمز، اطلب رمزاً جديداً",
+        "Too many wrong codes; request a new one" to "محاولات خاطئة كثيرة، اطلب رمزاً جديداً",
+        "Too many codes requested; try again in a few minutes" to "طلبت رموزاً كثيرة، حاول بعد دقائق",
+        "Enter the verification code sent to your phone" to "أدخل رمز التحقق المرسل إلى رقمك",
+        "Use either a discount code or a typed discount" to "استخدم كود الخصم أو الخصم اليدوي، وليس الاثنين",
         "You already have several requests under review" to "لديك عدة طلبات شحن قيد المراجعة، انتظر حتى تتم مراجعتها",
     )
 
     private val patterns: List<Pair<Regex, (MatchResult) -> String>> = listOf(
         Regex("^Not enough wallet balance in (.+)$") to { m -> "رصيد المحفظة بعملة ${Currency.of(m.groupValues[1]).nameAr} غير كافٍ" },
+        Regex("^Not enough ([A-Z]{3}) in the drawer for the change: (.+) available, (.+) needed$") to { m ->
+            "لا يوجد في الدرج ما يكفي من ${Currency.of(m.groupValues[1]).nameAr} لإرجاع الباقي (المتوفر ${m.groupValues[2]}، المطلوب ${m.groupValues[3]}). اختر عملة أخرى للباقي."
+        },
         Regex("^Only (\\d+) left in stock$") to { m -> "متبقي ${m.groupValues[1]} فقط" },
         Regex("^Insufficient stock for (.+)$") to { m -> "الكمية المطلوبة غير متاحة (${m.groupValues[1]})" },
         Regex("^Minimum order for this coupon is (.+)$") to { m -> "الحد الأدنى للطلب مع هذا الكود ${Money.format(m.groupValues[1])}" },

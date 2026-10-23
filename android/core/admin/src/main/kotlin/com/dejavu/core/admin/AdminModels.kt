@@ -39,6 +39,8 @@ data class StaffProfile(
     val phone: String? = null,
     val roles: List<RoleRef> = emptyList(),
     val permissions: List<String> = emptyList(),
+    /** Currency the till opens with for this employee (null = SAR). */
+    val saleCurrency: String? = null,
 ) {
     fun can(permission: String) = permission in permissions
 }
@@ -453,6 +455,11 @@ data class AdminCategory(
     val nameEn: String,
     val slug: String,
     val children: List<AdminCategory> = emptyList(),
+    val parentId: String? = null,
+    /** Shown in the customer app (hidden categories hide their products there too). */
+    val isActive: Boolean = true,
+    val sortOrder: Int = 0,
+    val imageUrl: String? = null,
 ) {
     /** This category and all below it, depth-first, with their depth (for an indented picker). */
     fun flatten(depth: Int = 0): List<Pair<AdminCategory, Int>> = listOf(this to depth) + children.flatMap { it.flatten(depth + 1) }
@@ -503,6 +510,10 @@ data class WipeSummary(
 
 @Serializable
 data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slug: String, val parentId: String? = null)
+
+/** PATCH admin/categories/{id}: rename, show/hide in the customer app; null leaves a field as is. */
+@Serializable
+data class UpdateCategoryRequest(val nameAr: String? = null, val nameEn: String? = null, val isActive: Boolean? = null, val sortOrder: Int? = null)
 
 @Serializable
 data class NewVariantRequest(
@@ -1183,3 +1194,73 @@ data class SmsSettings(
 
 @Serializable
 data class SmsSettingsRequest(val requirePhoneOtp: Boolean? = null)
+
+// ------------------------------------------------------------- coupons ---
+
+/** PERCENTAGE, FIXED_AMOUNT (SAR) or FREE_SHIPPING. */
+@Serializable
+enum class CouponType { PERCENTAGE, FIXED_AMOUNT, FREE_SHIPPING }
+
+@Serializable
+data class AdminCoupon(
+    val id: String,
+    val code: String,
+    val description: String? = null,
+    val type: CouponType,
+    val value: String,
+    val minOrderAmount: String? = null,
+    val maxDiscount: String? = null,
+    val usageLimit: Int? = null,
+    val perCustomerLimit: Int? = null,
+    val usedCount: Int = 0,
+    val startsAt: String,
+    val endsAt: String? = null,
+    val isActive: Boolean = true,
+)
+
+/** Create (all required fields) or edit (null leaves a field as is). Dates are ISO-8601. */
+@Serializable
+data class CouponRequest(
+    val code: String? = null,
+    val description: String? = null,
+    val type: CouponType? = null,
+    val value: String? = null,
+    val minOrderAmount: String? = null,
+    val maxDiscount: String? = null,
+    val usageLimit: Int? = null,
+    val perCustomerLimit: Int? = null,
+    val startsAt: String? = null,
+    val endsAt: String? = null,
+    val isActive: Boolean? = null,
+)
+
+// -------------------------------------------------------- revenue report ---
+
+/** GET admin/reports/revenue: till vs app, retail vs merchants (SAR, net of tax and returns). */
+@Serializable
+data class RevenueReport(
+    val from: String,
+    val to: String,
+    val pos: Channel,
+    val app: Channel,
+    val merchants: Cell,
+    val retail: Cell,
+    val total: Cell,
+) {
+    @Serializable data class Channel(val retail: Cell, val merchants: Cell, val total: Cell)
+
+    @Serializable
+    data class Cell(val orders: Int = 0, val units: Int = 0, val revenue: String = "0", val cost: String = "0", val grossProfit: String = "0")
+}
+
+/** POST admin/suppliers/{id}/opening-balance. */
+@Serializable
+data class SupplierOpeningBalanceRequest(
+    val currency: String,
+    val amount: String,
+    /** WE_OWE (we owe the supplier) or SUPPLIER_OWES (we paid ahead). */
+    val direction: String,
+    /** SAR value; required for a currency without a rate in the app (e.g. CNY). */
+    val sarAmount: String? = null,
+    val note: String? = null,
+)

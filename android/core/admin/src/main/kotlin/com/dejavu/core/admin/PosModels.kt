@@ -96,6 +96,8 @@ data class PosSaleRequest(
     val reference: String? = null,
     /** Pay this much (invoice currency) from the customer's own credit first. */
     val fromAccount: String? = null,
+    /** Discount code (instead of a typed discount). */
+    val couponCode: String? = null,
 )
 
 @Serializable
@@ -410,6 +412,8 @@ data class StaffUser(
     val permissions: List<String> = emptyList(),
     /** Boxes they may use (empty = only their own drawers). */
     val cashBoxIds: List<String> = emptyList(),
+    /** Currency the till opens with (cashiers YER, others SAR by default). */
+    val saleCurrency: String? = null,
 ) {
     val isActive: Boolean get() = status == "ACTIVE"
 }
@@ -424,6 +428,8 @@ data class CreateStaffRequest(
     val username: String? = null,
     val permissions: List<String>? = null,
     val cashBoxIds: List<String>? = null,
+    /** Null = YER for cashiers, SAR otherwise. */
+    val saleCurrency: String? = null,
 )
 
 @Serializable
@@ -435,6 +441,7 @@ data class UpdateStaffRequest(
     val status: String? = null,
     val password: String? = null,
     val roleIds: List<String>? = null,
+    val saleCurrency: String? = null,
 )
 
 @Serializable

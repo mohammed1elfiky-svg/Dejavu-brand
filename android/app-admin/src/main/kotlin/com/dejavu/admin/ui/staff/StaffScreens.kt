@@ -67,6 +67,7 @@ import com.dejavu.admin.ui.treasury.label
 import com.dejavu.core.admin.CashBox
 import com.dejavu.core.admin.CashBoxKind
 import com.dejavu.core.admin.CreateStaffRequest
+import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.PermissionLabels
 import com.dejavu.core.admin.StaffRepository
 import com.dejavu.core.admin.StaffRole
@@ -74,6 +75,7 @@ import com.dejavu.core.admin.StaffUser
 import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.admin.UpdateStaffRequest
 import com.dejavu.core.data.userMessage
+import com.dejavu.core.model.Currency
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
@@ -244,7 +246,17 @@ private fun StaffCard(u: StaffUser, onClick: () -> Unit) {
 
 // -------------------------------------------------------------------- edit ---
 
-data class StaffEditData(val user: StaffUser?, val roles: List<StaffRole>, val boxes: List<CashBox>, val boxesFailed: Boolean)
+data class StaffEditData(
+    val user: StaffUser?,
+    val roles: List<StaffRole>,
+    val boxes: List<CashBox>,
+    val boxesFailed: Boolean,
+    /** Active currencies, for the default sale currency. */
+    val currencies: List<Currency> = listOf(Currency.SAR),
+)
+
+/** What the server assumes when no sale currency is set: YER for cashiers, SAR otherwise. */
+private fun defaultSaleCurrency(cashier: Boolean): String = if (cashier) Currency.YER.code else Currency.SAR.code
 
 /** What the form holds when saving. */
 data class StaffForm(
@@ -256,12 +268,15 @@ data class StaffForm(
     val roleIds: Set<String>,
     val permissions: Set<String>,
     val boxIds: Set<String>,
+    /** Currency code the till opens with. */
+    val saleCurrency: String,
 )
 
 class StaffEditViewModel(
     private val id: String?,
     private val repo: StaffRepository,
     private val treasury: TreasuryRepository,
+    private val finance: FinanceRepository,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<StaffEditData>>(Load.Loading)
     val state = _state.asStateFlow()
@@ -274,6 +289,7 @@ class StaffEditViewModel(
             val user = id?.let { repo.get(it) }
             val roles = repo.roles()
             val boxes = treasury.all()
+            val currencies = finance.activeCurrencies().getOrNull()?.register().orEmpty()
             val failure = user?.exceptionOrNull() ?: roles.exceptionOrNull()
             _state.value = if (failure != null) {
                 Load.Failed(staffError(failure))
@@ -284,6 +300,7 @@ class StaffEditViewModel(
                         roles = roles.getOrDefault(emptyList()),
                         boxes = boxes.getOrDefault(emptyList()),
                         boxesFailed = boxes.isFailure,
+                        currencies = (listOf(Currency.SAR) + currencies).distinct(),
                     ),
                 )
             }
@@ -313,6 +330,7 @@ class StaffEditViewModel(
                         username = form.username.trim().lowercase().ifBlank { null },
                         permissions = form.permissions.toList().takeIf { it.isNotEmpty() },
                         cashBoxIds = form.boxIds.toList().takeIf { it.isNotEmpty() },
+                        saleCurrency = form.saleCurrency,
                     ),
                 )
                 if (!r.failed()) {
@@ -330,6 +348,7 @@ class StaffEditViewModel(
                     status = status.takeIf { form.active != before.isActive },
                     password = form.password.takeIf { it.isNotEmpty() },
                     roleIds = form.roleIds.toList().takeIf { form.roleIds != before.roles.map { it.id }.toSet() },
+                    saleCurrency = form.saleCurrency.takeIf { it != (before.saleCurrency ?: Currency.SAR.code) },
                 )
                 var ok = true
                 if (request != UpdateStaffRequest()) ok = !repo.update(before.id, request).failed()
@@ -356,7 +375,7 @@ class StaffEditViewModel(
 /** New employee ([id] null) or editing one: account, roles, own permissions and cash boxes. */
 @Composable
 fun StaffEditScreen(id: String?, onBack: () -> Unit) {
-    val vm = adminViewModel(key = "staff-edit:${id ?: "new"}") { StaffEditViewModel(id, it.staff, it.treasury) }
+    val vm = adminViewModel(key = "staff-edit:${id ?: "new"}") { StaffEditViewModel(id, it.staff, it.treasury, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -389,6 +408,10 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
     var roleIds by remember(u) { mutableStateOf(u?.roles?.map { it.id }?.toSet() ?: emptySet()) }
     var perms by remember(u) { mutableStateOf(u?.customPermissions?.toSet() ?: emptySet()) }
     var boxIds by remember(u) { mutableStateOf(u?.cashBoxIds?.toSet() ?: emptySet()) }
+    // New employees follow their roles (YER for cashiers, SAR otherwise) until a currency is picked.
+    var pickedCurrency by remember(u) { mutableStateOf(u?.let { it.saleCurrency ?: Currency.SAR.code }) }
+    val isCashier = data.roles.any { it.id in roleIds && it.name == "cashier" }
+    val saleCurrency = pickedCurrency ?: defaultSaleCurrency(isCashier)
 
     val fromRoles = data.roles.filter { it.id in roleIds }.flatMap { it.permissions }.toSet()
     val usernameOk = username.isBlank() || usernamePattern.matches(username.trim().lowercase())
@@ -470,6 +493,31 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
                 }
                 Text(
                     "صلاحيات الأدوار تُضاف تلقائياً، ويمكنك إضافة صلاحيات خاصة لهذا الموظف بالأسفل",
+                    style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft,
+                )
+            }
+        }
+
+        // ---- default sale currency
+        GlassCard(Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("عملة البيع الافتراضية", style = MaterialTheme.typography.titleSmall)
+                val options = (data.currencies + Currency.of(saleCurrency)).distinct()
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    options.forEach { c ->
+                        FilterChip(
+                            selected = c.code == saleCurrency,
+                            onClick = { pickedCurrency = c.code },
+                            label = { Text("${c.nameAr} (${c.symbol})") },
+                        )
+                    }
+                }
+                Text(
+                    if (isNew && pickedCurrency == null) {
+                        "تتبع الدور: الريال اليمني للكاشير والريال السعودي لغيره. يستطيع الكاشير تغييرها عند البيع."
+                    } else {
+                        "العملة التي تُفتح بها فاتورة الكاشير لهذا الموظف، ويمكن تغييرها عند البيع."
+                    },
                     style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft,
                 )
             }
@@ -561,7 +609,7 @@ private fun StaffFormContent(data: StaffEditData, busy: Boolean, modifier: Modif
         )
         Button(
             onClick = {
-                onSave(StaffForm(name, username, phone, password, active, roleIds, perms, boxIds))
+                onSave(StaffForm(name, username, phone, password, active, roleIds, perms, boxIds, saleCurrency))
             },
             enabled = valid && !busy,
             modifier = Modifier.fillMaxWidth().height(52.dp),

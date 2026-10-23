@@ -84,6 +84,8 @@ import com.dejavu.admin.ui.printers.PrinterSettingsScreen
 import com.dejavu.admin.ui.purchasing.EditImportScreen
 import com.dejavu.admin.ui.purchasing.SupplierAccountScreen
 import com.dejavu.admin.ui.sms.SmsGatewayScreen
+import com.dejavu.admin.ui.categories.CategoriesScreen
+import com.dejavu.admin.ui.coupons.CouponsScreen
 import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
 import com.dejavu.admin.ui.purchasing.NewImportScreen
 import com.dejavu.admin.ui.purchasing.SupplierScreen
@@ -165,6 +167,8 @@ object R {
     const val IMPORT_EDIT = "import-edit/{id}"
     const val SUPPLIER_ACCOUNT = "supplier-account/{id}"
     const val SMS = "sms"
+    const val CATEGORIES = "categories"
+    const val COUPONS = "coupons"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -320,6 +324,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.IMPORT_EDIT) { e -> EditImportScreen(e.arguments?.getString("id").orEmpty(), back, saved = back) }
             composable(R.SUPPLIER_ACCOUNT) { e -> SupplierAccountScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             composable(R.SMS) { SmsGatewayScreen(back) }
+            composable(R.CATEGORIES) { CategoriesScreen(back) }
+            composable(R.COUPONS) { CouponsScreen(back) }
             composable(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
             composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }, editImport = { open(R.IMPORT_EDIT, it) }) }
             composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }

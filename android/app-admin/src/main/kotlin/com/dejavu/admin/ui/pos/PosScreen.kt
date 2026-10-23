@@ -322,6 +322,9 @@ class PosViewModel(
         private set
     var discountType by mutableStateOf(DiscountType.PERCENT)
     var discountValue by mutableStateOf("")
+    /** Discount code applied by the server; exclusive with the typed discount. */
+    var couponCode by mutableStateOf("")
+        private set
     var tenders by mutableStateOf(listOf(TenderInput(Currency.SAR, "")))
         private set
     var changeCurrency by mutableStateOf<Currency?>(null)
@@ -343,6 +346,9 @@ class PosViewModel(
 
     private var searchJob: Job? = null
     private var customerJob: Job? = null
+    /** The signed-in employee's till currency (code), applied until the cashier picks one. */
+    private var preferredCurrency: String? = null
+    private var currencyPicked = false
 
     init {
         load()
@@ -356,8 +362,50 @@ class PosViewModel(
         bankFor = bankFor + (currency to boxId)
     }
 
+    /**
+     * The currency change is given in: the cashier's pick, else (like the server) the currency of
+     * the cash tenders when they all share one, else the invoice currency.
+     */
+    val changeIn: Currency
+        get() = changeCurrency ?: defaultChangeCurrency(tenders)
+
+    private fun defaultChangeCurrency(list: List<TenderInput>): Currency {
+        if (payMethod != PayMethod.CASH) return currency
+        val used = list.filter { validAmount(it.amount, it.currency) != null }.map { it.currency }.distinct()
+        return used.singleOrNull() ?: currency
+    }
+
+    /** The manual discount, unless a discount code is entered (they are exclusive). */
+    private val typedDiscount: String
+        get() = if (couponCode.isBlank()) discountValue else ""
+
     val totals: PosTotals
-        get() = computeTotals(cart, currency, rates, discountType, discountValue, tenders, changeCurrency ?: currency, customer)
+        get() = computeTotals(cart, currency, rates, discountType, typedDiscount, tenders, changeIn, customer)
+
+    fun editCoupon(code: String) {
+        couponCode = code.filter { !it.isWhitespace() }.take(40)
+        if (couponCode.isNotEmpty()) discountValue = ""
+        checkoutError = null
+    }
+
+    /** The cashier picks the invoice currency (overrides the employee's default). */
+    fun pickCurrency(c: Currency) {
+        currency = c
+        currencyPicked = true
+        checkoutError = null
+    }
+
+    /** Sets the employee's default till currency; applied while the cashier hasn't picked one. */
+    fun preferCurrency(code: String?) {
+        preferredCurrency = code
+        applyPreferredCurrency()
+    }
+
+    private fun applyPreferredCurrency() {
+        if (currencyPicked) return
+        val code = preferredCurrency ?: return
+        currencies.firstOrNull { it.code == code }?.let { currency = it }
+    }
 
     fun rateOf(c: Currency): BigDecimal? = rates[c]
 
@@ -398,6 +446,7 @@ class PosViewModel(
                     }
                     rates = found
                     currencies = (listOf(Currency.SAR) + ordered.map { Currency.of(it.code) }).distinct().filter { it in found }
+                    applyPreferredCurrency()
                     // Two tender fields side by side by default: SAR and YER (when it has a rate).
                     val defaults = listOfNotNull(Currency.SAR, Currency.YER.takeIf { it in found })
                     if (tenders.all { it.amount.isBlank() }) tenders = defaults.map { TenderInput(it, "") }
@@ -501,7 +550,7 @@ class PosViewModel(
         val t = tenders.getOrNull(index) ?: return
         val r = rates[t.currency] ?: return
         val others = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = "") else x }
-        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: currency, customer).owed
+        val owed = computeTotals(cart, currency, rates, discountType, typedDiscount, others, changeCurrency ?: defaultChangeCurrency(others), customer).owed
         val amount = if (owed.signum() > 0) Money.convert(owed, t.currency, r).stripTrailingZeros().toPlainString() else ""
         tenders = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = amount) else x }
         checkoutError = null
@@ -555,7 +604,8 @@ class PosViewModel(
     fun sell() {
         if (busy || cart.isEmpty()) return
         val t = totals
-        val discount = discountValue.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
+        val coupon = couponCode.trim().ifBlank { null }
+        val discount = typedDiscount.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
         val request = PosSaleRequest(
             items = cart.map { PosItem(it.variant.id, it.qty) },
             saleType = saleType,
@@ -563,6 +613,7 @@ class PosViewModel(
             customerId = customer?.id,
             discountType = discountType.takeIf { discount != null },
             discountValue = discount?.stripTrailingZeros()?.toPlainString(),
+            couponCode = coupon,
             payments = tenders.mapNotNull { x ->
                 validAmount(x.amount, x.currency)?.let {
                     PosTender(
@@ -573,7 +624,8 @@ class PosViewModel(
                     )
                 }
             },
-            changeCurrency = (changeCurrency ?: currency).takeIf { t.change.signum() > 0 },
+            // With a code the real total is only known to the server: send an explicit pick anyway.
+            changeCurrency = changeIn.takeIf { t.change.signum() > 0 || (coupon != null && changeCurrency != null) },
             paymentMethod = payMethod.wire,
             reference = reference.trim().ifBlank { null }?.takeIf { payMethod != PayMethod.CASH },
         )
@@ -599,6 +651,7 @@ class PosViewModel(
         customerQuery = ""
         customerResults = emptyList()
         discountValue = ""
+        couponCode = ""
         saleType = SaleType.CASH
         changeCurrency = null
         checkoutError = null
@@ -634,6 +687,9 @@ fun PosScreen(session: StaffSession.LoggedIn, openBoxes: () -> Unit, openReturns
     val canEditRates = session.can(Perm.SETTINGS_MANAGE)
     var editRates by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
+    // The till opens in the employee's own sale currency (when it is active).
+    val saleCurrency = session.profile?.saleCurrency
+    LaunchedEffect(saleCurrency) { vm.preferCurrency(saleCurrency) }
 
     // Receipt printer: automatic after each sale (if set up), or from the receipt dialog.
     val printerSettings by adminContainer().printers.settings.collectAsStateWithLifecycle()
@@ -1048,23 +1104,25 @@ private fun CompactField(
     isError: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
     trailing: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(12.dp)
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
+        enabled = enabled,
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = Lux.Ink),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         interactionSource = interaction,
         cursorBrush = SolidColor(Lux.GoldDeep),
-        modifier = modifier.height(40.dp),
+        modifier = modifier.height(40.dp).alpha(if (enabled) 1f else 0.45f),
     ) { inner ->
         OutlinedTextFieldDefaults.DecorationBox(
             value = value,
             innerTextField = inner,
-            enabled = true,
+            enabled = enabled,
             singleLine = true,
             visualTransformation = VisualTransformation.None,
             interactionSource = interaction,
@@ -1073,7 +1131,7 @@ private fun CompactField(
             trailingIcon = trailing,
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
             container = {
-                OutlinedTextFieldDefaults.Container(enabled = true, isError = isError, interactionSource = interaction, shape = shape)
+                OutlinedTextFieldDefaults.Container(enabled = enabled, isError = isError, interactionSource = interaction, shape = shape)
             },
         )
     }
@@ -1093,8 +1151,9 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
     val inv = vm.currency
     val rate = vm.rateOf(inv) ?: BigDecimal.ONE
     fun inInvoice(sar: BigDecimal) = Money.format(sar, inv, rate)
+    val hasCoupon = vm.couponCode.isNotBlank()
     val discountNumber = vm.discountValue.trim().toBigDecimalOrNull()
-    val discountValid = vm.discountValue.isBlank() || when (vm.discountType) {
+    val discountValid = hasCoupon || vm.discountValue.isBlank() || when (vm.discountType) {
         DiscountType.PERCENT -> discountNumber != null && discountNumber.signum() >= 0 && discountNumber <= HUNDRED
         DiscountType.AMOUNT -> discountNumber != null && discountNumber.signum() >= 0 &&
             discountNumber.stripTrailingZeros().scale() <= inv.decimals && discountNumber <= Money.convert(t.subtotal, inv, rate)
@@ -1102,7 +1161,8 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
     val tendersValid = vm.tenders.all { it.amount.isBlank() || validAmount(it.amount, it.currency) != null }
     val credit = vm.saleType == SaleType.CREDIT
     val canSell = vm.cart.isNotEmpty() && !vm.busy && discountValid && tendersValid &&
-        (if (credit) vm.customer != null else t.owed.signum() == 0)
+        // With a discount code the server knows the real total (and rejects an underpayment).
+        (if (credit) vm.customer != null else t.owed.signum() == 0 || hasCoupon)
 
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
     Column(modifier) {
@@ -1131,7 +1191,7 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
         Section {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 vm.currencies.forEach { c ->
-                    SmallChip(c.symbol, selected = c == inv) { vm.currency = c; vm.checkoutError = null }
+                    SmallChip(c.symbol, selected = c == inv) { vm.pickCurrency(c) }
                 }
                 Spacer(Modifier.width(6.dp))
                 SmallChip("نقداً", selected = !credit) { vm.saleType = SaleType.CASH; vm.checkoutError = null }
@@ -1168,9 +1228,21 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
                     placeholder = if (vm.discountType == DiscountType.PERCENT) "النسبة %" else "المبلغ (${inv.symbol})",
                     isError = !discountValid,
                     keyboardType = KeyboardType.Decimal,
+                    enabled = !hasCoupon,
                     modifier = Modifier.weight(1f),
                 )
             }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("كود خصم", style = MaterialTheme.typography.labelLarge)
+                CompactField(
+                    value = vm.couponCode,
+                    onValueChange = vm::editCoupon,
+                    placeholder = "أدخل الكود (بدلاً من الخصم اليدوي)",
+                    trailing = if (hasCoupon) ({ SmallIcon(Icons.Filled.Close, "مسح الكود") { vm.editCoupon("") } }) else null,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (hasCoupon) Text("يُحسب الخصم عند إتمام البيع", style = MaterialTheme.typography.labelSmall, color = Lux.GoldDeep)
             CompactRow("المجموع", inInvoice(t.subtotal))
             if (t.discount.signum() > 0) CompactRow("الخصم", "− ${inInvoice(t.discount)}", MaterialTheme.colorScheme.error)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1197,12 +1269,16 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
         val hint = when {
             vm.cart.isEmpty() -> "أضف منتجات أولاً"
             credit && vm.customer == null -> "اختر حساب العميل للبيع الآجل"
-            !credit && t.owed.signum() > 0 -> "المتبقي ${inInvoice(t.owed)} — أكمل المبلغ أو اختر آجل"
+            !credit && t.owed.signum() > 0 && !hasCoupon -> "المتبقي ${inInvoice(t.owed)} — أكمل المبلغ أو اختر آجل"
             else -> null
         }
         hint?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 4.dp)) }
         LuxButton(
-            if (vm.busy) "جارٍ الحفظ…" else "إتمام الفاتورة · ${inInvoice(t.total)}",
+            when {
+                vm.busy -> "جارٍ الحفظ…"
+                hasCoupon -> "إتمام الفاتورة (مع كود الخصم)"
+                else -> "إتمام الفاتورة · ${inInvoice(t.total)}"
+            },
             onClick = vm::sell,
             enabled = canSell,
             modifier = Modifier.fillMaxWidth(),
@@ -1448,7 +1524,7 @@ private fun TendersSection(vm: PosViewModel, t: PosTotals, credit: Boolean) {
             Equivalents(t.owed, others, vm)
         }
         t.change.signum() > 0 -> {
-            val changeCur = vm.changeCurrency ?: inv
+            val changeCur = vm.changeIn
             CompactRow("الباقي للعميل", Money.plain(t.changeAmount, changeCur), valueColor = Success)
             Equivalents(t.change, vm.currencies.filter { it != changeCur }, vm)
             FlowRow(

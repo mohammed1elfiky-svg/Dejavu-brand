@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.brands.BrandLogo
+import com.dejavu.admin.ui.categories.CategoryManager
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
@@ -98,6 +99,13 @@ import kotlinx.coroutines.launch
 
 /** A non-negative amount with up to 2 decimals, as the API accepts. */
 internal fun isAmount(v: String) = v.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
+
+/** Shoe sizes offered as toggle chips; other sizes (S, M, 43…) are typed. */
+private val SHOE_SIZES = (35..42).map { it.toString() }
+
+/** Numbers in order, then the rest as entered (stable sort). */
+private fun orderSizes(sizes: List<String>): List<String> =
+    sizes.sortedWith(compareBy<String>({ it.toIntOrNull() == null }, { it.toIntOrNull() ?: 0 }))
 
 /** A factory barcode as typed or scanned: printable characters only, at most 64. */
 internal fun cleanBarcode(v: String) = v.filter { !it.isWhitespace() }.take(64)
@@ -212,6 +220,11 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
                 say("تمت إضافة قسم ${c.nameAr}")
             }
         }
+    }
+
+    /** Fetches the categories again (after renaming / hiding them). */
+    fun reloadCategories() {
+        viewModelScope.launch { repo.categories().onSuccess { _categories.value = Load.Ready(it) } }
     }
 
     fun addBrand(name: String) {
@@ -451,6 +464,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     val videoUploading by vm.videoUploading.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var scanRow by rememberSaveable { mutableStateOf(-1) }
+    var managingCategories by rememberSaveable { mutableStateOf(false) }
     val scan = rememberBarcodeScanner { code -> if (scanRow >= 0) vm.editRow(scanRow) { it.copy(barcode = cleanBarcode(code)) } }
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.load() }
@@ -476,7 +490,12 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                 item { SectionTitle("البيانات الأساسية") }
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CategoryPicker(cats, form.categoryId, onAdd = vm::addCategory) { id -> vm.edit { it.copy(categoryId = id) } }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                CategoryPicker(cats, form.categoryId, onAdd = vm::addCategory) { id -> vm.edit { it.copy(categoryId = id) } }
+                            }
+                            TextButton(onClick = { managingCategories = true }) { Text("تعديل الأقسام") }
+                        }
                         Field("اسم المنتج", form.nameAr) { v -> vm.edit { it.copy(nameAr = v) } }
                         BrandPicker(brands, form.brandId, onAdd = vm::addBrand) { id -> vm.edit { it.copy(brandId = id) } }
                         OutlinedTextField(
@@ -602,6 +621,18 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
             }
         }
     }
+    if (managingCategories) {
+        val close = {
+            managingCategories = false
+            vm.reloadCategories()
+        }
+        AlertDialog(
+            onDismissRequest = close,
+            title = { Text("تعديل الأقسام") },
+            text = { CategoryManager(Modifier.heightIn(max = 480.dp)) },
+            confirmButton = { TextButton(onClick = close) { Text("تم") } },
+        )
+    }
 }
 
 /** Read-only product SKU: numbered by the server (100…), variants "<SKU>-<n>". */
@@ -635,10 +666,26 @@ private fun VariantOptions(form: ProductForm, vm: ProductFormViewModel) {
     var bulkCost by rememberSaveable { mutableStateOf("") }
     val chosenColors = VariantPlanner.split(form.colors)
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Field("المقاسات (افصل بفاصلة)", form.sizes, hint = "مثال: S, M, L أو 38, 40 · اتركه فارغاً لمقاس واحد") { v -> vm.edit { it.copy(sizes = v) } }
+        val chosenSizes = VariantPlanner.split(form.sizes)
+        Field(
+            "المقاسات (افصل بفاصلة)",
+            form.sizes,
+            hint = "اختر من المقاسات أدناه أو اكتب مقاساً آخر (مثل S أو M أو 43) · فارغ = مقاس واحد",
+        ) { v -> vm.edit { it.copy(sizes = v) } }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            VariantPlanner.SIZE_PRESETS.forEach { (label, sizes) ->
-                FilterChip(false, { vm.edit { it.copy(sizes = sizes.joinToString(", ")) } }, label = { Text(label) })
+            SHOE_SIZES.forEach { size ->
+                val selected = size in chosenSizes
+                FilterChip(
+                    selected = selected,
+                    onClick = {
+                        val next = if (selected) chosenSizes - size else orderSizes(chosenSizes + size)
+                        vm.edit { it.copy(sizes = next.joinToString(", ")) }
+                    },
+                    label = { Text(size) },
+                )
+            }
+            if (chosenSizes.isNotEmpty()) {
+                FilterChip(false, { vm.edit { it.copy(sizes = "") } }, label = { Text("مقاس واحد") })
             }
         }
         Field("الألوان (افصل بفاصلة)", form.colors, hint = "اختر من الألوان أدناه أو اكتب لوناً آخر") { v -> vm.edit { it.copy(colors = v) } }
@@ -905,7 +952,7 @@ private fun CategoryPicker(
                     if (categories.isEmpty()) Text("لا توجد أقسام بعد")
                     categories.forEach { (c, depth) ->
                         Text(
-                            "${"   ".repeat(depth)}${if (depth > 0) "↳ " else ""}${c.nameAr}",
+                            "${"   ".repeat(depth)}${if (depth > 0) "↳ " else ""}${c.nameAr}${if (c.isActive) "" else " (مخفي)"}",
                             style = if (c.id == selectedId) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.fillMaxWidth().clickable { open = false; onPick(c.id) }.padding(vertical = 10.dp),
                         )

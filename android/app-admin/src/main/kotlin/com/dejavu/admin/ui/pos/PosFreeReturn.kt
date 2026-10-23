@@ -1,9 +1,15 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 
 package com.dejavu.admin.ui.pos
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,7 +21,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,14 +35,18 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -51,12 +66,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import coil3.compose.AsyncImage
 import com.dejavu.admin.print.Printers
 import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminCustomerSummary
+import com.dejavu.core.admin.CashBox
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.FreeReturnItem
 import com.dejavu.core.admin.FreeReturnRequest
@@ -66,6 +83,7 @@ import com.dejavu.core.admin.PosProduct
 import com.dejavu.core.admin.PosRepository
 import com.dejavu.core.admin.PosTender
 import com.dejavu.core.admin.PosVariant
+import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
@@ -90,6 +108,7 @@ data class FreeLine(val product: PosProduct, val variant: PosVariant, val qty: I
 class PosFreeReturnViewModel(
     private val pos: PosRepository,
     private val finance: FinanceRepository,
+    private val treasury: TreasuryRepository,
 ) : BaseViewModel() {
     var currencies by mutableStateOf(listOf(Currency.SAR))
         private set
@@ -113,12 +132,28 @@ class PosFreeReturnViewModel(
     // ---- returned pieces
     var returned by mutableStateOf<List<FreeLine>>(emptyList())
         private set
-    var reason by mutableStateOf("")
 
     // ---- settlement
     var exchange by mutableStateOf(false)
     var refundTo by mutableStateOf(RefundTo.CASH)
     var refundCurrency by mutableStateOf(Currency.SAR)
+
+    /** Boxes a cash refund can be paid from (any currency; filtered by [refundBoxes]). */
+    var boxes by mutableStateOf<List<CashBox>>(emptyList())
+        private set
+    /** Box the refund is paid from; null = the cashier's own drawer. */
+    var refundBoxId by mutableStateOf<String?>(null)
+
+    // ---- product browser (all products, as a grid)
+    var browseQuery by mutableStateOf("")
+        private set
+    var browseList by mutableStateOf<List<PosProduct>>(emptyList())
+        private set
+    var browseLoading by mutableStateOf(false)
+        private set
+    var browseError by mutableStateOf<String?>(null)
+        private set
+    private var browseJob: Job? = null
 
     // ---- product search: returned pieces (r) and new pieces (n)
     var rQuery by mutableStateOf("")
@@ -157,7 +192,21 @@ class PosFreeReturnViewModel(
 
     init {
         loadCurrencies()
+        loadBoxes()
     }
+
+    private fun loadBoxes() {
+        viewModelScope.launch { boxes = treasury.loadRefundBoxes() }
+    }
+
+    /** Boxes of the refund currency. */
+    val refundBoxes: List<CashBox> get() = boxes.filter { it.currency == refundCurrency }
+
+    /** The picked box when it still matches the refund currency. */
+    val refundBox: CashBox? get() = refundBoxId?.let { id -> refundBoxes.firstOrNull { it.id == id } }
+
+    /** Money is handed back (not kept as credit): the refund box applies. */
+    val paysOutCash: Boolean get() = effectiveRefundTo == RefundTo.CASH && (!exchange || totals.leftover.signum() > 0)
 
     private fun loadCurrencies() {
         viewModelScope.launch {
@@ -286,6 +335,38 @@ class PosFreeReturnViewModel(
         if (forNew) addNew(product, variant) else addReturned(product, variant)
     }
 
+    // ---- product browser
+
+    /** Loads the product grid the first time the browser opens. */
+    fun openBrowser() {
+        if (browseList.isEmpty() && !browseLoading) fetchBrowse(0)
+    }
+
+    fun browse(q: String) {
+        browseQuery = q
+        fetchBrowse(350)
+    }
+
+    fun retryBrowse() = fetchBrowse(0)
+
+    private fun fetchBrowse(wait: Long) {
+        browseJob?.cancel()
+        browseJob = viewModelScope.launch {
+            if (wait > 0) delay(wait)
+            browseLoading = true
+            browseError = null
+            pos.products(browseQuery).fold(
+                { browseList = it },
+                { e -> browseError = e.userMessage() },
+            )
+            browseLoading = false
+        }
+    }
+
+    /** Pieces of [product] already picked (returned or new). */
+    fun picked(product: PosProduct, forNew: Boolean): Int =
+        if (forNew) product.variants.sumOf { inLines(it.id) } else returned.filter { it.product.id == product.id }.sumOf { it.qty }
+
     // ---- returned pieces
 
     fun addReturned(product: PosProduct, variant: PosVariant) {
@@ -392,9 +473,9 @@ class PosFreeReturnViewModel(
             },
             customerId = customer?.id,
             currency = currency,
-            reason = reason.trim().ifBlank { null },
             refundTo = to.wire,
             refundCurrency = if (to == RefundTo.ACCOUNT) currency else refundCurrency,
+            refundBoxId = refundBox?.id?.takeIf { paysOutCash },
             newItems = if (exchange) lines.map { PosItem(it.variant.id, it.qty) } else null,
             payments = payments.takeIf { exchange && it.isNotEmpty() },
             paymentMethod = "CASH".takeIf { exchange },
@@ -420,9 +501,9 @@ class PosFreeReturnViewModel(
         customerQuery = ""
         customerResults = emptyList()
         returned = emptyList()
-        reason = ""
         exchange = false
         refundTo = RefundTo.CASH
+        refundBoxId = null
         rQuery = ""
         rResults = emptyList()
         nQuery = ""
@@ -439,6 +520,8 @@ class PosFreeReturnViewModel(
 @Composable
 internal fun FreeReturnContent(vm: PosFreeReturnViewModel, modifier: Modifier = Modifier) {
     var picking by remember { mutableStateOf<Pair<PosProduct, Boolean>?>(null) }
+    /** Product browser open for the returned pieces (false) or the new ones (true). */
+    var browsing by remember { mutableStateOf<Boolean?>(null) }
     var newCustomer by remember { mutableStateOf(false) }
     val scanReturned = rememberBarcodeScanner { code -> vm.scan(code, forNew = false) { picking = it to false } }
     val scanNew = rememberBarcodeScanner { code -> vm.scan(code, forNew = true) { picking = it to true } }
@@ -450,11 +533,19 @@ internal fun FreeReturnContent(vm: PosFreeReturnViewModel, modifier: Modifier = 
         ) {
             if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             FreeCustomerSection(vm, onNewCustomer = { newCustomer = true })
-            FreeReturnedSection(vm, onScan = scanReturned, onPick = { picking = it to false })
+            FreeReturnedSection(vm, onScan = scanReturned, onBrowse = { browsing = false }, onPick = { picking = it to false })
             FreeModeSection(vm)
-            if (vm.exchange) FreeExchangeSection(vm, onScan = scanNew, onPick = { picking = it to true }) else FreeRefundSection(vm)
+            if (vm.exchange) {
+                FreeExchangeSection(vm, onScan = scanNew, onBrowse = { browsing = true }, onPick = { picking = it to true })
+            } else {
+                FreeRefundSection(vm)
+            }
         }
         FreeSubmitBar(vm)
+    }
+
+    browsing?.let { forNew ->
+        ProductBrowserSheet(vm, forNew, onDismiss = { browsing = null }) { p -> vm.tap(p, forNew = forNew, choose = { picking = it to forNew }) }
     }
 
     picking?.let { (p, forNew) ->
@@ -585,11 +676,12 @@ private fun ProductSearch(
 }
 
 @Composable
-private fun FreeReturnedSection(vm: PosFreeReturnViewModel, onScan: () -> Unit, onPick: (PosProduct) -> Unit) {
+private fun FreeReturnedSection(vm: PosFreeReturnViewModel, onScan: () -> Unit, onBrowse: () -> Unit, onPick: (PosProduct) -> Unit) {
     val cur = vm.currency
     RSection {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("القطع المرتجعة", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            RLink("تصفح المنتجات", onClick = onBrowse)
             RLink("باركود", onClick = onScan)
         }
         ProductSearch(
@@ -603,20 +695,123 @@ private fun FreeReturnedSection(vm: PosFreeReturnViewModel, onScan: () -> Unit, 
             onTap = { p -> vm.tap(p, forNew = false, choose = onPick) },
         )
         if (vm.returned.isEmpty()) {
-            Text("ابحث عن الصنف المرتجع أو امسح باركوده، ثم حدد الكمية والقيمة.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            Text("ابحث عن الصنف المرتجع أو تصفح المنتجات أو امسح باركوده، ثم حدد الكمية والقيمة.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
         } else {
             HorizontalDivider(color = Lux.Hairline)
             vm.returned.forEach { l -> key(l.variant.id) { FreeLineRow(l, vm) } }
         }
-        HorizontalDivider(color = Lux.Hairline)
-        OutlinedTextField(
-            value = vm.reason,
-            onValueChange = { vm.reason = it.take(300) },
-            label = { Text("سبب الإرجاع (اختياري)") },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
+    }
+}
+
+/** Searchable grid of all products; tapping one adds it (or asks for its colour / size). */
+@Composable
+private fun ProductBrowserSheet(vm: PosFreeReturnViewModel, forNew: Boolean, onDismiss: () -> Unit, onTap: (PosProduct) -> Unit) {
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    LaunchedEffect(Unit) { vm.openBrowser() }
+    val cur = vm.currency
+    val rate = vm.rate
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Lux.Pearl) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("تصفح المنتجات", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        if (forNew) "اختر القطع التي يأخذها العميل" else "اختر القطع المرتجعة",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Lux.InkSoft,
+                    )
+                }
+                TextButton(onClick = onDismiss) { Text("تم") }
+            }
+            OutlinedTextField(
+                value = vm.browseQuery,
+                onValueChange = vm::browse,
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = if (vm.browseQuery.isNotEmpty()) ({
+                    IconButton(onClick = { vm.browse("") }) { Icon(Icons.Filled.Close, contentDescription = "مسح") }
+                }) else null,
+                placeholder = { Text("ابحث بالاسم أو رقم الصنف") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (vm.browseLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        val error = vm.browseError
+        when {
+            error != null && vm.browseList.isEmpty() -> Column(
+                Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                Button(onClick = vm::retryBrowse, shape = RoundedCornerShape(16.dp)) { Text("إعادة المحاولة") }
+            }
+            !vm.browseLoading && vm.browseList.isEmpty() -> Text(
+                "لا توجد منتجات مطابقة",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Lux.InkSoft,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+            )
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(130.dp),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(vm.browseList, key = { it.id }) { p ->
+                    val ok = if (forNew) p.available > 0 else p.variants.isNotEmpty()
+                    BrowseTile(p, cur, rate, picked = vm.picked(p, forNew), enabled = ok, onClick = { onTap(p) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseTile(p: PosProduct, cur: Currency, rate: BigDecimal, picked: Int, enabled: Boolean, onClick: () -> Unit) {
+    val out = p.available <= 0
+    GlassCard(
+        Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.5f),
+        elevation = 4.dp,
+        contentPadding = 0.dp,
+        onClick = if (enabled) onClick else null,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(6.dp)) {
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(Lux.Champagne),
+                contentAlignment = Alignment.Center,
+            ) {
+                val image = p.imageUrl ?: p.variants.firstNotNullOfOrNull { it.imageUrl }
+                if (image != null) {
+                    AsyncImage(model = image, contentDescription = p.nameAr, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Text(p.nameAr.take(1), style = MaterialTheme.typography.headlineSmall, color = Lux.GoldDeep)
+                }
+                if (picked > 0) {
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp).clip(CircleShape).background(Lux.Ink),
+                        contentAlignment = Alignment.Center,
+                    ) { Text("$picked", color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                }
+                Box(
+                    Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xCCFFFFFF))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        if (out) "نفد" else "متاح ${p.available}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (out) MaterialTheme.colorScheme.error else Lux.InkSoft,
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(p.nameAr, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            p.skuNumber?.let { Text("#$it", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft) }
+            Text(Money.format(Money.parse(p.price), cur, rate), style = MaterialTheme.typography.labelLarge, color = Lux.GoldDeep)
+        }
     }
 }
 
@@ -705,6 +900,7 @@ private fun FreeRefundChoices(vm: PosFreeReturnViewModel, title: String) {
                 options.forEach { c -> RChip("${c.nameAr} (${c.symbol})", selected = vm.refundCurrency == c) { vm.refundCurrency = c; vm.error = null } }
             }
         }
+        RefundBoxPicker(vm.refundBoxes, vm.refundBox) { vm.refundBoxId = it?.id; vm.error = null }
     }
 }
 
@@ -722,12 +918,13 @@ private fun FreeRefundSection(vm: PosFreeReturnViewModel) {
 }
 
 @Composable
-private fun FreeExchangeSection(vm: PosFreeReturnViewModel, onScan: () -> Unit, onPick: (PosProduct) -> Unit) {
+private fun FreeExchangeSection(vm: PosFreeReturnViewModel, onScan: () -> Unit, onBrowse: () -> Unit, onPick: (PosProduct) -> Unit) {
     val cur = vm.currency
     val rate = vm.rate
     RSection {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("القطع التي يأخذها العميل", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            RLink("تصفح المنتجات", onClick = onBrowse)
             RLink("باركود", onClick = onScan)
         }
         ProductSearch(

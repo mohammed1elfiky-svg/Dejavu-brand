@@ -258,6 +258,17 @@ fun ProductScreen(
                             Text(p.descriptionAr!!, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
+                    val specs = listOfNotNull(
+                        p.bagSize?.trim()?.takeIf { it.isNotEmpty() }?.let { "مقاس الشنطة: $it سم" },
+                        p.heelHeightCm?.trim()?.takeIf { it.isNotEmpty() }?.let { "ارتفاع الكعب: $it سم" },
+                    )
+                    if (specs.isNotEmpty()) {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Text("المواصفات", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                            Spacer(Modifier.height(8.dp))
+                            specs.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                 }
             }

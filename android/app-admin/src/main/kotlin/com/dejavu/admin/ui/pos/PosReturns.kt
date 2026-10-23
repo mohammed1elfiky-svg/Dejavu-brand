@@ -34,6 +34,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
@@ -41,6 +42,8 @@ import androidx.compose.material3.AlertDialog
 import com.dejavu.core.ui.theme.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +53,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import com.dejavu.core.ui.theme.OutlinedButton
 import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -87,7 +91,10 @@ import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.barcode.rememberBarcodeScanner
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.admin.ui.treasury.BoxAvatar
 import com.dejavu.core.admin.AdminOrderItem
+import com.dejavu.core.admin.CashBox
+import com.dejavu.core.admin.CashBoxKind
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.PosItem
 import com.dejavu.core.admin.PosProduct
@@ -99,6 +106,7 @@ import com.dejavu.core.admin.PosReturnResult
 import com.dejavu.core.admin.PosTender
 import com.dejavu.core.admin.PosVariant
 import com.dejavu.core.admin.StaffSession
+import com.dejavu.core.admin.TreasuryRepository
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
@@ -142,6 +150,28 @@ class ExchangeTotals(
 )
 
 private fun money2(v: BigDecimal): BigDecimal = v.setScale(2, RoundingMode.HALF_UP)
+
+/**
+ * Active boxes (cash drawers, safes, bank accounts) a refund can be paid from. All boxes when
+ * allowed; a cashier without that permission gets only their own boxes.
+ */
+internal suspend fun TreasuryRepository.loadRefundBoxes(): List<CashBox> {
+    val list = all().getOrNull() ?: mine().getOrNull().orEmpty()
+    return list.filter { it.isActive }.sortedBy { refundBoxOrder(it.kind) }
+}
+
+private fun refundBoxOrder(kind: CashBoxKind): Int = when (kind) {
+    CashBoxKind.CASHIER -> 0
+    CashBoxKind.VAULT -> 1
+    CashBoxKind.BANK -> 2
+}
+
+/** Short kind label shown next to a refund box. */
+internal fun refundBoxKind(kind: CashBoxKind): String = when (kind) {
+    CashBoxKind.CASHIER -> "درج"
+    CashBoxKind.VAULT -> "خزينة"
+    CashBoxKind.BANK -> "بنك"
+}
 
 /** SAR value of [qty] pieces of [item] at what was actually paid per piece. */
 internal fun returnValue(item: AdminOrderItem, qty: Int): BigDecimal {
@@ -202,6 +232,7 @@ internal fun computeExchange(
 class PosReturnViewModel(
     private val pos: PosRepository,
     private val finance: FinanceRepository,
+    private val treasury: TreasuryRepository,
 ) : BaseViewModel() {
     var currencies by mutableStateOf(listOf(Currency.SAR))
         private set
@@ -224,12 +255,17 @@ class PosReturnViewModel(
     /** Order item ids whose pieces are damaged (not put back on the shelf). */
     var damaged by mutableStateOf<Set<String>>(emptySet())
         private set
-    var reason by mutableStateOf("")
 
     // ---- how it is settled
     var exchange by mutableStateOf(false)
     var refundTo by mutableStateOf(RefundTo.CASH)
     var refundCurrency by mutableStateOf(Currency.SAR)
+
+    /** Boxes a cash refund can be paid from (any currency; filtered by [refundBoxes]). */
+    var boxes by mutableStateOf<List<CashBox>>(emptyList())
+        private set
+    /** Box the refund is paid from; null = the cashier's own drawer. */
+    var refundBoxId by mutableStateOf<String?>(null)
 
     // ---- exchange
     var query by mutableStateOf("")
@@ -256,7 +292,22 @@ class PosReturnViewModel(
 
     init {
         loadCurrencies()
+        loadBoxes()
     }
+
+    private fun loadBoxes() {
+        viewModelScope.launch { boxes = treasury.loadRefundBoxes() }
+    }
+
+    /** Boxes of the refund currency. */
+    val refundBoxes: List<CashBox> get() = boxes.filter { it.currency == refundCurrency }
+
+    /** The picked box when it still matches the refund currency. */
+    val refundBox: CashBox? get() = refundBoxId?.let { id -> refundBoxes.firstOrNull { it.id == id } }
+
+    /** Money is handed back (not kept as credit / owed): the refund box applies. */
+    val paysOutCash: Boolean
+        get() = sale != null && !isCreditSale && (isWalkIn || refundTo == RefundTo.CASH) && (!exchange || totals.leftover.signum() > 0)
 
     private fun loadCurrencies() {
         viewModelScope.launch {
@@ -312,10 +363,10 @@ class PosReturnViewModel(
         sale = r
         qty = emptyMap()
         damaged = emptySet()
-        reason = ""
         exchange = false
         refundTo = RefundTo.CASH
         refundCurrency = r.currency
+        refundBoxId = null
         lines = emptyList()
         query = ""
         results = emptyList()
@@ -460,9 +511,9 @@ class PosReturnViewModel(
                 val q = qty[i.id] ?: 0
                 if (q > 0) PosReturnItem(i.id, q, restock = i.id !in damaged) else null
             },
-            reason = reason.trim().ifBlank { null },
             refundTo = to.wire,
             refundCurrency = refundCurrency,
+            refundBoxId = refundBox?.id?.takeIf { paysOutCash },
             newItems = if (exchange) lines.map { PosItem(it.variant.id, it.qty) } else null,
             payments = payments.takeIf { exchange && it.isNotEmpty() },
             paymentMethod = "CASH".takeIf { exchange },
@@ -487,9 +538,9 @@ class PosReturnViewModel(
         number = ""
         qty = emptyMap()
         damaged = emptySet()
-        reason = ""
         exchange = false
         refundTo = RefundTo.CASH
+        refundBoxId = null
         lines = emptyList()
         query = ""
         results = emptyList()
@@ -504,8 +555,8 @@ class PosReturnViewModel(
 /** Returns and exchanges at the till: find the sale, pick the pieces, refund or swap them. */
 @Composable
 fun PosReturnScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel { PosReturnViewModel(it.pos, it.finance) }
-    val free = adminViewModel { PosFreeReturnViewModel(it.pos, it.finance) }
+    val vm = adminViewModel { PosReturnViewModel(it.pos, it.finance, it.treasury) }
+    val free = adminViewModel { PosFreeReturnViewModel(it.pos, it.finance, it.treasury) }
     val snackbar = remember { SnackbarHostState() }
     var picking by remember { mutableStateOf<PosProduct?>(null) }
     var noInvoice by rememberSaveable { mutableStateOf(false) }
@@ -727,15 +778,6 @@ private fun SaleSection(s: PosReceipt, vm: PosReturnViewModel) {
         HorizontalDivider(color = Lux.Hairline)
         Text("القطع المرتجعة", style = MaterialTheme.typography.labelLarge)
         s.items.forEach { i -> key(i.id) { ReturnLineRow(i, s, vm) } }
-        HorizontalDivider(color = Lux.Hairline)
-        OutlinedTextField(
-            value = vm.reason,
-            onValueChange = { vm.reason = it.take(300) },
-            label = { Text("سبب الإرجاع (اختياري)") },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
@@ -819,6 +861,63 @@ private fun RefundChoices(vm: PosReturnViewModel, title: String) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("عملة الإرجاع:", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.align(Alignment.CenterVertically))
                 options.forEach { c -> RChip("${c.nameAr} (${c.symbol})", selected = vm.refundCurrency == c) { vm.refundCurrency = c; vm.error = null } }
+            }
+        }
+        RefundBoxPicker(vm.refundBoxes, vm.refundBox) { vm.refundBoxId = it?.id; vm.error = null }
+    }
+}
+
+/** "استرداد من": the cashier's own drawer (null) or any box of the refund currency. */
+@Composable
+internal fun RefundBoxPicker(options: List<CashBox>, selected: CashBox?, onSelect: (CashBox?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Text("استرداد من", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+    Box {
+        OutlinedButton(
+            onClick = { open = true },
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (selected != null) {
+                BoxAvatar(selected, 24.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                selected?.let { "${it.name} · ${refundBoxKind(it.kind)}" } ?: "درج الكاشير",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("درج الكاشير") },
+                onClick = {
+                    onSelect(null)
+                    open = false
+                },
+            )
+            options.forEach { b ->
+                DropdownMenuItem(
+                    leadingIcon = { BoxAvatar(b, 28.dp) },
+                    text = {
+                        Column {
+                            Text(b.name)
+                            Text(
+                                listOfNotNull(refundBoxKind(b.kind), b.user?.name, b.shownBalance).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Lux.InkSoft,
+                            )
+                        }
+                    },
+                    onClick = {
+                        onSelect(b)
+                        open = false
+                    },
+                )
             }
         }
     }

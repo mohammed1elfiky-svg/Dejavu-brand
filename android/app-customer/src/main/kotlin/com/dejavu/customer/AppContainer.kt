@@ -11,6 +11,7 @@ import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
 import com.dejavu.core.data.WalletRepository
+import com.dejavu.core.model.Currency
 import com.dejavu.core.network.ApiClient
 import com.dejavu.core.ui.background.BackgroundChecks
 import com.dejavu.core.ui.push.Push
@@ -49,7 +50,42 @@ class AppContainer(private val context: Context) {
     val addresses = AddressRepository(api)
     val orders = OrderRepository(api, cart)
     val notifications = NotificationRepository(api)
-    val currencies = CurrencyRepository(api, preferred = { settings.currency }, save = { settings.currency = it })
+    private val currencyPrefs = context.getSharedPreferences("customer_currency", Context.MODE_PRIVATE).also { prefs ->
+        // A currency saved by an earlier build was the shopper's own choice.
+        if (!prefs.contains(CURRENCY_PICKED)) {
+            val saved = context.getSharedPreferences("settings", Context.MODE_PRIVATE).contains("display_currency")
+            prefs.edit { putBoolean(CURRENCY_PICKED, saved) }
+        }
+    }
+
+    /** True while the app itself switches to the region's currency (not the shopper's own pick). */
+    @Volatile
+    private var applyingRegionCurrency = false
+
+    val currencies = CurrencyRepository(api, preferred = { settings.currency }, save = {
+        settings.currency = it
+        if (!applyingRegionCurrency) currencyPrefs.edit { putBoolean(CURRENCY_PICKED, true) }
+    })
+
+    /**
+     * Shows prices in the rial of the shopper's region ([code], e.g. YER / YEQ) when the store
+     * offers it. Unless [force] (right after sign-up), only while the shopper never picked a
+     * display currency themselves.
+     */
+    fun applyRegionCurrency(code: String?, force: Boolean = false) {
+        val wanted = code?.trim()?.takeIf { it.isNotEmpty() }?.let { Currency.of(it) } ?: return
+        if (!force && currencyPrefs.getBoolean(CURRENCY_PICKED, false)) return
+        appScope.launch {
+            if (currencies.rates.value == null) currencies.refresh()
+            if (wanted !in currencies.available.value || currencies.selected.value == wanted) return@launch
+            applyingRegionCurrency = true
+            try {
+                currencies.select(wanted)
+            } finally {
+                applyingRegionCurrency = false
+            }
+        }
+    }
     val wallet = WalletRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -122,6 +158,12 @@ class AppContainer(private val context: Context) {
         }
         appScope.launch { session.restore() }
         appScope.launch { currencies.refresh() }
+        // A signed-in shopper who never chose a currency sees their region's rial.
+        appScope.launch {
+            session.state.collect { state ->
+                if (state is SessionState.LoggedIn) applyRegionCurrency(state.customer?.preferredCurrency)
+            }
+        }
         // Keep the cart badge, bell badge and push registration in step with the session.
         appScope.launch {
             session.state.distinctUntilChangedBy { it is SessionState.LoggedIn }.collect { state ->
@@ -162,6 +204,7 @@ class AppContainer(private val context: Context) {
         const val CHANNEL_ORDERS = "orders"
         const val CHANNEL_OFFERS = "offers"
         private const val SERVER_PUSH = "server_push"
+        private const val CURRENCY_PICKED = "picked"
 
         fun ensureChannels(context: Context) {
             Push.ensureChannel(context, CHANNEL_ORDERS, "حالة الطلبات")

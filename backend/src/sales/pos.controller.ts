@@ -123,11 +123,11 @@ export class AdminPosController {
 
   // shifts
 
-  /** Your open shift with the float, live drawer balances and sales, or null. */
+  /** Your open shift with the float, live drawer balances and sales ({ shift: null } when none is open). */
   @RequirePermissions('pos.sell')
   @Get('shifts/current')
-  currentShift(@CurrentUser() u: AuthPrincipal) {
-    return this.shifts.current(u.id);
+  async currentShift(@CurrentUser() u: AuthPrincipal) {
+    return { shift: await this.shifts.current(u.id) };
   }
 
   /** Opens a shift; the float can be taken from a safe into your drawers. */

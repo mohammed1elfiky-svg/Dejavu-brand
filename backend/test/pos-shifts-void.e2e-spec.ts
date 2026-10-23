@@ -39,7 +39,7 @@ describe('POS shifts, void & edit (e2e)', () => {
     const c = (await http.post('/auth/customer/register', { name: 'ممول الخزنة', phone: `77${String(Date.now() + 7).slice(-7)}`, password: 'secret123' }).expect(201)).body;
     await http.post(`/admin/customers/${c.customer.id}/account/receipts`, { currency: 'SAR', amount: '500', cashBoxId: safe.id }, admin).expect(201);
 
-    expect((await http.get('/admin/pos/shifts/current', cashier).expect(200)).body).toEqual({});
+    expect((await http.get('/admin/pos/shifts/current', cashier).expect(200)).body).toEqual({ shift: null });
     const before = Number((await drawer(cashier, 'SAR')).balance);
     const shift = (await http.post('/admin/pos/shifts/open', { floats: [{ currency: 'SAR', amount: '200', fromBoxId: safe.id }] }, cashier).expect(201)).body;
     expect(shift.status).toBe('OPEN');
@@ -47,7 +47,7 @@ describe('POS shifts, void & edit (e2e)', () => {
     await http.post('/admin/pos/shifts/open', {}, cashier).expect(422);
 
     await http.post('/admin/pos/sales', { items: [{ variantId: variant, quantity: 1 }], saleType: 'CASH', payments: [{ currency: 'SAR', amount: '100' }] }, cashier).expect(201);
-    const live = (await http.get('/admin/pos/shifts/current', cashier).expect(200)).body;
+    const live = (await http.get('/admin/pos/shifts/current', cashier).expect(200)).body.shift;
     expect(live.salesCount).toBe(1);
     expect(Number(live.lines.find((l: { currency: string }) => l.currency === 'SAR').expected)).toBe(before + 300);
 

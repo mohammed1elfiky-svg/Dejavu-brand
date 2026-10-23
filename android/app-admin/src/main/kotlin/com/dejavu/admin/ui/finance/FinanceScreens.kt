@@ -91,6 +91,7 @@ import com.dejavu.core.admin.LedgerAccount
 import com.dejavu.core.admin.PendingCod
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.ReportSection
+import com.dejavu.core.admin.RevenueReport
 import com.dejavu.core.admin.SalesReport
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.UpdateCustomerRequest
@@ -293,6 +294,8 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
     val balance = _balance.asStateFlow()
     private val _sales = MutableStateFlow<Load<SalesReport>>(Load.Loading)
     val sales = _sales.asStateFlow()
+    private val _revenue = MutableStateFlow<Load<RevenueReport>>(Load.Loading)
+    val revenue = _revenue.asStateFlow()
 
     var period = Period.THIS_MONTH
         private set
@@ -303,6 +306,7 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
         period = p
         _income.value = Load.Loading
         _sales.value = Load.Loading
+        _revenue.value = Load.Loading
     }
 
     internal fun setGroup(g: SalesGroup) {
@@ -324,6 +328,11 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
         viewModelScope.launch { _sales.value = repo.sales(group.key, from, to).toLoad() }
     }
 
+    fun loadRevenue() {
+        val (from, to) = period.range()
+        viewModelScope.launch { _revenue.value = repo.revenue(from, to).toLoad() }
+    }
+
     fun loadValuation() {
         viewModelScope.launch { _valuation.value = inventory.valuation().toLoad() }
     }
@@ -337,7 +346,10 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             add("الأرباح والخسائر")
             add("المركز المالي")
         }
-        if (session.can(Perm.REPORTS_SALES)) add("المبيعات")
+        if (session.can(Perm.REPORTS_SALES)) {
+            add("المبيعات")
+            add(REVENUE_TAB)
+        }
         if (session.can(REPORTS_INVENTORY) || session.can(Perm.REPORTS_FINANCIAL)) add(INVENTORY_TAB)
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -365,6 +377,7 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                 "الأرباح والخسائر" -> IncomeTab(vm, period)
                 "المركز المالي" -> BalanceTab(vm)
                 INVENTORY_TAB -> InventoryValueTab(vm)
+                REVENUE_TAB -> RevenueTab(vm, period)
                 else -> SalesTab(vm, period)
             }
         }
@@ -472,6 +485,58 @@ private fun SalesTab(vm: ReportsViewModel, period: Period) {
 internal const val REPORTS_INVENTORY = "reports.inventory"
 
 private const val INVENTORY_TAB = "قيمة المخزون"
+
+private const val REVENUE_TAB = "الإيرادات"
+
+/** Till vs app sales, each split into retail and merchants (SAR, net of tax and returns). */
+@Composable
+private fun RevenueTab(vm: ReportsViewModel, period: Period) {
+    val state by vm.revenue.collectAsStateWithLifecycle()
+    LaunchedEffect(period) { vm.loadRevenue() }
+    LoadContent(state, onRetry = vm::loadRevenue) { r ->
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item {
+                Text(
+                    "من ${r.from.take(10)} إلى ${r.to.take(10)} · بالريال السعودي، صافي من الضريبة والمرتجعات",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Lux.InkSoft,
+                )
+            }
+            item { RevenueChannelCard("مبيعات الكاشير", r.pos) }
+            item { RevenueChannelCard("مبيعات التطبيق", r.app) }
+            item { RevenueChannelCard("الإجمالي", RevenueReport.Channel(retail = r.retail, merchants = r.merchants, total = r.total)) }
+            item {
+                InfoCard {
+                    Text("مبيعات التاجرات (الكاشير + التطبيق)", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                    RevenueCellRows(r.merchants)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RevenueChannelCard(title: String, channel: RevenueReport.Channel) {
+    InfoCard {
+        Text(title, style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep)
+        Text("قطاعي", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
+        RevenueCellRows(channel.retail)
+        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Lux.Hairline)
+        Text("التاجرات", style = MaterialTheme.typography.titleSmall)
+        RevenueCellRows(channel.merchants)
+        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Lux.Hairline)
+        SummaryRow("الإيراد الكلي", Money.formatBase(channel.total.revenue), strong = true)
+        SummaryRow("مجمل الربح الكلي", Money.formatBase(channel.total.grossProfit), valueColor = signColor(channel.total.grossProfit))
+    }
+}
+
+@Composable
+private fun RevenueCellRows(cell: RevenueReport.Cell) {
+    Text("${cell.orders} طلب · ${cell.units} قطعة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+    SummaryRow("الإيراد", Money.formatBase(cell.revenue))
+    SummaryRow("التكلفة", Money.formatBase(cell.cost))
+    SummaryRow("مجمل الربح", Money.formatBase(cell.grossProfit), valueColor = signColor(cell.grossProfit))
+}
 
 @Composable
 private fun InventoryValueTab(vm: ReportsViewModel) {

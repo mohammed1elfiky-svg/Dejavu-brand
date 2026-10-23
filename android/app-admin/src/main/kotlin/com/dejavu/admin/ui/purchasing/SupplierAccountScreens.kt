@@ -53,11 +53,13 @@ import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.CashBox
+import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.SupplierAccount
 import com.dejavu.core.admin.SupplierCommissionRequest
+import com.dejavu.core.admin.SupplierOpeningBalanceRequest
 import com.dejavu.core.admin.SupplierPaymentVoucherRequest
 import com.dejavu.core.admin.SupplierVoucher
 import com.dejavu.core.admin.SupplierVoucherKind
@@ -105,10 +107,17 @@ private fun sourceLabel(type: String) = when (type) {
     else -> type
 }
 
+/** Currencies offered for a supplier's opening balance (plus any the account already has). */
+private val OPENING_CURRENCIES = listOf("CNY", "USD", "SAR", "YER", "YEQ")
+
+/** Assumed to have a rate in the app until the active currencies load. */
+private val DEFAULT_RATED = setOf("SAR", "YER", "YEQ", "USD")
+
 class SupplierAccountViewModel(
     private val supplierId: String,
     private val repo: PurchasingRepository,
     private val treasury: TreasuryRepository,
+    private val finance: FinanceRepository,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<SupplierAccount>>(Load.Loading)
     val state = _state.asStateFlow()
@@ -120,6 +129,10 @@ class SupplierAccountViewModel(
     val boxes = _boxes.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _rated = MutableStateFlow(DEFAULT_RATED)
+
+    /** Currency codes the app has an exchange rate for (the SAR value can be worked out by the server). */
+    val rated = _rated.asStateFlow()
 
     fun load() {
         viewModelScope.launch { _state.value = repo.supplierAccount(supplierId).toLoad() }
@@ -128,6 +141,30 @@ class SupplierAccountViewModel(
             treasury.all(currency = Currency.of("USD")).getOrNull()?.let { list ->
                 _boxes.value = list.filter { it.isActive && it.currency.code == "USD" }
             }
+        }
+        viewModelScope.launch {
+            finance.activeCurrencies().getOrNull()?.let { cs ->
+                _rated.value = cs.currencies
+                    .filter { it.isBase || it.code.isBase || (it.rate != null && !Money.isZero(it.rate)) }
+                    .map { it.code.code }
+                    .toSet() + "SAR"
+            }
+        }
+    }
+
+    /** Balance from before the system; [weOwe] = we owe the supplier, else the supplier owes us. */
+    fun openingBalance(currency: String, amount: String, weOwe: Boolean, sarAmount: String?, note: String, done: () -> Unit) = act {
+        val request = SupplierOpeningBalanceRequest(
+            currency = currency,
+            amount = amount,
+            direction = if (weOwe) "WE_OWE" else "SUPPLIER_OWES",
+            sarAmount = sarAmount,
+            note = note.trim().ifBlank { null },
+        )
+        repo.supplierOpeningBalance(supplierId, request).orSay()?.let {
+            say("تم تسجيل الرصيد الافتتاحي")
+            done()
+            refresh()
         }
     }
 
@@ -181,13 +218,16 @@ class SupplierAccountViewModel(
 /** The supplier's own statement (yuan and dollars): orders, shortages, payment and commission vouchers. */
 @Composable
 fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel(key = "supplier-account:$supplierId") { SupplierAccountViewModel(supplierId, it.purchasing, it.treasury) }
+    val vm = adminViewModel(key = "supplier-account:$supplierId") { SupplierAccountViewModel(supplierId, it.purchasing, it.treasury, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val name by vm.name.collectAsStateWithLifecycle()
     val boxes by vm.boxes.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val rated by vm.rated.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val canPay = session.can(Perm.SUPPLIER_PAY)
+    val canOpening = canPay && session.can("journal.write")
+    var openingOpen by remember { mutableStateOf(false) }
     var paymentOpen by remember { mutableStateOf(false) }
     var paymentEdit by remember { mutableStateOf<SupplierVoucher?>(null) }
     var commissionOpen by remember { mutableStateOf(false) }
@@ -233,6 +273,9 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                                 Button(onClick = { paymentEdit = null; paymentOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("سند صرف") }
                                 OutlinedButton(onClick = { commissionEdit = null; commissionOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("إضافة عمولة (مطابقة)") }
                             }
+                        }
+                        if (canOpening) {
+                            OutlinedButton(onClick = { openingOpen = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("رصيد افتتاحي") }
                         }
                     }
                 }
@@ -292,6 +335,18 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
             if (commissionOpen) {
                 CommissionDialog(edit = commissionEdit, busy = busy, onDismiss = { commissionOpen = false }) { usd, from, to, note ->
                     vm.commission(commissionEdit?.id, usd, from, to, note) { commissionOpen = false }
+                }
+            }
+            if (openingOpen) {
+                val currencies = (account.balances.map { it.currency } + OPENING_CURRENCIES).distinct()
+                OpeningBalanceDialog(
+                    currencies = currencies,
+                    initial = foreign,
+                    rated = rated,
+                    busy = busy,
+                    onDismiss = { openingOpen = false },
+                ) { currency, amount, weOwe, sar, note ->
+                    vm.openingBalance(currency, amount, weOwe, sar, note) { openingOpen = false }
                 }
             }
             deleting?.let { v ->
@@ -417,6 +472,68 @@ private fun PaymentVoucherDialog(
         confirmButton = {
             TextButton(enabled = ok && !busy, onClick = {
                 onSave(accPlain(usdValue!!), boxId!!, if (goods) rateValue?.let(::accPlain) else null, if (goods) "GOODS" else "COMMISSION", note)
+            }) { Text("حفظ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
+}
+
+/** A balance with the supplier from before the system, in one currency. */
+@Composable
+private fun OpeningBalanceDialog(
+    currencies: List<String>,
+    initial: String,
+    rated: Set<String>,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (currency: String, amount: String, weOwe: Boolean, sarAmount: String?, note: String) -> Unit,
+) {
+    var currency by remember { mutableStateOf(initial.takeIf { it in currencies } ?: currencies.first()) }
+    var amount by remember { mutableStateOf("") }
+    var weOwe by remember { mutableStateOf(true) }
+    var sar by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    // The server takes up to 2 decimals.
+    val amountValue = accNum(amount)?.takeIf { it.signum() > 0 && it.stripTrailingZeros().scale() <= 2 }
+    val sarValue = accNum(sar)?.takeIf { it.signum() > 0 && it.stripTrailingZeros().scale() <= 2 }
+    val isSar = currency == "SAR"
+    val needsSar = !isSar && (currency == "CNY" || currency !in rated)
+    val sarInvalid = sar.isNotBlank() && sarValue == null
+    val ok = amountValue != null && (!needsSar || sarValue != null) && !sarInvalid
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("رصيد افتتاحي للمورد") },
+        text = {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("العملة", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    currencies.forEach { c -> FilterChip(selected = currency == c, onClick = { currency = c }, label = { Text(c) }) }
+                }
+                AmountField("المبلغ ($currency)", amount, Modifier.fillMaxWidth()) { amount = it }
+                Text("الاتجاه", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = weOwe, onClick = { weOwe = true }, label = { Text("نحن مدينون للمورد") })
+                    FilterChip(selected = !weOwe, onClick = { weOwe = false }, label = { Text("المورد مدين لنا") })
+                }
+                Text(
+                    if (weOwe) "يُضاف المبلغ إلى ما هو مستحق للمورد" else "يُسجَّل كمبلغ مدفوع مقدماً للمورد",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Lux.InkSoft,
+                )
+                if (!isSar) {
+                    AmountField(
+                        if (needsSar) "القيمة بالريال السعودي (مطلوبة)" else "القيمة بالريال السعودي (اختياري)",
+                        sar,
+                        Modifier.fillMaxWidth(),
+                        hint = if (needsSar) "لا يوجد سعر صرف لهذه العملة في التطبيق" else "اتركه فارغاً ليُحسب بسعر الصرف الحالي",
+                    ) { sar = it }
+                }
+                OutlinedTextField(value = note, onValueChange = { note = it.take(255) }, label = { Text("ملاحظة (اختياري)") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = ok && !busy, onClick = {
+                onSave(currency, accPlain(amountValue!!), weOwe, if (isSar) null else sarValue?.let(::accPlain), note)
             }) { Text("حفظ") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },

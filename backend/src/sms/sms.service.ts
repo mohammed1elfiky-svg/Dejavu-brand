@@ -10,6 +10,8 @@ const OTP_MINUTES = 10;
 /** A message taken by the gateway but not reported after this long is offered again. */
 const STALE_CLAIM_MS = 5 * 60_000;
 
+export type OtpPurpose = 'REGISTER' | 'RESET';
+
 const hash = (phone: string, code: string) => createHash('sha256').update(`${phone}:${code}`).digest('hex');
 
 /**
@@ -85,26 +87,27 @@ export class SmsService {
   }
 
   /** Texts a 6-digit code to a phone number that is about to register. */
-  async sendOtp(rawPhone: string) {
+  async sendOtp(rawPhone: string, purpose: OtpPurpose = 'REGISTER') {
     const phone = normalizePhone(rawPhone);
-    if (await this.prisma.customer.findUnique({ where: { phone }, select: { id: true } })) {
-      throw new ConflictException('Phone number already registered');
-    }
+    const registered = !!(await this.prisma.customer.findUnique({ where: { phone }, select: { id: true } }));
+    if (purpose === 'REGISTER' && registered) throw new ConflictException('Phone number already registered');
+    if (purpose === 'RESET' && !registered) throw new NotFoundException('No account uses this phone number');
     const recent = await this.prisma.phoneOtp.count({ where: { phone, createdAt: { gt: new Date(Date.now() - OTP_MINUTES * 60_000) } } });
     if (recent >= 3) throw new HttpException('Too many codes requested; try again in a few minutes', HttpStatus.TOO_MANY_REQUESTS);
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const what = purpose === 'RESET' ? 'رمز استعادة كلمة المرور' : 'رمز التحقق';
     await this.prisma.$transaction(async (tx) => {
-      await tx.phoneOtp.create({ data: { phone, codeHash: hash(phone, code), expiresAt: new Date(Date.now() + OTP_MINUTES * 60_000) } });
-      await this.enqueue(phone, `رمز التحقق لتطبيق Dejavu: ${code}\nصالح لمدة ${OTP_MINUTES} دقائق. لا تشاركه مع أحد.`, 'OTP', tx);
+      await tx.phoneOtp.create({ data: { phone, purpose, codeHash: hash(phone, code), expiresAt: new Date(Date.now() + OTP_MINUTES * 60_000) } });
+      await this.enqueue(phone, `${what} لتطبيق Dejavu: ${code}\nصالح لمدة ${OTP_MINUTES} دقائق. لا تشاركه مع أحد.`, 'OTP', tx);
     });
     return { sent: true, expiresInMinutes: OTP_MINUTES };
   }
 
   /** Checks the code for [phone]; throws when it is wrong, expired or used too often. */
-  async verifyOtp(tx: Tx, rawPhone: string, code: string | undefined) {
+  async verifyOtp(tx: Tx, rawPhone: string, code: string | undefined, purpose: OtpPurpose = 'REGISTER') {
     const phone = normalizePhone(rawPhone);
     if (!code) throw new BadRequestException('Enter the verification code sent to your phone');
-    const otp = await tx.phoneOtp.findFirst({ where: { phone, verifiedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' } });
+    const otp = await tx.phoneOtp.findFirst({ where: { phone, purpose, verifiedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' } });
     if (!otp) throw new BadRequestException('The verification code expired; request a new one');
     if (otp.attempts >= 5) throw new BadRequestException('Too many wrong codes; request a new one');
     if (otp.codeHash !== hash(phone, code.trim())) {

@@ -153,6 +153,69 @@ export class ReportsService {
     };
   }
 
+  // --------------------------------------------------------- revenue report ---
+
+  /**
+   * Sales revenue by channel (till / customer app) and buyer (retail / merchants), net of
+   * tax and of pieces returned, with cost and gross profit. Till sales count on the day
+   * they were rung up, app orders on the day they shipped.
+   */
+  async revenue(q: PeriodQueryDto) {
+    const { from, to } = this.period(q);
+    const rows = await this.prisma.$queryRaw<
+      { channel: string; merchant: boolean; orders: number; units: number; net: string; cogs: string }[]
+    >`
+      WITH sold AS (
+        SELECT o.id, o.channel::text AS channel, cu.is_merchant AS merchant,
+               (COALESCE(
+                  (SELECT MIN(h.created_at) FROM order_status_history h WHERE h.order_id = o.id AND h.to_status = 'SHIPPED'),
+                  o.placed_at
+                ) AT TIME ZONE 'UTC' AT TIME ZONE ${this.tz})::date AS day
+        FROM orders o
+        JOIN customers cu ON cu.id = o.customer_id
+        WHERE o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')
+      )
+      SELECT s.channel, s.merchant,
+             COUNT(DISTINCT s.id)::int AS orders,
+             SUM(i.quantity - i.returned_qty)::int AS units,
+             COALESCE(SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)), 0)::text AS net,
+             COALESCE(SUM(i.unit_cost * (i.quantity - i.returned_qty)), 0)::text AS cogs
+      FROM sold s
+      JOIN order_items i ON i.order_id = s.id
+      WHERE s.day BETWEEN ${from}::date AND ${to}::date
+      GROUP BY 1, 2`;
+
+    const zero = { orders: 0, units: 0, revenue: money(0), cost: money(0), grossProfit: money(0) };
+    const add = (a: typeof zero, b: typeof zero) => ({
+      orders: a.orders + b.orders,
+      units: a.units + b.units,
+      revenue: a.revenue.add(b.revenue),
+      cost: a.cost.add(b.cost),
+      grossProfit: a.grossProfit.add(b.grossProfit),
+    });
+    const cell = (channel: 'POS' | 'ONLINE', merchant: boolean) => {
+      const r = rows.find((x) => x.channel === channel && x.merchant === merchant);
+      if (!r) return zero;
+      const revenue = money(r.net);
+      const cost = money(r.cogs);
+      return { orders: r.orders, units: r.units, revenue, cost, grossProfit: revenue.sub(cost) };
+    };
+    const pos = { retail: cell('POS', false), merchants: cell('POS', true) };
+    const app = { retail: cell('ONLINE', false), merchants: cell('ONLINE', true) };
+    const posTotal = add(pos.retail, pos.merchants);
+    const appTotal = add(app.retail, app.merchants);
+    return {
+      from,
+      to,
+      pos: { ...pos, total: posTotal },
+      app: { ...app, total: appTotal },
+      /** Merchants (wholesale) at the till and in the app together. */
+      merchants: add(pos.merchants, app.merchants),
+      retail: add(pos.retail, app.retail),
+      total: add(posTotal, appTotal),
+    };
+  }
+
   // ------------------------------------------------------------ sales report ---
 
   /** Invoiced (shipped) sales by day, product or category, with cost and gross profit. */

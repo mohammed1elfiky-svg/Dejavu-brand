@@ -96,6 +96,23 @@ export class ChangePasswordDto {
   newPassword: string;
 }
 
+/** Forgotten password: the code texted by POST auth/customer/otp/reset and the new password. */
+export class PasswordResetDto {
+  @ApiProperty({ example: '777123456' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  phone: string;
+
+  @ApiProperty({ example: '123456' })
+  @Matches(/^\d{6}$/, { message: 'code must be 6 digits' })
+  code: string;
+
+  @ApiProperty({ minLength: 8 })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  newPassword: string;
+}
+
 /** Normalises to the local 01xxxxxxxxx form so a number is stored only one way. */
 export const normalizePhone = (phone: string) =>
   phone.replace(/^\+20/, '0').replace(/^\+966/, '0').replace(/^(\+967|00967)/, '');

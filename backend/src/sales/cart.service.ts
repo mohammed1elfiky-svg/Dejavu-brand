@@ -193,7 +193,7 @@ export class CartService {
   }
 
   /** Returns the coupon when it can be applied, otherwise a reason. */
-  private async checkCoupon(tx: Tx, code: string, customerId: string, subtotal: string): Promise<Coupon | string> {
+  async checkCoupon(tx: Tx, code: string, customerId: string, subtotal: string, perCustomer = true): Promise<Coupon | string> {
     const coupon = await tx.coupon.findUnique({ where: { code } });
     const now = new Date();
     if (!coupon || !coupon.isActive) return 'Coupon code is not valid';
@@ -202,7 +202,7 @@ export class CartService {
     if (coupon.minOrderAmount && dec(subtotal).lessThan(coupon.minOrderAmount)) {
       return `Minimum order for this coupon is ${coupon.minOrderAmount}`;
     }
-    if (coupon.perCustomerLimit !== null) {
+    if (perCustomer && coupon.perCustomerLimit !== null) {
       const used = await tx.couponUsage.count({ where: { couponId: coupon.id, customerId } });
       if (used >= coupon.perCustomerLimit) return 'You have already used this coupon';
     }

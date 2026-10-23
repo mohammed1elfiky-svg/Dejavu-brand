@@ -11,6 +11,7 @@ import {
   ReceivePurchaseDto,
   StatementQueryDto,
   SupplierCommissionDto,
+  SupplierOpeningBalanceDto,
   SupplierPaymentVoucherDto,
   SupplierPaymentDto,
   SupplierPaymentsQueryDto,
@@ -177,6 +178,13 @@ export class PurchasingController {
   @Get('suppliers/:id/account')
   supplierAccount(@Param('id', ParseUUIDPipe) id: string) {
     return this.supplierLedger.account(id);
+  }
+
+  /** A balance from before the system, in the currency it was kept in. */
+  @RequirePermissions('supplier_payments.record', 'journal.write')
+  @Post('suppliers/:id/opening-balance')
+  supplierOpening(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SupplierOpeningBalanceDto, @CurrentUser() u: AuthPrincipal) {
+    return this.supplierLedger.openingBalance(id, dto, u);
   }
 
   /** Payment voucher: dollars out of a USD box at the day's yuan rate. */

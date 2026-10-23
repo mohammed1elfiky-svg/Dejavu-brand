@@ -33,6 +33,13 @@ export class ReportsController {
     return this.reports.sales(q);
   }
 
+  /** Revenue of till and app sales, retail and merchants, separately and together. */
+  @RequirePermissions('reports.sales')
+  @Get('revenue')
+  revenue(@Query() q: PeriodQueryDto) {
+    return this.reports.revenue(q);
+  }
+
   @RequirePermissions('reports.inventory')
   @Get('inventory-valuation')
   inventoryValuation() {

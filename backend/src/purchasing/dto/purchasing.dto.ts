@@ -642,3 +642,30 @@ export class UpdateImportOrderDto {
   @MaxLength(500)
   note?: string;
 }
+
+/** A supplier balance from before the system. */
+export class SupplierOpeningBalanceDto {
+  @ApiProperty({ example: 'CNY' })
+  @IsString()
+  @Matches(/^[A-Za-z]{3}$/, { message: 'currency must be a 3-letter code' })
+  currency: string;
+
+  @ApiProperty({ example: '12000' })
+  @IsDecimalText(2)
+  amount: string;
+
+  @ApiPropertyOptional({ example: '6250', description: 'SAR value; required for a currency without a rate (e.g. yuan)' })
+  @IsOptional()
+  @IsDecimalText(2)
+  sarAmount?: string;
+
+  @ApiProperty({ enum: ['WE_OWE', 'SUPPLIER_OWES'], description: 'WE_OWE: we owe the supplier; SUPPLIER_OWES: we paid ahead' })
+  @IsIn(['WE_OWE', 'SUPPLIER_OWES'])
+  direction: 'WE_OWE' | 'SUPPLIER_OWES';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
+}

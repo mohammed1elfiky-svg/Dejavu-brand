@@ -106,4 +106,11 @@ export class OtpController {
   send(@Body() dto: OtpRequestDto) {
     return this.sms.sendOtp(dto.phone);
   }
+
+  /** Forgotten password: texts a reset code to a registered number. */
+  @Post('reset')
+  @HttpCode(HttpStatus.OK)
+  sendReset(@Body() dto: OtpRequestDto) {
+    return this.sms.sendOtp(dto.phone, 'RESET');
+  }
 }

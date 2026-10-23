@@ -6,7 +6,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
 import { SequenceService } from '../common/sequence.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, PHONE_REGEX, StaffLoginDto } from './dto/auth.dto';
+import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, PasswordResetDto, PHONE_REGEX, StaffLoginDto } from './dto/auth.dto';
 import { hashPassword, verifyPassword } from './password';
 import { TokenService } from './token.service';
 
@@ -49,6 +49,7 @@ export class AuthService {
         email: true,
         phone: true,
         status: true,
+        saleCurrency: true,
         roles: { select: { role: { select: { id: true, name: true } } } },
       },
     });
@@ -161,6 +162,22 @@ export class AuthService {
 
   async logout(refreshToken: string) {
     await this.tokens.revoke(refreshToken);
+  }
+
+  /** Sets a new password after the texted reset code checks out, and signs the customer in. */
+  async resetPassword(dto: PasswordResetDto) {
+    const phone = normalizePhone(dto.phone);
+    const customer = await this.prisma.customer.findUnique({ where: { phone }, select: { id: true, status: true } });
+    if (!customer) throw new BadRequestException('No account uses this phone number');
+    if (customer.status !== CustomerStatus.ACTIVE) throw new UnauthorizedException('Account is not active');
+    const passwordHash = await hashPassword(dto.newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await this.sms.verifyOtp(tx, phone, dto.code, 'RESET');
+      await tx.customer.update({ where: { id: customer.id }, data: { passwordHash, phoneVerified: true } });
+    });
+    await this.tokens.revokeAll({ type: 'customer', id: customer.id });
+    await this.audit.log({ action: 'UPDATE', entityType: 'CustomerPasswordReset', entityId: customer.id });
+    return this.customerSession(customer.id);
   }
 
   async changePassword(principal: AuthPrincipal, dto: ChangePasswordDto) {

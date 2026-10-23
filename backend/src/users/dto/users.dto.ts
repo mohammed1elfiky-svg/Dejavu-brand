@@ -15,6 +15,7 @@ import {
 } from 'class-validator';
 import { UserStatus } from '../../generated/prisma/client';
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
+import { IsCurrencyCode } from '../../common/decorators/validation.decorators';
 
 export class CreateUserDto {
   @ApiProperty()
@@ -67,6 +68,11 @@ export class CreateUserDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   cashBoxIds?: string[];
+
+  @ApiPropertyOptional({ example: 'YER', description: 'Currency the till opens with; defaults to YER for cashiers, SAR otherwise' })
+  @IsOptional()
+  @IsCurrencyCode()
+  saleCurrency?: string;
 }
 
 export class UpdateUserDto {
@@ -108,6 +114,11 @@ export class UpdateUserDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   roleIds?: string[];
+
+  @ApiPropertyOptional({ example: 'YER', description: 'Currency the till opens with; defaults to YER for cashiers, SAR otherwise' })
+  @IsOptional()
+  @IsCurrencyCode()
+  saleCurrency?: string;
 }
 
 export class UserPermissionsDto {

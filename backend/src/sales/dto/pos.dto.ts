@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { IsAmount, IsCurrencyCode } from '../../common/decorators/validation.decorators';
 
@@ -66,6 +66,13 @@ export class PosSaleDto {
   @IsOptional()
   @IsAmount()
   discountValue?: string;
+
+  @ApiPropertyOptional({ example: 'WELCOME10', description: 'Discount code (instead of a typed discount)' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() || undefined : value))
+  @IsString()
+  @MaxLength(40)
+  couponCode?: string;
 
   @ApiPropertyOptional({ type: [PosTenderDto], description: 'Money handed over, in one or more currencies' })
   @IsOptional()

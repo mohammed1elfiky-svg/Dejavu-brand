@@ -14,6 +14,7 @@ const userSelect = {
   email: true,
   username: true,
   phone: true,
+  saleCurrency: true,
   status: true,
   lastLoginAt: true,
   createdAt: true,
@@ -73,6 +74,7 @@ export class UsersService {
     if (!dto.phone && !dto.email && !dto.username) throw new BadRequestException('Enter the mobile number the employee signs in with');
     await this.assertUsernameFree(dto.username);
     await this.assertPhoneFree(dto.phone);
+    const saleCurrency = dto.saleCurrency ?? (await this.defaultSaleCurrency(dto.roleIds));
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -81,6 +83,7 @@ export class UsersService {
           username: dto.username ?? null,
           phone: dto.phone ? normalizePhone(dto.phone) : null,
           passwordHash: await hashPassword(dto.password),
+          saleCurrency,
           roles: { create: dto.roleIds.map((roleId) => ({ roleId })) },
         },
         select: { id: true },
@@ -182,6 +185,7 @@ export class UsersService {
           username: dto.username === undefined ? undefined : dto.username,
           phone: dto.phone ? normalizePhone(dto.phone) : undefined,
           status: dto.status,
+          saleCurrency: dto.saleCurrency,
           passwordHash: dto.password ? await hashPassword(dto.password) : undefined,
         },
         select: userSelect,
@@ -195,6 +199,12 @@ export class UsersService {
     const after = presentUser(user);
     await this.audit.log({ userId: actorId, action: 'UPDATE', entityType: 'User', entityId: id, before, after });
     return after;
+  }
+
+  /** Cashiers sell in Yemeni rials, everyone else (sales staff, managers) in SAR. */
+  private async defaultSaleCurrency(roleIds: string[]) {
+    const cashier = await this.prisma.role.count({ where: { id: { in: roleIds }, name: 'cashier' } });
+    return cashier ? 'YER' : 'SAR';
   }
 
   private async assertRolesExist(roleIds: string[]) {

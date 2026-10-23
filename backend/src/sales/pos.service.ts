@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
+  Coupon,
   CouponType,
   OrderChannel,
   OrderStatus,
@@ -22,7 +23,8 @@ import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { PosFreeReturnDto, PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
 import { ReturnsService } from './returns.service';
-import { priceOrder, revenueSplit } from './pricing';
+import { CartService } from './cart.service';
+import { PricingCoupon, priceOrder, revenueSplit } from './pricing';
 import { getSetting } from './settings';
 
 /** Customer code of the anonymous walk-in buyer that cash sales without a customer go to. */
@@ -82,6 +84,7 @@ export class PosService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly returns: ReturnsService,
+    private readonly cart: CartService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -172,18 +175,26 @@ export class PosService {
       // Merchants pay wholesale prices less their own discount.
       const buyer = await tx.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true } });
       const rate = invoiceCurrency.rate;
-      const discount = this.discountOf(dto, invoiceCurrency.code, rate);
-      const pricing = priceOrder({
-        lines: variants.map((v) => ({
-          variantId: v.id,
-          quantity: quantities.get(v.id)!,
-          unitPrice: buyerPrice(v.price ?? v.product.basePrice, v.product.wholesalePrice, promos.get(v.product.id), buyer),
-          taxRate: v.product.taxRate?.isActive ? v.product.taxRate.rate : 0,
-        })),
-        coupon: discount,
-        shippingFee: 0,
-        pricesIncludeTax: await getSetting(tx, 'tax.pricesIncludeTax', true),
-      });
+      const basket = variants.map((v) => ({
+        variantId: v.id,
+        quantity: quantities.get(v.id)!,
+        unitPrice: buyerPrice(v.price ?? v.product.basePrice, v.product.wholesalePrice, promos.get(v.product.id), buyer),
+        taxRate: v.product.taxRate?.isActive ? v.product.taxRate.rate : 0,
+      }));
+      const pricesIncludeTax = await getSetting(tx, 'tax.pricesIncludeTax', true);
+      let discount: PricingCoupon | null = this.discountOf(dto, invoiceCurrency.code, rate);
+      // A discount code works at the till as in the app (one per sale; walk-ins share no per-customer limit).
+      let coupon: Coupon | null = null;
+      if (dto.couponCode) {
+        if (discount) throw new BadRequestException('Use either a discount code or a typed discount');
+        const walkIn = customerId === (await this.walkInId(tx));
+        const subtotal = priceOrder({ lines: basket, shippingFee: 0, pricesIncludeTax }).subtotal;
+        const check = await this.cart.checkCoupon(tx, dto.couponCode, customerId, subtotal.toString(), !walkIn);
+        if (typeof check === 'string') throw new UnprocessableEntityException(check);
+        coupon = check;
+        discount = { type: coupon.type, value: coupon.value, maxDiscount: coupon.maxDiscount };
+      }
+      const pricing = priceOrder({ lines: basket, coupon: discount, shippingFee: 0, pricesIncludeTax });
       const total = pricing.grandTotal;
 
       // ---- the money handed over (first any credit the customer holds, e.g. from a return) ----
@@ -199,7 +210,9 @@ export class PosService {
         paid = total;
       }
       let change = paid.gt(total) ? money(paid.sub(total)) : ZERO;
-      const changeCurrency = dto.changeCurrency ?? invoiceCurrency.code;
+      // Change is handed back in the currency the customer paid with, unless the cashier picks one.
+      const handed = [...new Set(tenders.filter((t) => t.method === PaymentMethod.CASH).map((t) => t.currency))];
+      const changeCurrency = dto.changeCurrency ?? (handed.length === 1 ? handed[0] : invoiceCurrency.code);
       const changeRate = changeCurrency === invoiceCurrency.code ? rate : await this.currencies.rate(changeCurrency, tx);
       let changeAmount = change.gt(0) ? toCurrency(change, changeCurrency, changeRate) : ZERO;
       if (change.gt(0) && changeAmount.isZero() && last) {
@@ -225,6 +238,7 @@ export class PosService {
           warehouseId: warehouse.id,
           channel: OrderChannel.POS,
           cashierId,
+          couponId: coupon?.id,
           status: OrderStatus.COMPLETED,
           paymentStatus: PaymentStatus.PAID,
           paymentMethod:
@@ -267,6 +281,10 @@ export class PosService {
         },
         include: { items: true },
       });
+      if (coupon) {
+        await tx.couponUsage.create({ data: { couponId: coupon.id, customerId, orderId: order.id } });
+        await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } });
+      }
       const costs: Decimal[] = [];
       for (const item of [...order.items].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
         const issued = await this.stock.stockOut(tx, {
@@ -323,7 +341,9 @@ export class PosService {
         const bal = await this.treasury.balanceOf(tx, { boxId: box.id });
         const comingIn = sum(tenders.filter((t) => t.currency === changeCurrency).map((t) => t.amount));
         if (bal.amount.add(comingIn).lt(changeAmount)) {
-          throw new UnprocessableEntityException(`Not enough ${changeCurrency} in the drawer for the change`);
+          throw new UnprocessableEntityException(
+            `Not enough ${changeCurrency} in the drawer for the change: ${bal.amount.add(comingIn).toFixed()} available, ${changeAmount.toFixed()} needed`,
+          );
         }
         lines.push(...(await this.treasury.moneyLines(tx, { account: { id: box.accountId }, currency: changeCurrency, amount: changeAmount.neg(), sar: change.neg() })));
         payments.push({

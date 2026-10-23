@@ -8,7 +8,7 @@ import { parseDateOnly } from '../common/utils/dates';
 import { dec, money } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
-import { SupplierCommissionDto, SupplierPaymentVoucherDto } from './dto/purchasing.dto';
+import { SupplierCommissionDto, SupplierOpeningBalanceDto, SupplierPaymentVoucherDto } from './dto/purchasing.dto';
 
 type User = { id: string; permissions: string[] };
 
@@ -83,6 +83,55 @@ export class SupplierLedgerService {
         : this.commissionIn(tx, dto as SupplierCommissionDto, user);
     });
     return this.voucher(newId);
+  }
+
+  /**
+   * A balance from before the system: what we owed the supplier (or what they owed us),
+   * in the currency it was kept in. Yuan and other currencies without a rate need its SAR value.
+   */
+  async openingBalance(supplierId: string, dto: SupplierOpeningBalanceDto, user: User) {
+    await this.prisma.$transaction(async (tx) => {
+      const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
+      if (!supplier) throw new NotFoundException('Supplier not found');
+      const currency = dto.currency.toUpperCase();
+      const amount = money(dto.amount);
+      if (!amount.gt(0)) throw new BadRequestException('Amount must be greater than zero');
+      const known = await tx.currency.findUnique({ where: { code: currency }, select: { code: true } });
+      const sar = dto.sarAmount
+        ? money(dto.sarAmount)
+        : known
+          ? toBase(amount, currency, await this.currencies.rate(currency, tx))
+          : null;
+      if (!sar || !sar.gt(0)) throw new BadRequestException(`Enter what ${currency} ${amount.toFixed()} is worth in SAR`);
+      const weOwe = dto.direction === 'WE_OWE';
+      const entry = await this.ledger.post(tx, {
+        description: `Opening balance of ${supplier.name}: ${amount.toFixed()} ${currency} ${weOwe ? 'owed to the supplier' : 'owed by the supplier'}${dto.note ? ` — ${dto.note}` : ''}`,
+        sourceType: 'OPENING_BALANCE',
+        sourceId: supplier.id,
+        userId: user.id,
+        lines: weOwe
+          ? [
+              { account: 'OPENING_BALANCE', debit: sar },
+              { account: 'AP', credit: sar, supplierId: supplier.id },
+            ]
+          : [
+              { account: 'AP', debit: sar, supplierId: supplier.id },
+              { account: 'OPENING_BALANCE', credit: sar },
+            ],
+      });
+      await tx.supplierAccountEntry.create({
+        data: {
+          supplierId: supplier.id,
+          currency,
+          amount: weOwe ? amount : amount.neg(),
+          sourceType: 'OPENING',
+          sourceId: entry.id,
+          note: ['رصيد افتتاحي', dto.note].filter(Boolean).join(' — '),
+        },
+      });
+      await this.audit.log({ userId: user.id, action: 'CREATE', entityType: 'SupplierOpeningBalance', entityId: entry.id, after: { supplierId, ...dto } }, tx);
+    });
+    return this.account(supplierId);
   }
 
   voucher(id: string) {

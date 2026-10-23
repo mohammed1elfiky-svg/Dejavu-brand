@@ -269,6 +269,8 @@ model User {
   /// Mobile number used to sign in, stored normalised (e.g. 777123456 / 0512345678).
   phone        String?    @unique
   passwordHash String     @map("password_hash")
+  /// Currency the till opens with for this employee (cashiers YER, sales staff SAR); null = SAR.
+  saleCurrency String?    @map("sale_currency")
   status       UserStatus @default(ACTIVE)
   lastLoginAt  DateTime?  @map("last_login_at")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -1762,6 +1764,8 @@ model PhoneOtp {
   expiresAt  DateTime  @map("expires_at")
   attempts   Int       @default(0)
   verifiedAt DateTime? @map("verified_at")
+  /// REGISTER (sign-up) or RESET (forgotten password).
+  purpose    String    @default("REGISTER")
   createdAt  DateTime  @default(now()) @map("created_at")
 
   @@index([phone, createdAt])

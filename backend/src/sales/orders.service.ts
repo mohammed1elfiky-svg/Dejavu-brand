@@ -29,6 +29,7 @@ import { orderAmount, orderStatusMessage } from '../notifications/messages';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { FilesService, UploadedPart } from '../files/files.service';
+import { StoreSettingsService } from './store-settings.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
 import { balanceDue, PaymentsService } from './payments.service';
@@ -118,6 +119,7 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
     private readonly currencies: CurrencyService,
     private readonly files: FilesService,
+    private readonly storeSettings: StoreSettingsService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
@@ -132,6 +134,7 @@ export class OrdersService {
       const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true } });
       if (!warehouse) throw new UnprocessableEntityException('No default warehouse is configured');
       const address = await tx.customerAddress.findUniqueOrThrow({ where: { id: dto.addressId } });
+      await this.storeSettings.assertMethod(tx, dto.paymentMethod, address.governorate);
 
       // Reserve in a stable order; the conditional UPDATE is the real oversell guard.
       for (const line of [...quote.lines].sort((a, b) => a.variantId.localeCompare(b.variantId))) {

@@ -81,6 +81,19 @@ export class WalletService {
     return row;
   }
 
+  async deleteBankAccount(id: string, userId: string) {
+    const row = await this.prisma.storeBankAccount.findUnique({ where: { id }, include: { _count: { select: { topUps: true } } } });
+    if (!row) throw new NotFoundException('Bank account not found');
+    if (row._count.topUps) {
+      await this.prisma.storeBankAccount.update({ where: { id }, data: { isActive: false } });
+      await this.audit.log({ userId, action: 'UPDATE', entityType: 'StoreBankAccount', entityId: id, after: { hidden: true } });
+      return { deleted: false, hidden: true };
+    }
+    await this.prisma.storeBankAccount.delete({ where: { id } });
+    await this.audit.log({ userId, action: 'DELETE', entityType: 'StoreBankAccount', entityId: id, before: row });
+    return { deleted: true, hidden: false };
+  }
+
   /** The account's currencies: the main one first, each active, no repeats. */
   private async accountCurrencies(main: string, list?: string[]) {
     const all = [...new Set([main, ...(list ?? [])])];

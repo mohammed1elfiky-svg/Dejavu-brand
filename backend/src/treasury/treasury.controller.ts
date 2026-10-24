@@ -205,6 +205,14 @@ export class AdminWalletController {
   updateBank(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateBankAccountDto, @CurrentUser() u: AuthPrincipal) {
     return this.wallet.updateBankAccount(id, dto, u.id);
   }
+
+  /** Deletes a bank account; one already used by top-up requests is hidden instead (they keep pointing to it). */
+  @RequirePermissions('settings.manage')
+  @Delete('bank-accounts/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteBank(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.wallet.deleteBankAccount(id, u.id);
+  }
 }
 
 @ApiTags('Store · Wallet')

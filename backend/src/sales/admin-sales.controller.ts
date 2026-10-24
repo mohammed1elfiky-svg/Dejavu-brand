@@ -8,6 +8,7 @@ import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decora
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { CourierSettlementsService } from './courier-settlements.service';
 import { CustomersService } from './customers.service';
+import { StoreSettingsService } from './store-settings.service';
 import {
   AdminOrdersQueryDto,
   ChangeOrderStatusDto,
@@ -19,6 +20,7 @@ import {
   ReceiveReturnDto,
   RecordPaymentDto,
   RefundDto,
+  PaymentMethodsDto,
   RefundReturnDto,
   RejectReturnDto,
   ReturnsQueryDto,
@@ -170,7 +172,10 @@ export class AdminCustomersController {
 @ApiTags('Admin · Sales settings')
 @Controller('admin')
 export class AdminSalesSettingsController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(
+    private readonly customers: CustomersService,
+    private readonly storeSettings: StoreSettingsService,
+  ) {}
 
   @RequirePermissions('coupons.manage')
   @Get('coupons')
@@ -193,7 +198,20 @@ export class AdminSalesSettingsController {
   @RequirePermissions('orders.read')
   @Get('shipping-zones')
   listZones() {
-    return this.customers.listZones();
+    return this.storeSettings.zones();
+  }
+
+  /** Payment methods offered in the customer app. */
+  @RequirePermissions('settings.manage')
+  @Get('store-payment-methods')
+  paymentMethods() {
+    return this.storeSettings.enabledMethods();
+  }
+
+  @RequirePermissions('settings.manage')
+  @Put('store-payment-methods')
+  setPaymentMethods(@Body() dto: PaymentMethodsDto) {
+    return this.storeSettings.setEnabledMethods(dto.methods);
   }
 
   @RequirePermissions('settings.manage')

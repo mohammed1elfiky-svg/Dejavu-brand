@@ -157,7 +157,6 @@ export const CHECKOUT_METHODS = [
   PaymentMethod.CASH_ON_DELIVERY,
   PaymentMethod.CARD,
   PaymentMethod.WALLET,
-  PaymentMethod.INSTAPAY,
   PaymentMethod.BANK_TRANSFER,
   PaymentMethod.CUSTOMER_ACCOUNT,
 ] as const;
@@ -413,6 +412,18 @@ export class ShippingZoneDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Offer cash on delivery in this governorate' })
+  @IsOptional()
+  @IsBoolean()
+  codEnabled?: boolean;
+}
+
+export class PaymentMethodsDto {
+  @ApiProperty({ enum: CHECKOUT_METHODS, isArray: true, description: 'Methods offered in the customer app' })
+  @IsIn(CHECKOUT_METHODS, { each: true })
+  @ArrayMinSize(1)
+  methods: (typeof CHECKOUT_METHODS)[number][];
 }
 
 export class CustomersQueryDto extends PaginationQueryDto {

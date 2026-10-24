@@ -160,9 +160,13 @@ export class CartService {
     if (addressId) {
       const address = await tx.customerAddress.findFirst({ where: { id: addressId, customerId } });
       if (!address) throw new NotFoundException('Address not found');
+      // Every governorate is delivered to unless switched off. By default the customer pays the
+      // courier for shipping, so the fee is not added to the order (store.chargeShipping).
       const zone = await tx.shippingZone.findUnique({ where: { governorate: address.governorate } });
-      if (!zone || !zone.isActive) shippingProblem = `Delivery to ${address.governorate} is not available yet`;
-      else shipping = { governorate: zone.governorate, fee: zone.fee.toString(), estimatedDays: zone.estimatedDays };
+      const charge = await getSetting(tx, 'store.chargeShipping', false);
+      if (zone && !zone.isActive) shippingProblem = `Delivery to ${address.governorate} is not available yet`;
+      else if (charge && !zone) shippingProblem = `Delivery to ${address.governorate} is not available yet`;
+      else shipping = { governorate: address.governorate, fee: charge && zone ? zone.fee.toString() : '0', estimatedDays: zone?.estimatedDays ?? 3 };
     }
     if (shippingProblem) problems.push(shippingProblem);
 

@@ -617,6 +617,8 @@ model ProductReview {
   orderId    String?  @map("order_id") @db.Uuid // verified purchase
   rating     Int // 1..5 (CHECK in constraints.sql)
   comment    String?
+  /// Photos the customer added (public URLs).
+  images     String[] @default([])
   isApproved Boolean  @default(false) @map("is_approved")
   createdAt  DateTime @default(now()) @map("created_at")
 
@@ -825,6 +827,8 @@ model ShippingZone {
   fee           Decimal @db.Decimal(14, 2)
   estimatedDays Int     @default(3) @map("estimated_days")
   isActive      Boolean @default(true) @map("is_active")
+  /// Cash on delivery is offered for addresses in this governorate.
+  codEnabled    Boolean @default(true) @map("cod_enabled")
 
   @@map("shipping_zones")
 }

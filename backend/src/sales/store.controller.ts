@@ -15,6 +15,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { EngagementService } from './engagement.service';
+import { StoreSettingsService } from './store-settings.service';
 import type { Request } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public } from '../common/decorators/auth.decorators';
@@ -42,11 +43,12 @@ import { ReturnsService } from './returns.service';
 @Public()
 @Controller('store/shipping-zones')
 export class StoreShippingController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(private readonly storeSettings: StoreSettingsService) {}
 
+  /** Governorates delivered to (Yemen), with whether cash on delivery is offered. */
   @Get()
   zones() {
-    return this.customers.listZones(true);
+    return this.storeSettings.zones(true);
   }
 }
 
@@ -189,12 +191,15 @@ export class StoreReturnsController {
 @Public()
 @Controller('store/payment-methods')
 export class StorePaymentMethodsController {
-  constructor(private readonly online: OnlinePaymentsService) {}
+  constructor(
+    private readonly online: OnlinePaymentsService,
+    private readonly storeSettings: StoreSettingsService,
+  ) {}
 
-  /** Payment methods the checkout currently accepts. */
+  /** Payment methods the checkout accepts (for an address in [governorate] when given). */
   @Get()
-  list() {
-    return CHECKOUT_METHODS.filter((m) => m !== PaymentMethod.CARD || this.online.enabled);
+  list(@Query('governorate') governorate?: string) {
+    return this.storeSettings.methodsFor(governorate, this.online.enabled);
   }
 }
 

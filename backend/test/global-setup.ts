@@ -28,5 +28,7 @@ export default async function globalSetup() {
   await db.query(`
     INSERT INTO tax_rates (id, name, rate, is_default, is_active, account_id, created_at)
     SELECT gen_random_uuid(), 'VAT 14%', 14, true, true, id, now() FROM accounts WHERE code = '2102'`);
+  // The store leaves shipping to the courier; the older suites cover charging it in the order.
+  await db.query(`INSERT INTO settings (key, value, updated_at) VALUES ('store.chargeShipping', 'true', now())`);
   await db.end();
 }

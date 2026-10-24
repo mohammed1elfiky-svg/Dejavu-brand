@@ -36,18 +36,36 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         val order = intent.data?.takeIf { it.scheme == "dejavu" }?.getQueryParameter("order")
             // Our own notifications, and FCM's background ones (data keys become extras).
-            ?: intent.getStringExtra(EXTRA_ORDER)
+            ?: intent.getStringExtra(EXTRA_ORDER)?.takeIf { it.isNotBlank() }
+            // "Shipped" notification (with the shipping receipt).
+            ?: intent.getStringExtra(EXTRA_ORDER_NUMBER)
         val container = (application as DejavuApp).container
         container.requestOrder(order)
-        // New-product notification: open the product.
-        if (order.isNullOrBlank()) container.requestProduct(intent.getStringExtra(EXTRA_PRODUCT))
+        if (!order.isNullOrBlank()) return
+        // New-product or back-in-stock notification: open the product.
+        val product = intent.getStringExtra(EXTRA_PRODUCT)?.takeIf { it.isNotBlank() } ?: intent.getStringExtra(EXTRA_PRODUCT_SLUG)
+        if (!product.isNullOrBlank()) {
+            container.requestProduct(product)
+            return
+        }
+        // Cart reminder: open the cart.
+        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_CART) {
+            container.requestCart()
+            return
+        }
         // Top-up reviewed (approved or rejected): open the wallet.
-        if (order.isNullOrBlank() && !intent.getStringExtra(EXTRA_TOP_UP).isNullOrBlank()) container.requestWallet()
+        if (!intent.getStringExtra(EXTRA_TOP_UP).isNullOrBlank()) container.requestWallet()
     }
 
     companion object {
         const val EXTRA_ORDER = "order"
         const val EXTRA_TOP_UP = "topUp"
         const val EXTRA_PRODUCT = "product"
+
+        // Keys of newer notifications (FCM background messages pass data keys as extras as-is).
+        const val EXTRA_ORDER_NUMBER = "orderNumber"
+        const val EXTRA_PRODUCT_SLUG = "productSlug"
+        const val EXTRA_SCREEN = "screen"
+        const val SCREEN_CART = "cart"
     }
 }

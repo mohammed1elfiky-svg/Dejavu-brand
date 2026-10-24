@@ -1,6 +1,7 @@
 package com.dejavu.customer
 
 import android.content.Context
+import android.net.Uri
 import androidx.core.content.edit
 import com.dejavu.core.data.AddressRepository
 import com.dejavu.core.data.CartRepository
@@ -13,6 +14,8 @@ import com.dejavu.core.data.SessionState
 import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.model.Currency
 import com.dejavu.core.network.ApiClient
+import com.dejavu.core.network.apiCall
+import com.dejavu.core.network.normalizeBaseUrl
 import com.dejavu.core.ui.background.BackgroundChecks
 import com.dejavu.core.ui.push.Push
 import com.dejavu.core.ui.push.PushConfig
@@ -27,6 +30,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
+import java.io.IOException
 
 /** Hand-wired dependencies for the whole app (small enough not to need a DI framework). */
 class AppContainer(private val context: Context) {
@@ -37,12 +43,27 @@ class AppContainer(private val context: Context) {
     val savedLogin = CredentialsStore(context, "customer")
     private lateinit var sessionRef: SessionRepository
 
-    private val api = ApiClient.create(
+    private val apiAndClient = ApiClient.create(
         baseUrl = { settings.baseUrl },
         tokens = tokens,
         onSessionExpired = { sessionRef.onSessionExpired() },
         debugLogging = BuildConfig.DEBUG,
-    ).first
+    )
+    private val api = apiAndClient.first
+
+    /** Same client as [api]: sends the customer's token and refreshes it when it expires. */
+    private val http = apiAndClient.second
+
+    /** A private file of the signed-in customer (e.g. the shipping receipt photo of an order), as bytes. */
+    suspend fun privateFile(id: String): Result<ByteArray> = apiCall {
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(normalizeBaseUrl(settings.baseUrl) + "store/me/files/" + Uri.encode(id)).build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                response.body?.bytes() ?: throw IOException("Empty file")
+            }
+        }
+    }
 
     val session = SessionRepository(api, tokens).also { sessionRef = it }
     val catalog = CatalogRepository(api)
@@ -130,6 +151,19 @@ class AppContainer(private val context: Context) {
 
     fun productOpened() {
         _openProduct.value = null
+    }
+
+    private val _openCart = MutableStateFlow(false)
+
+    /** Cart to show, requested from outside the UI (a cart-reminder notification tap). */
+    val openCart = _openCart.asStateFlow()
+
+    fun requestCart() {
+        _openCart.value = true
+    }
+
+    fun cartOpened() {
+        _openCart.value = false
     }
 
     private val _openWallet = MutableStateFlow(false)

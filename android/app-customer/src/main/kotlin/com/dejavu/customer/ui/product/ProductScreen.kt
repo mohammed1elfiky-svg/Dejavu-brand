@@ -18,13 +18,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import com.dejavu.core.ui.theme.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -43,12 +48,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.CartRepository
 import com.dejavu.core.data.CatalogRepository
 import com.dejavu.core.data.SessionRepository
+import com.dejavu.core.data.SessionState
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.core.model.StoreVariant
 import com.dejavu.core.ui.BaseViewModel
@@ -77,6 +84,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.launch
 
 data class Selection(val color: String? = null, val size: String? = null, val quantity: Int = 1, val adding: Boolean = false)
@@ -98,7 +106,56 @@ class ProductViewModel(
 
     enum class Event { LoginRequired, Added }
 
-    init { load() }
+    /** Variants the shopper asked to be told about when they are back in stock. */
+    private val _watched = MutableStateFlow<Set<String>>(emptySet())
+    val watched = _watched.asStateFlow()
+    private val _watching = MutableStateFlow(false)
+    val watching = _watching.asStateFlow()
+
+    init {
+        load()
+        // Also after signing in from this screen.
+        viewModelScope.launch {
+            session.state.distinctUntilChangedBy { it is SessionState.LoggedIn }.collect { state ->
+                if (state is SessionState.LoggedIn) {
+                    catalog.stockAlerts().onSuccess { list -> _watched.value = list.map { it.variantId }.toSet() }
+                } else {
+                    _watched.value = emptySet()
+                }
+            }
+        }
+    }
+
+    /** "Tell me when it is back" for the selected out-of-stock variant. */
+    fun watchStock() {
+        val variant = selectedVariant() ?: return
+        if (!session.isLoggedIn) {
+            _events.tryEmit(Event.LoginRequired)
+            return
+        }
+        if (_watching.value) return
+        _watching.value = true
+        viewModelScope.launch {
+            catalog.watchStock(variant.id).orSay()?.let { list ->
+                _watched.value = list.map { it.variantId }.toSet()
+                say("سنُعلمك عند توفره")
+            }
+            _watching.value = false
+        }
+    }
+
+    fun unwatchStock() {
+        val variant = selectedVariant() ?: return
+        if (_watching.value || !session.isLoggedIn) return
+        _watching.value = true
+        viewModelScope.launch {
+            catalog.unwatchStock(variant.id).orSay()?.let { list ->
+                _watched.value = list.map { it.variantId }.toSet()
+                say("تم إلغاء التنبيه")
+            }
+            _watching.value = false
+        }
+    }
 
     fun load() {
         _product.value = Load.Loading
@@ -164,6 +221,8 @@ fun ProductScreen(
     val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session) }
     val state by vm.product.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
+    val watched by vm.watched.collectAsStateWithLifecycle()
+    val watching by vm.watching.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) {
@@ -190,10 +249,31 @@ fun ProductScreen(
                             if (p.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Liquid.GoldDeep)
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                         }
-                        Button(
-                            onClick = vm::addToCart,
-                            enabled = variant?.inStock == true && !selection.adding,
-                        ) { Text(if (variant?.inStock == false) "غير متاح" else "أضف إلى السلة") }
+                        if (variant != null && !variant.inStock) {
+                            // Out of stock: offer a back-in-stock notification instead.
+                            if (variant.id in watched) {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Icon(Icons.Filled.Notifications, contentDescription = null, tint = Liquid.GoldDeep, modifier = Modifier.size(18.dp))
+                                        Text("سنُعلمك عند توفره", style = MaterialTheme.typography.labelLarge, color = Liquid.GoldDeep)
+                                    }
+                                    TextButton(onClick = vm::unwatchStock, enabled = !watching) {
+                                        Text("إلغاء التنبيه", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            } else {
+                                Button(onClick = vm::watchStock, enabled = !watching) {
+                                    Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("أعلمني عند التوفر")
+                                }
+                            }
+                        } else {
+                            Button(
+                                onClick = vm::addToCart,
+                                enabled = variant?.inStock == true && !selection.adding,
+                            ) { Text("أضف إلى السلة") }
+                        }
                     }
                 }
             }
@@ -233,8 +313,13 @@ fun ProductScreen(
                                         FilterChip(
                                             selected = v.size == selection.size,
                                             onClick = { vm.pickSize(v.size) },
-                                            enabled = v.inStock,
-                                            label = { Text(v.size ?: "-") },
+                                            label = {
+                                                Text(
+                                                    v.size ?: "-",
+                                                    textDecoration = if (v.inStock) null else TextDecoration.LineThrough,
+                                                    color = if (v.inStock) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            },
                                             colors = goldChipColors(),
                                         )
                                     }

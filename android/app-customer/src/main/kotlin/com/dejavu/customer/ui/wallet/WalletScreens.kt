@@ -101,6 +101,7 @@ import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
+import com.dejavu.core.ui.ProductImage
 import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.StatusChip
 import com.dejavu.core.ui.formatDateTime
@@ -152,7 +153,7 @@ class WalletViewModel(private val repo: WalletRepository) : BaseViewModel() {
     private val _editReceipt = MutableStateFlow<ByteArray?>(null)
     val editReceipt = _editReceipt.asStateFlow()
 
-    /** Active bank accounts, for moving a request to another account of the same currency. */
+    /** Active bank accounts, for moving a request to another account that takes the same currency. */
     private val _accounts = MutableStateFlow<List<StoreBankAccount>>(emptyList())
     val accounts = _accounts.asStateFlow()
 
@@ -324,7 +325,7 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
         EditTopUpDialog(
             edit = e,
             receipt = editReceipt,
-            accounts = accounts.filter { it.currency == e.topUp.currency },
+            accounts = accounts.filter { it.takes(e.topUp.currency) },
             picker = picker,
             onChange = vm::updateEdit,
             onRemoveReceipt = { vm.setEditReceipt(null) },
@@ -579,23 +580,32 @@ class TopUpViewModel(private val repo: WalletRepository, currencies: CurrencyRep
             result.getOrNull()?.let { list ->
                 if (_form.value.currency == null) {
                     val first = list.firstOrNull()
-                    _form.value = _form.value.copy(currency = first?.currency ?: available.value.firstOrNull(), bankAccountId = first?.id)
+                    _form.value = _form.value.copy(
+                        currency = first?.acceptedCurrencies?.firstOrNull() ?: available.value.firstOrNull(),
+                        bankAccountId = first?.id,
+                    )
                 }
             }
         }
     }
 
-    fun currencyChoices(accounts: List<StoreBankAccount>): List<Currency> =
-        (accounts.map { it.currency } + available.value).distinct()
+    /** The chosen bank account's currencies; without any account, the ones the store sells in. */
+    fun currencyChoices(accounts: List<StoreBankAccount>, bankAccountId: String?): List<Currency> {
+        val account = accounts.firstOrNull { it.id == bankAccountId }
+        return account?.acceptedCurrencies ?: if (accounts.isEmpty()) available.value else accounts.flatMap { it.acceptedCurrencies }.distinct()
+    }
 
     fun chooseCurrency(c: Currency, accounts: List<StoreBankAccount>) {
         val f = _form.value
-        val keep = accounts.any { it.id == f.bankAccountId && it.currency == c }
-        _form.value = f.copy(currency = c, bankAccountId = if (keep) f.bankAccountId else accounts.firstOrNull { it.currency == c }?.id)
+        val keep = accounts.any { it.id == f.bankAccountId && it.takes(c) }
+        _form.value = f.copy(currency = c, bankAccountId = if (keep) f.bankAccountId else accounts.firstOrNull { it.takes(c) }?.id)
     }
 
+    /** Only the account's own currencies can be sent to it: keeps the chosen one if it takes it, else its first. */
     fun chooseAccount(a: StoreBankAccount) {
-        _form.value = _form.value.copy(bankAccountId = a.id, currency = a.currency)
+        val f = _form.value
+        val currency = f.currency?.takeIf { a.takes(it) } ?: a.acceptedCurrencies.firstOrNull() ?: a.currency
+        _form.value = f.copy(bankAccountId = a.id, currency = currency)
     }
 
     fun update(change: TopUpForm.() -> TopUpForm) {
@@ -681,37 +691,35 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
         },
     ) { padding ->
         LoadContent(accountsState, onRetry = vm::load, modifier = Modifier.padding(padding)) { accounts ->
-            // Recompose when the currency list arrives.
-            val choices = remember(accounts, available) { vm.currencyChoices(accounts) }
+            // Recompose when the currency list arrives or another account is chosen.
+            val choices = remember(accounts, available, form.bankAccountId) { vm.currencyChoices(accounts, form.bankAccountId) }
+            val imageOf = { c: Currency -> rates?.rate(c)?.imageUrl }
             Column(
                 Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("1. اختر العملة", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                Text("1. حوّل المبلغ إلى أحد حساباتنا", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                if (accounts.isEmpty()) {
+                    Text("لا توجد حسابات بنكية متاحة حالياً، تواصل معنا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                accounts.forEach { a ->
+                    BankAccountCard(a, selected = a.id == form.bankAccountId, imageOf = imageOf, onSelect = { vm.chooseAccount(a) }) { label, value ->
+                        copyToClipboard(context, label, value)
+                        scope.launch { snackbar.showSnackbar("تم نسخ $label") }
+                    }
+                }
+
+                // Only the currencies the chosen account takes.
+                Text("2. اختر عملة التحويل", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     choices.forEach { c ->
                         FilterChip(
                             selected = c == form.currency,
                             onClick = { vm.chooseCurrency(c, accounts) },
                             label = { Text("${c.nameAr} (${c.symbol})") },
-                            leadingIcon = { CurrencyArt(c.code, rates?.rate(c)?.imageUrl, height = 18.dp) },
+                            leadingIcon = { CurrencyArt(c.code, imageOf(c), height = 18.dp) },
                             colors = goldChipColors(),
                         )
-                    }
-                }
-
-                Text("2. حوّل المبلغ إلى أحد حساباتنا", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
-                val forCurrency = accounts.filter { it.currency == form.currency }
-                if (forCurrency.isEmpty()) {
-                    Text(
-                        if (accounts.isEmpty()) "لا توجد حسابات بنكية متاحة حالياً، تواصل معنا." else "لا يوجد حساب بنكي بهذه العملة، اختر عملة أخرى.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                forCurrency.forEach { a ->
-                    BankAccountCard(a, selected = a.id == form.bankAccountId, onSelect = { vm.chooseAccount(a) }) { label, value ->
-                        copyToClipboard(context, label, value)
-                        scope.launch { snackbar.showSnackbar("تم نسخ $label") }
                     }
                 }
 
@@ -765,7 +773,13 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
 }
 
 @Composable
-private fun BankAccountCard(a: StoreBankAccount, selected: Boolean, onSelect: () -> Unit, copy: (String, String) -> Unit) {
+private fun BankAccountCard(
+    a: StoreBankAccount,
+    selected: Boolean,
+    imageOf: (Currency) -> String?,
+    onSelect: () -> Unit,
+    copy: (String, String) -> Unit,
+) {
     Box(
         modifier = Modifier.fillMaxWidth()
             .glass(Liquid.CardShape, elevation = if (selected) 14.dp else 8.dp)
@@ -781,11 +795,19 @@ private fun BankAccountCard(a: StoreBankAccount, selected: Boolean, onSelect: ()
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Liquid.GoldDeep))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(a.bankName, style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    a.imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                        ProductImage(url, Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)), contentDescription = a.bankName)
+                    }
+                    Text(a.bankName, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                }
                 Text("باسم: ${a.accountName}", style = MaterialTheme.typography.bodySmall)
                 CopyLine("رقم الحساب", a.accountNumber, copy)
                 a.iban?.takeIf { it.isNotBlank() }?.let { CopyLine("الآيبان", it, copy) }
-                Text("العملة: ${a.currency.nameAr}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("العملات المقبولة", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    a.acceptedCurrencies.forEach { c -> CurrencyPill(c, imageOf(c)) }
+                }
                 a.instructions?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -793,6 +815,27 @@ private fun BankAccountCard(a: StoreBankAccount, selected: Boolean, onSelect: ()
         }
     }
 }
+
+/** Small currency chip: its note / coin picture and name. */
+@Composable
+private fun CurrencyPill(c: Currency, imageUrl: String?) {
+    Row(
+        Modifier.clip(RoundedCornerShape(50)).background(Liquid.GoldPale.copy(alpha = 0.45f)).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CurrencyArt(c.code, imageUrl, height = 16.dp)
+        Text(c.nameAr, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** Every currency the account takes (the main one first). */
+private val StoreBankAccount.acceptedCurrencies: List<Currency>
+    get() = accepted.mapNotNull { code -> code.trim().uppercase().takeIf { it.isNotEmpty() }?.let { Currency.of(it) } }
+        .ifEmpty { listOf(currency) }
+        .distinct()
+
+private fun StoreBankAccount.takes(c: Currency) = c in acceptedCurrencies
 
 @Composable
 private fun CopyLine(label: String, value: String, copy: (String, String) -> Unit) {

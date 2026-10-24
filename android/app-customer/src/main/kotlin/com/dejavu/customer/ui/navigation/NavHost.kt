@@ -47,6 +47,7 @@ import com.dejavu.customer.ui.account.AccountScreen
 import com.dejavu.customer.ui.account.AddressFormScreen
 import com.dejavu.customer.ui.account.AddressesScreen
 import com.dejavu.customer.ui.account.ServerSettingsScreen
+import com.dejavu.customer.ui.account.StockAlertsScreen
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.auth.LoginScreen
 import com.dejavu.customer.ui.auth.RegisterScreen
@@ -78,6 +79,7 @@ object Routes {
     const val NOTIFICATIONS = "notifications"
     const val WALLET = "wallet"
     const val TOP_UP = "wallet/top-up"
+    const val STOCK_ALERTS = "stock-alerts"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
@@ -127,6 +129,13 @@ fun DejavuNavHost() {
         val slug = openProduct ?: return@LaunchedEffect
         nav.navigate(Routes.product(slug)) { launchSingleTop = true }
         container.productOpened()
+    }
+    // A cart-reminder notification tap.
+    val openCart by container.openCart.collectAsStateWithLifecycle()
+    LaunchedEffect(openCart) {
+        if (!openCart) return@LaunchedEffect
+        nav.switchTab(Routes.CART)
+        container.cartOpened()
     }
     // A top-up notification tap.
     LaunchedEffect(openWallet, session is SessionState.LoggedIn) {
@@ -246,7 +255,11 @@ fun DejavuNavHost() {
                     notifications = { nav.navigate(Routes.NOTIFICATIONS) },
                     wallet = { nav.navigate(Routes.WALLET) },
                     server = { nav.navigate(Routes.SERVER) },
+                    stockAlerts = { nav.navigate(Routes.STOCK_ALERTS) },
                 )
+            }
+            composable(Routes.STOCK_ALERTS) {
+                StockAlertsScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) })
             }
             composable(Routes.ADDRESSES) {
                 AddressesScreen(onBack = { nav.popBackStack() }, edit = { nav.navigate(Routes.addressForm(it)) })
@@ -275,6 +288,7 @@ fun DejavuNavHost() {
                     openOrder = { nav.navigate(Routes.order(it)) },
                     openWallet = { nav.navigate(Routes.WALLET) { launchSingleTop = true } },
                     openProduct = { nav.navigate(Routes.product(it)) },
+                    openCart = { nav.switchTab(Routes.CART) },
                 )
             }
             composable(Routes.WALLET) {

@@ -88,17 +88,18 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
         }
     }
 
-    /** Marks as read and reports what to open: the order it is about, the new product, or the wallet for top-up news. */
-    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit) {
+    /** Marks as read and reports what to open: the order it is about, the product (new or back in stock), the cart, or the wallet for top-up news. */
+    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit, openCart: () -> Unit) {
         if (!n.isRead) {
             markLocally(n.id)
             viewModelScope.launch { repo.markRead(n.id) }
         }
-        val order = n.orderNumber
-        val product = n.data["product"]?.takeIf { it.isNotBlank() }
+        val order = n.orderNumber?.takeIf { it.isNotBlank() } ?: n.data["orderNumber"]?.takeIf { it.isNotBlank() }
+        val product = n.data["product"]?.takeIf { it.isNotBlank() } ?: n.data["productSlug"]?.takeIf { it.isNotBlank() }
         when {
             order != null -> openOrder(order)
             product != null -> openProduct(product)
+            n.data["screen"] == "cart" -> openCart()
             n.type == "WALLET" || n.data["topUp"] != null -> openWallet()
         }
     }
@@ -119,7 +120,13 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
 }
 
 @Composable
-fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit = {}) {
+fun NotificationsScreen(
+    onBack: () -> Unit,
+    openOrder: (String) -> Unit,
+    openWallet: () -> Unit,
+    openProduct: (String) -> Unit = {},
+    openCart: () -> Unit = {},
+) {
     val vm = appViewModel { NotificationsViewModel(it.notifications) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
@@ -151,7 +158,7 @@ fun NotificationsScreen(onBack: () -> Unit, openOrder: (String) -> Unit, openWal
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(items, key = { it.id }) { n ->
-                    NotificationRow(n) { vm.open(n, openOrder, openWallet, openProduct) }
+                    NotificationRow(n) { vm.open(n, openOrder, openWallet, openProduct, openCart) }
                 }
                 if (hasMore) {
                     item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) { Text("عرض المزيد") } }

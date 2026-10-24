@@ -89,6 +89,7 @@ import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.Currency
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.ShippingZone
+import com.dejavu.core.model.StockAlert
 import com.dejavu.customer.BuildConfig
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
@@ -122,6 +123,7 @@ fun AccountScreen(
     notifications: () -> Unit,
     wallet: () -> Unit,
     server: () -> Unit,
+    stockAlerts: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
@@ -174,6 +176,7 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.AccountBox, "المحفظة / رصيدي", wallet)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
+                    MenuRow(Icons.Filled.Notifications, "تنبيهات التوفر", stockAlerts)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
@@ -286,6 +289,69 @@ private fun MenuHeader(text: String) {
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 4.dp, top = 8.dp),
     )
+}
+
+// ----------------------------------------------------------- stock alerts ---
+
+class StockAlertsViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
+    private val _state = MutableStateFlow<Load<List<StockAlert>>>(Load.Loading)
+    val state = _state.asStateFlow()
+
+    fun load() {
+        if (_state.value !is Load.Ready) _state.value = Load.Loading
+        viewModelScope.launch { _state.value = catalog.stockAlerts().toLoad() }
+    }
+
+    fun remove(a: StockAlert) = viewModelScope.launch {
+        catalog.unwatchStock(a.variantId).orSay()?.let { _state.value = Load.Ready(it) }
+    }
+}
+
+/** Sizes / colours the shopper asked to be told about when they are back in stock. */
+@Composable
+fun StockAlertsScreen(onBack: () -> Unit, openProduct: (String) -> Unit) {
+    val vm = appViewModel { StockAlertsViewModel(it.catalog) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    CollectMessages(vm, snackbar)
+    LifecycleResumeEffect(vm) {
+        vm.load()
+        onPauseOrDispose {}
+    }
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar("تنبيهات التوفر", onBack) },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
+            if (list.isEmpty()) {
+                EmptyState(
+                    Icons.Filled.Notifications,
+                    "لا توجد تنبيهات توفر",
+                    "اضغط «أعلمني عند التوفر» في صفحة منتج نفدت كميته وسنُعلمك عند توفره",
+                    modifier = Modifier.padding(padding),
+                )
+            } else {
+                LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(list, key = { it.variantId }) { a ->
+                        val slug = a.productSlug?.takeIf { it.isNotBlank() }
+                        GlassRow(
+                            title = a.productName ?: "منتج",
+                            subtitle = listOfNotNull(a.color, a.size?.let { "مقاس $it" }).joinToString(" · ").ifBlank { null },
+                            leading = { GoldIconCircle(Icons.Filled.Notifications, size = 36.dp) },
+                            trailing = {
+                                IconButton(onClick = { vm.remove(a) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "إزالة التنبيه", tint = Liquid.InkSoft)
+                                }
+                            },
+                            onClick = slug?.let { s -> { openProduct(s) } },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 // -------------------------------------------------------------- addresses ---

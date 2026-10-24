@@ -67,6 +67,9 @@ object InboxChecker {
             .putExtra(MainActivity.EXTRA_ORDER, data["order"])
             .putExtra(MainActivity.EXTRA_TOP_UP, data["topUp"])
             .putExtra(MainActivity.EXTRA_PRODUCT, data["product"])
+            .putExtra(MainActivity.EXTRA_ORDER_NUMBER, data["orderNumber"])
+            .putExtra(MainActivity.EXTRA_PRODUCT_SLUG, data["productSlug"])
+            .putExtra(MainActivity.EXTRA_SCREEN, data["screen"])
         val tap = PendingIntent.getActivity(
             context,
             n.id.hashCode(),

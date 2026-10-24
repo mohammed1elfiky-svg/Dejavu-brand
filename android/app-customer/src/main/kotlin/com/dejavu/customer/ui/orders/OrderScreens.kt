@@ -8,7 +8,25 @@ import com.dejavu.core.ui.theme.GoldBadge
 import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.customer.ui.components.GoldIconCircle
 import androidx.compose.ui.text.font.FontWeight
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.dejavu.core.data.userMessage
+import com.dejavu.customer.ui.appContainer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -245,6 +263,9 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
                         }
                     }
                 }
+                order.shippingReceiptFileId?.takeIf { it.isNotBlank() }?.let { fileId ->
+                    item { ShippingReceiptCard(fileId) }
+                }
                 item { SectionTitle("المنتجات") }
                 items(order.items, key = { it.id }) { item ->
                     GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
@@ -321,6 +342,79 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
             onConfirm = { askCancel = false; vm.cancel(it) },
         )
     }
+}
+
+/** Photo of the shipping receipt (سند الإرسال) the store sent; a tap shows it full screen. */
+@Composable
+private fun ShippingReceiptCard(fileId: String) {
+    val container = appContainer()
+    var attempt by remember { mutableStateOf(0) }
+    var enlarged by remember { mutableStateOf(false) }
+    // Private to the customer: loaded with their token, not as a public image URL.
+    val image by produceState<Load<ImageBitmap>>(Load.Loading, fileId, attempt) {
+        value = Load.Loading
+        val bytes = container.privateFile(fileId).getOrElse {
+            value = Load.Failed(it.userMessage())
+            return@produceState
+        }
+        val bitmap = withContext(Dispatchers.Default) { decodeScaled(bytes) }
+        value = if (bitmap != null) Load.Ready(bitmap) else Load.Failed("تعذّر عرض صورة سند الإرسال")
+    }
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text("سند الإرسال", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+        Spacer(Modifier.height(8.dp))
+        when (val state = image) {
+            Load.Loading -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Liquid.Gold)
+            }
+            is Load.Failed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                TextButton(onClick = { attempt++ }) { Text("إعادة المحاولة", color = Liquid.GoldDeep) }
+            }
+            is Load.Ready -> {
+                Image(
+                    bitmap = state.value,
+                    contentDescription = "سند الإرسال",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(14.dp)).clickable { enlarged = true },
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("اضغط على الصورة لتكبيرها", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+
+    val ready = image as? Load.Ready
+    if (enlarged && ready != null) {
+        Dialog(onDismissRequest = { enlarged = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)).clickable { enlarged = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    bitmap = ready.value,
+                    contentDescription = "سند الإرسال",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                )
+                IconButton(onClick = { enlarged = false }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "إغلاق", tint = Color.White)
+                }
+            }
+        }
+    }
+}
+
+/** Decodes a photo, scaled down so its longer side stays within [maxSide] pixels. */
+private fun decodeScaled(bytes: ByteArray, maxSide: Int = 2048): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
 }
 
 @Composable

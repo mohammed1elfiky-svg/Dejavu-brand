@@ -19,9 +19,15 @@ class PushService : DejavuMessagingService() {
             .putExtra(MainActivity.EXTRA_ORDER, data["order"])
             .putExtra(MainActivity.EXTRA_TOP_UP, data["topUp"])
             .putExtra(MainActivity.EXTRA_PRODUCT, data["product"])
+            .putExtra(MainActivity.EXTRA_ORDER_NUMBER, data["orderNumber"])
+            .putExtra(MainActivity.EXTRA_PRODUCT_SLUG, data["productSlug"])
+            .putExtra(MainActivity.EXTRA_SCREEN, data["screen"])
         val tap = PendingIntent.getActivity(
             this,
-            (data["order"] ?: data["topUp"] ?: data["product"] ?: data["promotion"] ?: data["notificationId"]).hashCode(),
+            (
+                data["order"] ?: data["orderNumber"] ?: data["topUp"] ?: data["product"] ?: data["productSlug"]
+                    ?: data["promotion"] ?: data["screen"] ?: data["notificationId"]
+                ).hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

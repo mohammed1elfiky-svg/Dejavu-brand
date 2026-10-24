@@ -88,6 +88,10 @@ import com.dejavu.core.admin.BankAccountRequest
 import com.dejavu.core.admin.CashBox
 import com.dejavu.core.admin.CashBoxKind
 import com.dejavu.core.admin.FinanceRepository
+import com.dejavu.core.admin.InventoryRepository
+import com.dejavu.core.ui.CurrencyArt
+import com.dejavu.core.ui.media.rememberImagePicker
+import coil3.compose.AsyncImage
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.TreasuryRepository
@@ -582,19 +586,41 @@ private fun ApproveDialog(t: AdminTopUp, vm: TopUpViewModel, onDismiss: () -> Un
 
 // ---------------------------------------------------------- bank accounts ---
 
-class BankAccountsViewModel(private val repo: WalletAdminRepository, private val finance: FinanceRepository) : BaseViewModel() {
+class BankAccountsViewModel(
+    private val repo: WalletAdminRepository,
+    private val finance: FinanceRepository,
+    private val inventory: InventoryRepository,
+) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<StoreBankAccount>>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _currencies = MutableStateFlow(listOf(Currency.SAR, Currency.YER))
     val currencies = _currencies.asStateFlow()
+    /** Uploaded picture of each currency (code → url). */
+    private val _currencyImages = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val currencyImages = _currencyImages.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _uploading = MutableStateFlow(false)
+    val uploading = _uploading.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch {
-            finance.activeCurrencies().getOrNull()?.let { c -> _currencies.value = c.register().map { it.fresh } }
+            finance.activeCurrencies().getOrNull()?.let { c ->
+                _currencies.value = c.register().map { it.fresh }
+                _currencyImages.value = c.currencies.associate { it.code.code to it.imageUrl }
+            }
             _state.value = repo.bankAccounts().toLoad()
+        }
+    }
+
+    /** Uploads the account's picture and hands back its URL (saved with the account later). */
+    fun uploadPicture(bytes: ByteArray, done: (String) -> Unit) {
+        if (_uploading.value) return
+        _uploading.value = true
+        viewModelScope.launch {
+            inventory.uploadImage(bytes).orSay()?.let { done(it.url) }
+            _uploading.value = false
         }
     }
 
@@ -627,15 +653,18 @@ private fun StoreBankAccount.toRequest() = BankAccountRequest(
     iban = iban,
     instructions = instructions,
     isActive = isActive,
+    currencies = accepted,
 )
 
 /** Store bank accounts shown to customers for deposits. */
 @Composable
 fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel { BankAccountsViewModel(it.wallet, it.finance) }
+    val vm = adminViewModel { BankAccountsViewModel(it.wallet, it.finance, it.inventory) }
     val state by vm.state.collectAsStateWithLifecycle()
     val currencies by vm.currencies.collectAsStateWithLifecycle()
+    val currencyImages by vm.currencyImages.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val uploading by vm.uploading.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val canEdit = session.can(Perm.SETTINGS_MANAGE)
     var editing by remember { mutableStateOf<StoreBankAccount?>(null) }
@@ -678,27 +707,62 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                 ) {
                     if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     items(list, key = { it.id }) { a ->
-                        BankAccountCard(a, canEdit, busy, onEdit = { editing = a }, onActive = { vm.setActive(a, it) })
+                        BankAccountCard(a, canEdit, busy, currencyImages, onEdit = { editing = a }, onActive = { vm.setActive(a, it) })
                     }
                 }
             }
         }
     }
 
-    if (adding) BankAccountDialog(null, currencies, busy, onDismiss = { adding = false }) { req -> vm.save(null, req) { adding = false } }
-    editing?.let { a -> BankAccountDialog(a, currencies, busy, onDismiss = { editing = null }) { req -> vm.save(a, req) { editing = null } } }
+    if (adding) {
+        BankAccountDialog(null, currencies, currencyImages, busy, uploading, vm::uploadPicture, onDismiss = { adding = false }) { req ->
+            vm.save(null, req) { adding = false }
+        }
+    }
+    editing?.let { a ->
+        BankAccountDialog(a, currencies, currencyImages, busy, uploading, vm::uploadPicture, onDismiss = { editing = null }) { req ->
+            vm.save(a, req) { editing = null }
+        }
+    }
 }
 
 @Composable
-private fun BankAccountCard(a: StoreBankAccount, canEdit: Boolean, busy: Boolean, onEdit: () -> Unit, onActive: (Boolean) -> Unit) {
+private fun BankAccountCard(
+    a: StoreBankAccount,
+    canEdit: Boolean,
+    busy: Boolean,
+    currencyImages: Map<String, String?>,
+    onEdit: () -> Unit,
+    onActive: (Boolean) -> Unit,
+) {
     val cur = a.currency.fresh
     GlassCard(Modifier.fillMaxWidth(), onClick = if (canEdit) onEdit else null) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!a.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = a.imageUrl,
+                    contentDescription = a.bankName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Lux.Champagne),
+                )
+            }
             Column(Modifier.weight(1f)) {
                 Text(a.bankName, style = MaterialTheme.typography.titleMedium)
                 Text(a.accountName, style = MaterialTheme.typography.bodyMedium)
             }
             GoldPill { Text(cur.nameAr, color = Color.White, style = MaterialTheme.typography.labelMedium) }
+        }
+        FlowRow(
+            Modifier.padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            a.accepted.forEach { code ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CurrencyArt(code, currencyImages[code], height = 18.dp)
+                    Text(Currency.of(code).nameAr, style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                }
+            }
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Lux.Hairline)
         SummaryRow("رقم الحساب", a.accountNumber)
@@ -715,7 +779,10 @@ private fun BankAccountCard(a: StoreBankAccount, canEdit: Boolean, busy: Boolean
 private fun BankAccountDialog(
     existing: StoreBankAccount?,
     currencies: List<Currency>,
+    currencyImages: Map<String, String?>,
     busy: Boolean,
+    uploading: Boolean,
+    onUpload: (ByteArray, (String) -> Unit) -> Unit,
     onDismiss: () -> Unit,
     onSave: (BankAccountRequest) -> Unit,
 ) {
@@ -724,10 +791,16 @@ private fun BankAccountDialog(
     var accountNumber by rememberSaveable { mutableStateOf(existing?.accountNumber.orEmpty()) }
     var iban by rememberSaveable { mutableStateOf(existing?.iban.orEmpty()) }
     var instructions by rememberSaveable { mutableStateOf(existing?.instructions.orEmpty()) }
-    var currencyCode by rememberSaveable { mutableStateOf(existing?.currency?.code ?: currencies.firstOrNull()?.code ?: Currency.SAR.code) }
+    // Selected currencies in the order picked (the first is the main one), kept as "SAR,YER".
+    var codesText by rememberSaveable {
+        mutableStateOf((existing?.accepted ?: listOf(currencies.firstOrNull()?.code ?: Currency.SAR.code)).joinToString(","))
+    }
+    val codes = codesText.split(",").filter { it.isNotBlank() }
+    var image by rememberSaveable { mutableStateOf(existing?.imageUrl?.takeIf { it.isNotBlank() }) }
     var active by rememberSaveable { mutableStateOf(existing?.isActive ?: true) }
-    val options = (currencies + listOfNotNull(existing?.currency?.fresh)).distinctBy { it.code }
-    val valid = bankName.trim().length >= 2 && accountName.trim().length >= 2 && accountNumber.trim().length >= 3
+    val options = (currencies + codes.map { Currency.of(it).fresh }).distinctBy { it.code }
+    val picker = rememberImagePicker { bytes -> onUpload(bytes) { url -> image = url } }
+    val valid = bankName.trim().length >= 2 && accountName.trim().length >= 2 && accountNumber.trim().length >= 3 && codes.isNotEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "حساب بنكي جديد" else "تعديل الحساب") },
@@ -744,10 +817,44 @@ private fun BankAccountDialog(
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("العملة", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("العملات التي يستقبلها الحساب", style = MaterialTheme.typography.labelLarge)
+                Text("أول عملة تختارها هي العملة الرئيسية.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     options.forEach { c ->
-                        FilterChip(selected = c.code == currencyCode, onClick = { currencyCode = c.code }, label = { Text(c.nameAr) })
+                        val selected = c.code in codes
+                        val main = codes.firstOrNull() == c.code
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                codesText = (if (selected) codes - c.code else codes + c.code).joinToString(",")
+                            },
+                            leadingIcon = { CurrencyArt(c.code, currencyImages[c.code], height = 16.dp) },
+                            label = { Text(if (main) "${c.nameAr} · رئيسية" else c.nameAr) },
+                        )
+                    }
+                }
+                Text("صورة الحساب (اختياري)", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)).background(Lux.Champagne),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val url = image
+                        if (url != null) {
+                            AsyncImage(model = url, contentDescription = "صورة الحساب", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        }
+                        if (uploading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    }
+                    Column {
+                        Row {
+                            TextButton(onClick = picker.fromCamera, enabled = !uploading) { Text("تصوير") }
+                            TextButton(onClick = picker.fromGallery, enabled = !uploading) { Text("من المعرض") }
+                        }
+                        if (image != null) {
+                            TextButton(onClick = { image = null }, enabled = !uploading) {
+                                Text("إزالة الصورة", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -758,17 +865,20 @@ private fun BankAccountDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = valid && !busy,
+                enabled = valid && !busy && !uploading,
                 onClick = {
                     onSave(
                         BankAccountRequest(
                             bankName = bankName.trim(),
                             accountName = accountName.trim(),
                             accountNumber = accountNumber.trim(),
-                            currency = Currency.of(currencyCode),
+                            currency = Currency.of(codes.first()),
                             iban = iban.trim().ifBlank { null },
                             instructions = instructions.trim().ifBlank { null },
                             isActive = active,
+                            currencies = codes,
+                            // "" removes a picture the account had.
+                            imageUrl = image ?: if (existing?.imageUrl.isNullOrBlank()) null else "",
                         ),
                     )
                 },

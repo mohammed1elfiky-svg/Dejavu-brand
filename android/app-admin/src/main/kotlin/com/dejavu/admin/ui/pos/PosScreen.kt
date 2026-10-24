@@ -120,6 +120,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathBuilder
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import android.widget.Toast
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -1159,6 +1166,19 @@ fun PosScreen(
             printStatus = result.fold({ "تمت طباعة الفاتورة ✓" }, { it.message ?: "تعذّرت الطباعة" })
         }
     }
+    // WhatsApp: the receipt as a PDF, straight to the customer's chat when the phone is known.
+    var sharing by remember { mutableStateOf(false) }
+    fun sendWhatsApp(r: PosReceipt) {
+        if (sharing) return
+        sharing = true
+        printScope.launch {
+            runCatching {
+                val file = receiptPdf(context, r)
+                shareReceiptToWhatsApp(context, file, r.customer?.phone, "فاتورة DEJAVU رقم ${r.number}")
+            }.onFailure { printStatus = "تعذّر إنشاء ملف الفاتورة" }
+            sharing = false
+        }
+    }
     LaunchedEffect(vm.receipt?.id) {
         printStatus = null
         val r = vm.receipt ?: return@LaunchedEffect
@@ -1191,7 +1211,7 @@ fun PosScreen(
                             )
                         }
                     }
-                    TextButton(onClick = scan, enabled = !arranging) { Text("باركود") }
+                    BarIcon(BarcodeIcon, "مسح الباركود", enabled = !arranging, onClick = scan)
                     if (canArrange) {
                         IconButton(onClick = {
                             if (!arranging && vm.query.isNotBlank()) vm.search("")
@@ -1210,7 +1230,7 @@ fun PosScreen(
                     }
                     IconButton(onClick = openReturns, enabled = !arranging) { Icon(Icons.Filled.Refresh, contentDescription = "مرتجع / استبدال") }
                     IconButton(onClick = vm::loadShift) { Icon(Icons.Filled.DateRange, contentDescription = "ملخص الوردية") }
-                    if (openShift != null) TextButton(onClick = openShift) { Text("الوردية") }
+                    if (openShift != null) BarIcon(ShiftIcon, "الوردية: فتح / إغلاق", onClick = openShift)
                     IconButton(onClick = openBoxes) { Icon(Icons.Filled.Lock, contentDescription = "الصناديق") }
                     if (openPrinters != null) IconButton(onClick = openPrinters) { Icon(Icons.Filled.Settings, contentDescription = "الطابعات") }
                     if (onLogout != null) {
@@ -1327,6 +1347,7 @@ fun PosScreen(
                 showSales = false
                 vm.startEdit(r)
             },
+            onWhatsApp = { r -> sendWhatsApp(r) },
         )
     }
 
@@ -1351,6 +1372,8 @@ fun PosScreen(
             printing = printing,
             printStatus = printStatus,
             onPrint = { printReceipt(r) },
+            sharing = sharing,
+            onWhatsApp = { sendWhatsApp(r) },
         )
     }
 
@@ -1363,6 +1386,8 @@ fun PosScreen(
             printing = printing,
             printStatus = printStatus,
             onPrint = { printReceipt(r) },
+            sharing = sharing,
+            onWhatsApp = { sendWhatsApp(r) },
         )
     }
 
@@ -2069,13 +2094,13 @@ private fun CartLineRow(l: CartLine, vm: PosViewModel, inv: Currency, rate: BigD
 @Composable
 private fun PayMethodSection(vm: PosViewModel, buttons: List<CheckoutButton>) {
     if (buttons.isNotEmpty()) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             buttons.forEach { b ->
                 val method = b.payMethod
                 if (method != null) {
-                    SmallChip(b.label, selected = vm.payMethod == method) { vm.pickPayMethod(method) }
+                    PayTile(b.label, payIcon(b), selected = vm.payMethod == method, modifier = Modifier.weight(1f)) { vm.pickPayMethod(method) }
                 } else {
-                    SmallChip(b.label, selected = vm.saleType == SaleType.CREDIT, onClick = vm::toggleCredit)
+                    PayTile(b.label, payIcon(b), selected = vm.saleType == SaleType.CREDIT, modifier = Modifier.weight(1f), onClick = vm::toggleCredit)
                 }
             }
         }
@@ -2106,6 +2131,149 @@ private fun PayMethodSection(vm: PosViewModel, buttons: List<CheckoutButton>) {
                 }
             }
         }
+    }
+}
+
+private fun payIcon(b: CheckoutButton): ImageVector = when (b) {
+    CheckoutButton.CASH -> CashIcon
+    CheckoutButton.TRANSFER -> BankIcon
+    CheckoutButton.DEPOSIT -> SlipIcon
+    else -> CreditIcon
+}
+
+/** Big payment-method tile: a 32dp icon over its label, gold when selected. */
+@Composable
+private fun PayTile(label: String, icon: ImageVector, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier
+            .heightIn(min = 76.dp)
+            .clip(shape)
+            .background(if (selected) Lux.Gold.copy(alpha = 0.22f) else Lux.Champagne.copy(alpha = 0.6f))
+            .border(if (selected) 2.dp else 1.dp, if (selected) Lux.GoldDeep else Lux.Hairline, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (selected) Lux.GoldDeep else Lux.InkSoft, modifier = Modifier.size(32.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) Lux.GoldDeep else Lux.Ink,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Top-bar icon button; a long press shows its [label]. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BarIcon(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val context = LocalContext.current
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                enabled = enabled,
+                onClickLabel = label,
+                onLongClick = { Toast.makeText(context, label, Toast.LENGTH_SHORT).show() },
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = label, tint = Lux.Ink, modifier = Modifier.size(24.dp).alpha(if (enabled) 1f else 0.38f))
+    }
+}
+
+// Simple line icons (material-icons-core has no cash / bank / barcode glyphs).
+
+private fun lineIcon(name: String, build: PathBuilder.() -> Unit): ImageVector =
+    ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
+        .path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.8f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+            pathBuilder = build,
+        )
+        .build()
+
+/** A circle of radius [r] around ([cx], [cy]) as two arcs. */
+private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
+    moveTo(cx - r, cy)
+    arcTo(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, x1 = cx + r, y1 = cy)
+    arcTo(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, x1 = cx - r, y1 = cy)
+    close()
+}
+
+private val CashIcon: ImageVector by lazy {
+    lineIcon("cash") {
+        moveTo(2.5f, 6.5f); lineTo(21.5f, 6.5f); lineTo(21.5f, 17.5f); lineTo(2.5f, 17.5f); close()
+        circle(12f, 12f, 3f)
+        moveTo(5.5f, 9.5f); lineTo(5.5f, 9.5f)
+        moveTo(18.5f, 14.5f); lineTo(18.5f, 14.5f)
+    }
+}
+
+private val CreditIcon: ImageVector by lazy {
+    lineIcon("credit") {
+        // Hourglass: paid later.
+        moveTo(6.5f, 3f); lineTo(17.5f, 3f)
+        moveTo(6.5f, 21f); lineTo(17.5f, 21f)
+        moveTo(7.5f, 3f); lineTo(7.5f, 6.5f); lineTo(12f, 12f); lineTo(7.5f, 17.5f); lineTo(7.5f, 21f)
+        moveTo(16.5f, 3f); lineTo(16.5f, 6.5f); lineTo(12f, 12f); lineTo(16.5f, 17.5f); lineTo(16.5f, 21f)
+        moveTo(10f, 18.5f); lineTo(14f, 18.5f)
+    }
+}
+
+private val BankIcon: ImageVector by lazy {
+    lineIcon("bank") {
+        moveTo(3f, 9f); lineTo(12f, 4f); lineTo(21f, 9f); close()
+        moveTo(6f, 11.5f); lineTo(6f, 17f)
+        moveTo(10f, 11.5f); lineTo(10f, 17f)
+        moveTo(14f, 11.5f); lineTo(14f, 17f)
+        moveTo(18f, 11.5f); lineTo(18f, 17f)
+        moveTo(3f, 20f); lineTo(21f, 20f)
+    }
+}
+
+private val SlipIcon: ImageVector by lazy {
+    lineIcon("slip") {
+        moveTo(6f, 3f); lineTo(14.5f, 3f); lineTo(18.5f, 7f); lineTo(18.5f, 21f); lineTo(6f, 21f); close()
+        moveTo(14.5f, 3f); lineTo(14.5f, 7f); lineTo(18.5f, 7f)
+        moveTo(9f, 11f); lineTo(15.5f, 11f)
+        moveTo(9f, 14.5f); lineTo(15.5f, 14.5f)
+        moveTo(9f, 18f); lineTo(12.5f, 18f)
+    }
+}
+
+private val BarcodeIcon: ImageVector by lazy {
+    lineIcon("barcode") {
+        // Scan frame corners.
+        moveTo(3f, 8f); lineTo(3f, 4f); lineTo(7f, 4f)
+        moveTo(17f, 4f); lineTo(21f, 4f); lineTo(21f, 8f)
+        moveTo(21f, 16f); lineTo(21f, 20f); lineTo(17f, 20f)
+        moveTo(7f, 20f); lineTo(3f, 20f); lineTo(3f, 16f)
+        // Bars.
+        moveTo(7f, 8f); lineTo(7f, 16f)
+        moveTo(10f, 8f); lineTo(10f, 16f)
+        moveTo(12.5f, 8f); lineTo(12.5f, 16f)
+        moveTo(15f, 8f); lineTo(15f, 16f)
+        moveTo(17.5f, 8f); lineTo(17.5f, 16f)
+    }
+}
+
+private val ShiftIcon: ImageVector by lazy {
+    lineIcon("shift") {
+        circle(12f, 12f, 9f)
+        moveTo(12f, 7f); lineTo(12f, 12f); lineTo(15.5f, 14f)
     }
 }
 
@@ -2431,6 +2599,8 @@ private fun ReceiptDialog(
     printing: Boolean,
     printStatus: String?,
     onPrint: () -> Unit,
+    sharing: Boolean = false,
+    onWhatsApp: (() -> Unit)? = null,
 ) {
     val cur = r.currency
     fun inCur(v: String) = Money.plain(Money.parse(v), cur)
@@ -2478,6 +2648,19 @@ private fun ReceiptDialog(
                     SummaryRow("على حساب العميل", r.inInvoiceCurrency(r.onAccount), valueColor = Lux.GoldDeep)
                 }
                 printStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft, modifier = Modifier.padding(top = 6.dp)) }
+                if (onWhatsApp != null) {
+                    OutlinedButton(
+                        onClick = onWhatsApp,
+                        enabled = !sharing,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    ) {
+                        Text(if (sharing) "جارٍ تجهيز الفاتورة…" else "إرسال واتساب", color = WhatsAppGreen)
+                    }
+                    if (r.customer?.phone.isNullOrBlank()) {
+                        Text("لا يوجد رقم للعميل؛ ستختار المحادثة في واتساب.", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                    }
+                }
             }
         },
         confirmButton = {

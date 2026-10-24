@@ -113,6 +113,8 @@ import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.ReportSection
 import com.dejavu.core.admin.RevenueReport
 import com.dejavu.core.admin.SalesReport
+import com.dejavu.core.admin.StaffReport
+import com.dejavu.core.ui.CurrencyArt
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.UpdateCustomerRequest
 import com.dejavu.core.data.userMessage
@@ -339,6 +341,8 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
     val productsReport = _productsReport.asStateFlow()
     private val _reorderReport = MutableStateFlow<Load<ReorderReport>>(Load.Loading)
     val reorderReport = _reorderReport.asStateFlow()
+    private val _staffReport = MutableStateFlow<Load<StaffReport>>(Load.Loading)
+    val staffReport = _staffReport.asStateFlow()
     private val _range = MutableStateFlow(Period.THIS_MONTH.range())
 
     /** The dates every period report covers. */
@@ -362,6 +366,7 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
         _sales.value = Load.Loading
         _revenue.value = Load.Loading
         _productsReport.value = Load.Loading
+        _staffReport.value = Load.Loading
     }
 
     internal fun setGroup(g: SalesGroup) {
@@ -407,6 +412,11 @@ class ReportsViewModel(private val repo: DashboardRepository, private val invent
         }
     }
 
+    fun loadStaff() {
+        val r = _range.value
+        viewModelScope.launch { repo.staff(r.fromIso, r.toIso).toLoad().let { if (r == _range.value) _staffReport.value = it } }
+    }
+
     fun loadReorder() {
         val cover = coverDays
         viewModelScope.launch { repo.reorder(coverDays = cover).toLoad().let { if (cover == coverDays) _reorderReport.value = it } }
@@ -427,6 +437,8 @@ private const val PRODUCTS_TAB = "الأصناف"
 
 private const val REORDER_TAB = "إعادة الطلب"
 
+private const val STAFF_TAB = "الموظفون"
+
 @Composable
 fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val vm = adminViewModel { ReportsViewModel(it.dashboard, it.inventory) }
@@ -439,6 +451,7 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             add(SALES_TAB)
             add(REVENUE_TAB)
             add(PRODUCTS_TAB)
+            add(STAFF_TAB)
         }
         if (session.can(REPORTS_INVENTORY)) add(REORDER_TAB)
         if (session.can(REPORTS_INVENTORY) || session.can(Perm.REPORTS_FINANCIAL)) add(INVENTORY_TAB)
@@ -466,6 +479,7 @@ fun ReportsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                 REVENUE_TAB -> RevenueTab(vm, range)
                 PRODUCTS_TAB -> ProductsTab(vm, range)
                 REORDER_TAB -> ReorderTab(vm)
+                STAFF_TAB -> StaffTab(vm, range)
                 else -> SalesTab(vm, range)
             }
         }
@@ -644,6 +658,81 @@ private fun RevenueTab(vm: ReportsViewModel, range: ReportRange) {
                 InfoCard {
                     Text("مبيعات التاجرات (الكاشير + التطبيق)", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                     RevenueCellRows(r.merchants)
+                }
+            }
+        }
+    }
+}
+
+/** Each cashier's period: invoices, revenue, profit, discounts, deleted invoices and shift over / short. */
+@Composable
+private fun StaffTab(vm: ReportsViewModel, range: ReportRange) {
+    val state by vm.staffReport.collectAsStateWithLifecycle()
+    LaunchedEffect(range) { vm.loadStaff() }
+    LoadContent(state, onRetry = vm::loadStaff) { r ->
+        if (r.staff.isEmpty()) {
+            EmptyState(Icons.Filled.Person, "لا توجد مبيعات للموظفين في هذه الفترة")
+        } else {
+            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    Text(
+                        "من ${r.from.take(10)} إلى ${r.to.take(10)} · المبالغ بالريال السعودي",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Lux.InkSoft,
+                    )
+                }
+                items(r.staff, key = { it.user.id ?: it.user.name }) { row -> StaffCard(row) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StaffCard(row: StaffReport.Row) {
+    InfoCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(row.user.name, style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep, modifier = Modifier.weight(1f))
+            Text("${row.invoices} فاتورة", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
+        SummaryRow("الإيراد", Money.formatBase(row.revenue), strong = true)
+        SummaryRow("مجمل الربح", Money.formatBase(row.grossProfit), valueColor = signColor(row.grossProfit))
+        SummaryRow("متوسط الفاتورة", Money.formatBase(row.averageInvoice))
+        SummaryRow("الخصومات", Money.formatBase(row.discounts))
+        SummaryRow(
+            "الفواتير المحذوفة",
+            "${row.voided}",
+            strong = row.voided > 0,
+            valueColor = if (row.voided > 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+        )
+        SummaryRow("الورديات المغلقة", "${row.closedShifts}")
+        if (row.shiftDifferences.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Lux.Hairline)
+            Text("فروقات الورديات (زيادة / عجز)", style = MaterialTheme.typography.titleSmall)
+            row.shiftDifferences.forEach { d ->
+                val amount = Money.parse(d.difference)
+                val cur = Currency.of(d.currency)
+                val color = when {
+                    amount.signum() > 0 -> Success
+                    amount.signum() < 0 -> MaterialTheme.colorScheme.error
+                    else -> Lux.InkSoft
+                }
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CurrencyArt(d.currency, height = 18.dp)
+                    Text(
+                        when {
+                            amount.signum() > 0 -> "زيادة"
+                            amount.signum() < 0 -> "عجز"
+                            else -> "مطابق"
+                        } + " · ${cur.nameAr}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Text(
+                        (if (amount.signum() > 0) "+" else if (amount.signum() < 0) "−" else "") + Money.plain(amount.abs(), cur),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = color,
+                    )
                 }
             }
         }

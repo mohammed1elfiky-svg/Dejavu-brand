@@ -63,6 +63,33 @@ import com.dejavu.admin.ui.actionLabel
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.AdminOrderDetail
+import com.dejavu.core.admin.WalletAdminRepository
+import com.dejavu.admin.ui.theme.Lux
+import com.dejavu.core.ui.media.rememberImagePicker
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.dejavu.core.admin.AdminOrderRepository
 import com.dejavu.core.admin.AdminOrderSummary
 import com.dejavu.core.admin.AdminReturnDetail
@@ -178,19 +205,79 @@ private fun OrderRow(o: AdminOrderSummary, onClick: () -> Unit) {
 
 // ------------------------------------------------------------ order detail ---
 
-class OrderDetailViewModel(private val id: String, private val repo: AdminOrderRepository) : BaseViewModel() {
+class OrderDetailViewModel(
+    private val id: String,
+    private val repo: AdminOrderRepository,
+    private val files: WalletAdminRepository,
+) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<AdminOrderDetail>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    /** Photo of the shipping receipt (سند الإرسال); null while the order has none. */
+    private val _shipPhoto = MutableStateFlow<Load<ImageBitmap>?>(null)
+    val shipPhoto = _shipPhoto.asStateFlow()
+    private var shipPhotoFor: String? = null
+    private val _sendingReceipt = MutableStateFlow(false)
+    val sendingReceipt = _sendingReceipt.asStateFlow()
+    /** Set right after the order is marked shipped: offer to photograph the shipping receipt. */
+    private val _suggestReceipt = MutableStateFlow(false)
+    val suggestReceipt = _suggestReceipt.asStateFlow()
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
-        viewModelScope.launch { _state.value = repo.get(id).toLoad() }
+        viewModelScope.launch {
+            val res = repo.get(id)
+            _state.value = res.toLoad()
+            res.getOrNull()?.let { loadShipPhoto(it.shippingReceiptFileId) }
+        }
+    }
+
+    fun loadShipPhoto(fileId: String?, force: Boolean = false) {
+        if (fileId == null) {
+            shipPhotoFor = null
+            _shipPhoto.value = null
+            return
+        }
+        if (!force && shipPhotoFor == fileId && _shipPhoto.value is Load.Ready) return
+        shipPhotoFor = fileId
+        _shipPhoto.value = Load.Loading
+        viewModelScope.launch {
+            _shipPhoto.value = files.receipt(fileId).fold(
+                onSuccess = { data ->
+                    val image = withContext(Dispatchers.Default) {
+                        runCatching { BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap() }.getOrNull()
+                    }
+                    if (image != null) Load.Ready(image) else Load.Failed("تعذّر عرض صورة السند")
+                },
+                onFailure = { Result.failure<ImageBitmap>(it).toLoad() },
+            )
+        }
+    }
+
+    /** Uploads the photo of the shipping receipt; the customer is notified and sees it on the order. */
+    fun sendShippingReceipt(bytes: ByteArray) {
+        if (_sendingReceipt.value) return
+        _sendingReceipt.value = true
+        _suggestReceipt.value = false
+        viewModelScope.launch {
+            repo.sendShippingReceipt(id, bytes).orSay()?.let {
+                _state.value = Load.Ready(it)
+                say("أُرسل سند الإرسال للعميل")
+                loadShipPhoto(it.shippingReceiptFileId, force = true)
+            }
+            _sendingReceipt.value = false
+        }
+    }
+
+    fun dismissReceiptSuggestion() {
+        _suggestReceipt.value = false
     }
 
     fun changeStatus(status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null) =
-        act("تم: ${status.label}") { repo.changeStatus(id, status, note, carrier, tracking) }
+        act("تم: ${status.label}", then = { o -> if (status == OrderStatus.SHIPPED && o.isAppOrder) { _suggestReceipt.value = true } }) {
+            repo.changeStatus(id, status, note, carrier, tracking)
+        }
 
     fun pay(amount: String, method: PaymentMethod, reference: String, currency: Currency) =
         act("تم تسجيل الدفعة") { repo.recordPayment(id, method, amount, reference, currency = currency) }
@@ -198,18 +285,22 @@ class OrderDetailViewModel(private val id: String, private val repo: AdminOrderR
     fun refund(amount: String, method: PaymentMethod, reason: String, currency: Currency) =
         act("تم رد المبلغ") { repo.refund(id, method, amount, reason, currency = currency) }
 
-    private fun act(done: String, block: suspend () -> Result<AdminOrderDetail>) {
+    private fun act(done: String, then: (AdminOrderDetail) -> Unit = {}, block: suspend () -> Result<AdminOrderDetail>) {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
             block().orSay()?.let {
                 _state.value = Load.Ready(it)
                 say(done)
+                then(it)
             }
             _busy.value = false
         }
     }
 }
+
+/** Ordered in the customer app (till sales are numbered POS-…). */
+private val AdminOrderDetail.isAppOrder: Boolean get() = !number.startsWith("POS-")
 
 private sealed interface OrderDialog {
     data class Confirm(val status: OrderStatus) : OrderDialog
@@ -223,9 +314,14 @@ private sealed interface OrderDialog {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit, openReturn: (String) -> Unit) {
-    val vm = adminViewModel(key = "order:$id") { OrderDetailViewModel(id, it.orders) }
+    val vm = adminViewModel(key = "order:$id") { OrderDetailViewModel(id, it.orders, it.wallet) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val shipPhoto by vm.shipPhoto.collectAsStateWithLifecycle()
+    val sendingReceipt by vm.sendingReceipt.collectAsStateWithLifecycle()
+    val suggestReceipt by vm.suggestReceipt.collectAsStateWithLifecycle()
+    val receiptPicker = rememberImagePicker { bytes -> vm.sendShippingReceipt(bytes) }
+    var zoom by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     var dialog by remember { mutableStateOf<OrderDialog?>(null) }
     CollectMessages(vm, snackbar)
@@ -334,6 +430,20 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                         SummaryRow("مجمل الربح", Money.format(o.profit.grossProfit), strong = true)
                     }
                 }
+                if (o.isAppOrder && (session.can(Perm.ORDERS_UPDATE) || o.shippingReceiptFileId != null)) {
+                    item {
+                        ShippingReceiptCard(
+                            hasReceipt = o.shippingReceiptFileId != null,
+                            photo = shipPhoto,
+                            canSend = session.can(Perm.ORDERS_UPDATE),
+                            sending = sendingReceipt,
+                            onCamera = receiptPicker.fromCamera,
+                            onGallery = receiptPicker.fromGallery,
+                            onRetry = { vm.loadShipPhoto(o.shippingReceiptFileId, force = true) },
+                            onZoom = { zoom = true },
+                        )
+                    }
+                }
                 if (o.shipments.isNotEmpty()) {
                     item {
                         InfoCard {
@@ -414,6 +524,101 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                     onConfirmIn = { amount, method, reason, currency -> vm.refund(amount, method, reason, currency) },
                 )
                 null -> {}
+            }
+
+            if (suggestReceipt && o.isAppOrder) {
+                AlertDialog(
+                    onDismissRequest = vm::dismissReceiptSuggestion,
+                    title = { Text("تصوير سند الإرسال") },
+                    text = { Text("تم شحن الطلب. صوّر سند الإرسال الآن ليصل للعميل ويراه في التطبيق.") },
+                    confirmButton = {
+                        TextButton(onClick = { vm.dismissReceiptSuggestion(); receiptPicker.fromCamera() }) { Text("تصوير") }
+                    },
+                    dismissButton = {
+                        Row {
+                            TextButton(onClick = { vm.dismissReceiptSuggestion(); receiptPicker.fromGallery() }) { Text("من المعرض") }
+                            TextButton(onClick = vm::dismissReceiptSuggestion) { Text("لاحقاً") }
+                        }
+                    },
+                )
+            }
+        }
+    }
+    val image = (shipPhoto as? Load.Ready)?.value
+    if (zoom && image != null) PhotoZoomDialog(image) { zoom = false }
+}
+
+/** "سند الإرسال": the photo sent to the customer (tap to enlarge), with take / replace. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShippingReceiptCard(
+    hasReceipt: Boolean,
+    photo: Load<ImageBitmap>?,
+    canSend: Boolean,
+    sending: Boolean,
+    onCamera: () -> Unit,
+    onGallery: () -> Unit,
+    onRetry: () -> Unit,
+    onZoom: () -> Unit,
+) {
+    InfoCard {
+        Text("سند الإرسال", style = MaterialTheme.typography.titleSmall)
+        if (hasReceipt && photo != null) {
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 320.dp).clip(RoundedCornerShape(16.dp)).background(Lux.Champagne),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (photo) {
+                    Load.Loading -> CircularProgressIndicator(Modifier.padding(24.dp))
+                    is Load.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
+                        Text(photo.message, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = onRetry) { Text("إعادة المحاولة") }
+                    }
+                    is Load.Ready -> Image(
+                        photo.value,
+                        contentDescription = "سند الإرسال",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onZoom),
+                    )
+                }
+            }
+            Text("أُرسل للعميل ويظهر له في الطلب. اضغط الصورة للتكبير.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text("صوّر سند شركة الشحن ليُرسل للعميل ويراه في التطبيق.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (canSend) {
+            if (sending) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onCamera, enabled = !sending) { Text(if (hasReceipt) "استبدال بصورة جديدة" else "تصوير سند الإرسال") }
+                OutlinedButton(onClick = onGallery, enabled = !sending) { Text("من المعرض") }
+            }
+        }
+    }
+}
+
+/** Full-screen photo with pinch to zoom and drag. */
+@Composable
+private fun PhotoZoomDialog(image: ImageBitmap, onDismiss: () -> Unit) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            Image(
+                image,
+                contentDescription = "سند الإرسال",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoomBy, _ ->
+                            scale = (scale * zoomBy).coerceIn(1f, 6f)
+                            offset = if (scale == 1f) Offset.Zero else offset + pan
+                        }
+                    }
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
+            )
+            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
+                Icon(Icons.Filled.Close, contentDescription = "إغلاق", tint = Color.White)
             }
         }
     }

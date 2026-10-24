@@ -122,6 +122,9 @@ class PosSalesViewModel(private val pos: PosRepository) : BaseViewModel() {
     }
 }
 
+/** WhatsApp's brand green, for the "send on WhatsApp" actions. */
+internal val WhatsAppGreen = androidx.compose.ui.graphics.Color(0xFF1FA855)
+
 private val PosSaleSummary.deleted: Boolean get() = isVoided || cancelledAt != null
 
 /**
@@ -136,6 +139,7 @@ fun PosSalesSheet(
     onDismiss: () -> Unit,
     onView: (PosReceipt) -> Unit,
     onEdit: (PosReceipt) -> Unit,
+    onWhatsApp: ((PosReceipt) -> Unit)? = null,
 ) {
     val vm = adminViewModel { PosSalesViewModel(it.pos) }
     val snackbar = remember { SnackbarHostState() }
@@ -189,6 +193,7 @@ fun PosSalesSheet(
                                     onView = { vm.open(sale.id, onView) },
                                     onDelete = { deleting = sale },
                                     onEdit = { vm.open(sale.id, onEdit) },
+                                    onWhatsApp = onWhatsApp?.let { send -> { vm.open(sale.id, send) } },
                                 )
                             }
                         }
@@ -216,6 +221,7 @@ private fun SaleRow(
     onView: () -> Unit,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    onWhatsApp: (() -> Unit)? = null,
 ) {
     val deleted = sale.deleted
     val strike = if (deleted) TextDecoration.LineThrough else null
@@ -254,6 +260,7 @@ private fun SaleRow(
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = onView, enabled = !busy) { Text("عرض/طباعة") }
+                if (onWhatsApp != null) TextButton(onClick = onWhatsApp, enabled = !busy) { Text("واتساب", color = WhatsAppGreen) }
                 if (canEdit) {
                     TextButton(onClick = onEdit, enabled = !busy) { Text("تعديل") }
                     TextButton(onClick = onDelete, enabled = !busy) { Text("حذف", color = MaterialTheme.colorScheme.error) }

@@ -26,7 +26,9 @@ import {
   StorePaymentMethodsController,
   StoreReturnsController,
   StoreShippingController,
+  StoreStockAlertsController,
 } from './store.controller';
+import { EngagementService } from './engagement.service';
 
 @Module({
   imports: [InventoryModule],
@@ -46,7 +48,8 @@ import {
     AdminSalesSettingsController,
     AdminCourierSettlementsController,
     AdminPosController,
+    StoreStockAlertsController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService],
 })
 export class SalesModule {}

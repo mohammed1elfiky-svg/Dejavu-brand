@@ -19,7 +19,7 @@ const BUSINESS_TABLES = [
   'promotion_products', 'promotions', 'product_images', 'product_variants', 'products', 'brands', 'categories',
   'purchase_order_items', 'supplier_payments', 'supplier_account_entries', 'supplier_vouchers', 'purchase_orders', 'suppliers',
   'expenses', 'wallet_top_ups', 'stored_files', 'notifications', 'audit_logs', 'customer_addresses',
-  'cashier_shift_lines', 'cashier_shifts', 'outgoing_sms', 'phone_otps', 'document_sequences',
+  'stock_alerts', 'cashier_shift_lines', 'cashier_shifts', 'outgoing_sms', 'phone_otps', 'document_sequences',
 ];
 
 /** People and their numbering stay when only operations are wiped. */

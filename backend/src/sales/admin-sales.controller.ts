@@ -1,5 +1,7 @@
-import { Body, Controller, ForbiddenException, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Body, Controller, ForbiddenException, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_FILE_BYTES, UploadedPart } from '../files/files.service';
+import { ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { AccountingService } from '../accounting/accounting.service';
 import { DateRangeQueryDto } from '../accounting/dto/accounting.dto';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
@@ -45,6 +47,16 @@ export class AdminOrdersController {
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.orders.adminGet(id);
+  }
+
+  /** Photo of the shipping receipt for the customer (multipart `file`); they are notified in the app. */
+  @RequirePermissions('orders.update_status')
+  @Post(':id/shipping-receipt')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_FILE_BYTES + 1 } }))
+  @ApiConsumes('multipart/form-data')
+  shippingReceipt(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: UploadedPart | undefined, @CurrentUser() u: AuthPrincipal) {
+    return this.orders.attachShippingReceipt(id, file, u.id);
   }
 
   @RequirePermissions('orders.update_status')

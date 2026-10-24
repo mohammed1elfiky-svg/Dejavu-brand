@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { CashBoxKind, TopUpStatus } from '../generated/prisma/client';
 import { IsAmount, IsCurrencyCode } from '../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -218,9 +218,24 @@ export class BankAccountDto {
   @MaxLength(40)
   iban?: string;
 
-  @ApiProperty({ example: 'YER' })
+  @ApiProperty({ example: 'YER', description: 'Main currency (the first of currencies)' })
   @IsCurrencyCode()
   currency: string;
+
+  @ApiPropertyOptional({ type: [String], example: ['YER', 'SAR'], description: 'Every currency the account takes; [currency] when omitted' })
+  @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value.map((v) => (typeof v === 'string' ? v.trim().toUpperCase() : v)) : value))
+  @Matches(/^[A-Z][A-Z0-9_]{1,9}$/, { each: true, message: 'currencies must be currency codes such as SAR' })
+  @ArrayMaxSize(10)
+  currencies?: string[];
+
+  @ApiPropertyOptional({ description: 'Picture / logo of the account; "" removes it' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string | null;
 
   @ApiPropertyOptional({ example: 'اكتب رقم جوالك في خانة الملاحظات' })
   @IsOptional()

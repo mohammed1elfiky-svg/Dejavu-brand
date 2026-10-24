@@ -1,11 +1,14 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  NotificationType,
   Order,
+  OrderChannel,
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
@@ -25,6 +28,7 @@ import { StockService } from '../inventory/stock.service';
 import { orderAmount, orderStatusMessage } from '../notifications/messages';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
+import { FilesService, UploadedPart } from '../files/files.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
 import { balanceDue, PaymentsService } from './payments.service';
@@ -65,6 +69,7 @@ const customerOrderSelect = {
   amountPaid: true,
   returnedTotal: true,
   customerNote: true,
+  shippingReceiptFileId: true,
   placedAt: true,
   confirmedAt: true,
   deliveredAt: true,
@@ -112,6 +117,7 @@ export class OrdersService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly currencies: CurrencyService,
+    private readonly files: FilesService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
@@ -297,6 +303,28 @@ export class OrdersService {
       this.prisma.order.count({ where }),
     ]);
     return paginated(items, total, q);
+  }
+
+  /**
+   * The photo of the shipping receipt (سند الإرسال) for an app order: saved privately for
+   * the order's customer, who is notified and sees it on the order in the app.
+   */
+  async attachShippingReceipt(id: string, file: UploadedPart | undefined, userId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, number: true, customerId: true, channel: true } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.channel !== OrderChannel.ONLINE) throw new BadRequestException('Only app orders are shipped');
+    const saved = await this.files.saveImage(file, { customerId: order.customerId, isPublic: false });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.order.update({ where: { id }, data: { shippingReceiptFileId: saved.id } });
+      await this.notifications.notifyCustomer(tx, order.customerId, {
+        type: NotificationType.ORDER_STATUS,
+        title: 'تم شحن طلبك',
+        body: `أرفقنا صورة سند الإرسال لطلبك ${order.number}`,
+        data: { orderNumber: order.number, shippingReceiptFileId: saved.id },
+      });
+      await this.audit.log({ userId, action: 'UPDATE', entityType: 'Order', entityId: id, after: { shippingReceiptFileId: saved.id } }, tx);
+    });
+    return this.adminGet(id);
   }
 
   async adminGet(id: string) {

@@ -73,9 +73,10 @@ export class PurchasingService {
 
   async listSuppliers(q: SuppliersQueryDto) {
     const contains = q.q ? { contains: q.q, mode: 'insensitive' as const } : undefined;
-    const where: Prisma.SupplierWhereInput = contains
-      ? { OR: [{ name: contains }, { code: contains }, { phone: contains }] }
-      : {};
+    const where: Prisma.SupplierWhereInput = {
+      ...(contains && { OR: [{ name: contains }, { code: contains }, { phone: contains }] }),
+      ...(q.kind && { kind: q.kind }),
+    };
     const [items, total] = await Promise.all([
       this.prisma.supplier.findMany({ where, orderBy: { name: 'asc' }, skip: q.skip, take: q.pageSize }),
       this.prisma.supplier.count({ where }),
@@ -542,6 +543,7 @@ export class PurchasingService {
         supplierId: supplier.id,
         warehouseId: warehouse.id,
         supplierInvoiceNo: dto.supplierInvoiceNo,
+        invoiceImageUrl: dto.invoiceImageUrl,
         expectedDate: dto.expectedDate ? parseDateOnly(dto.expectedDate) : null,
         note: dto.note,
         subtotal: t.subtotal,

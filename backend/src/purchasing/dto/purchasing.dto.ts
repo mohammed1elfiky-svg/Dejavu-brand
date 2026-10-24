@@ -13,6 +13,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
   Matches,
   Max,
   MaxLength,
@@ -20,7 +21,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { PaymentMethod, PurchaseOrderStatus } from '../../generated/prisma/client';
+import { PaymentMethod, PurchaseOrderStatus, SupplierKind } from '../../generated/prisma/client';
 import { IsAmount } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
@@ -64,6 +65,11 @@ export class CreateSupplierDto {
   @IsOptional()
   @IsDecimalText(2)
   commissionPercent?: string;
+
+  @ApiPropertyOptional({ enum: SupplierKind, default: SupplierKind.SUPPLIER, description: 'A goods supplier (yuan) or a shipping company (dollars)' })
+  @IsOptional()
+  @IsEnum(SupplierKind)
+  kind?: SupplierKind;
 }
 
 export class UpdateSupplierDto extends PartialType(CreateSupplierDto) {
@@ -86,6 +92,11 @@ export class SuppliersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({ enum: SupplierKind })
+  @IsOptional()
+  @IsEnum(SupplierKind)
+  kind?: SupplierKind;
 }
 
 export class PurchaseItemDto {
@@ -125,6 +136,14 @@ export class PurchaseOrderDto {
   @IsString()
   @MaxLength(60)
   supplierInvoiceNo?: string;
+
+  @ApiPropertyOptional({ description: "Photo of the supplier's invoice (upload with POST admin/files/private); \"\" removes it" })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  invoiceImageUrl?: string | null;
 
   @ApiPropertyOptional({ example: '2026-11-01' })
   @IsOptional()
@@ -481,6 +500,19 @@ export class ImportOrderDto {
   @MaxLength(60)
   supplierInvoiceNo?: string;
 
+  @ApiPropertyOptional({ description: "Photo of the supplier's invoice (upload with POST admin/files/private); \"\" removes it" })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  invoiceImageUrl?: string | null;
+
+  @ApiPropertyOptional({ description: 'Shipping company owed the freight and customs (a supplier of kind SHIPPING_COMPANY)' })
+  @IsOptional()
+  @IsUUID()
+  shippingCompanyId?: string;
+
   @ApiPropertyOptional({ example: '2026-12-01' })
   @IsOptional()
   @IsDateString()
@@ -563,6 +595,11 @@ export class ImportReceiveDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  @ApiPropertyOptional({ description: 'Shipping company owed the freight and customs (a supplier of kind SHIPPING_COMPANY)' })
+  @IsOptional()
+  @IsUUID()
+  shippingCompanyId?: string;
 }
 
 /** Payment voucher (سند صرف): dollars paid to the supplier at a yuan rate. */
@@ -650,6 +687,19 @@ export class UpdateImportOrderDto {
   @IsString()
   @MaxLength(60)
   supplierInvoiceNo?: string;
+
+  @ApiPropertyOptional({ description: "Photo of the supplier's invoice (upload with POST admin/files/private); \"\" removes it" })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(500)
+  invoiceImageUrl?: string | null;
+
+  @ApiPropertyOptional({ description: 'Shipping company owed the freight and customs (a supplier of kind SHIPPING_COMPANY)' })
+  @IsOptional()
+  @IsUUID()
+  shippingCompanyId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

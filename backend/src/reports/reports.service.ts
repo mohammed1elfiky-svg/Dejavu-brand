@@ -153,6 +153,60 @@ export class ReportsService {
     };
   }
 
+  // ------------------------------------------------------- staff report ---
+
+  /**
+   * Each cashier's period: till invoices and revenue (net of tax and returns), the average
+   * invoice, discounts given, invoices deleted, and what their shifts were over or short.
+   */
+  async staff(q: PeriodQueryDto) {
+    const { from, to } = this.period(q);
+    const end = new Date(to.getTime() + 24 * 3600_000);
+    const sales = await this.prisma.$queryRaw<
+      { user_id: string; invoices: number; voided: number; gross: string; discounts: string; net: string; cogs: string }[]
+    >`
+      SELECT o.cashier_id::text AS user_id,
+             COUNT(*) FILTER (WHERE o.status <> 'CANCELLED')::int AS invoices,
+             COUNT(*) FILTER (WHERE o.status = 'CANCELLED')::int AS voided,
+             COALESCE(SUM(o.grand_total) FILTER (WHERE o.status <> 'CANCELLED'), 0)::text AS gross,
+             COALESCE(SUM(o.discount_total) FILTER (WHERE o.status <> 'CANCELLED'), 0)::text AS discounts,
+             COALESCE(SUM((SELECT SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)) FROM order_items i WHERE i.order_id = o.id))
+               FILTER (WHERE o.status <> 'CANCELLED'), 0)::text AS net,
+             COALESCE(SUM((SELECT SUM(i.unit_cost * (i.quantity - i.returned_qty)) FROM order_items i WHERE i.order_id = o.id))
+               FILTER (WHERE o.status <> 'CANCELLED'), 0)::text AS cogs
+      FROM orders o
+      WHERE o.channel = 'POS' AND o.cashier_id IS NOT NULL AND o.placed_at >= ${from} AND o.placed_at < ${end}
+      GROUP BY 1`;
+    const shifts = await this.prisma.$queryRaw<{ user_id: string; currency: string; difference: string; shifts: number }[]>`
+      SELECT s.user_id::text, l.currency, COALESCE(SUM(l.difference), 0)::text AS difference, COUNT(DISTINCT s.id)::int AS shifts
+      FROM cashier_shifts s JOIN cashier_shift_lines l ON l.shift_id = s.id
+      WHERE s.status = 'CLOSED' AND s.closed_at >= ${from} AND s.closed_at < ${end}
+      GROUP BY 1, 2`;
+    const ids = [...new Set([...sales.map((s) => s.user_id), ...shifts.map((s) => s.user_id)])];
+    const users = await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, phone: true } });
+    const rows = users.map((u) => {
+      const s = sales.find((x) => x.user_id === u.id);
+      const revenue = money(s?.net ?? 0);
+      const cost = money(s?.cogs ?? 0);
+      const invoices = s?.invoices ?? 0;
+      const mine = shifts.filter((x) => x.user_id === u.id);
+      return {
+        user: u,
+        invoices,
+        voided: s?.voided ?? 0,
+        revenue,
+        grossProfit: revenue.sub(cost),
+        averageInvoice: invoices ? money(dec(s!.gross).div(invoices)) : money(0),
+        discounts: money(s?.discounts ?? 0),
+        /** Shift counts: + over, − short, per currency. */
+        shiftDifferences: mine.filter((x) => !dec(x.difference).isZero()).map((x) => ({ currency: x.currency, difference: inCurrency(x.difference, x.currency) })),
+        closedShifts: Math.max(0, ...mine.map((x) => x.shifts)),
+      };
+    });
+    rows.sort((a, b) => b.revenue.cmp(a.revenue));
+    return { from, to, staff: rows };
+  }
+
   // ---------------------------------------------------- product reports ---
 
   /**

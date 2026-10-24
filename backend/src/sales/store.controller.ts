@@ -14,6 +14,7 @@ import {
   Req,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { EngagementService } from './engagement.service';
 import type { Request } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, CustomerOnly, Public } from '../common/decorators/auth.decorators';
@@ -194,5 +195,30 @@ export class StorePaymentMethodsController {
   @Get()
   list() {
     return CHECKOUT_METHODS.filter((m) => m !== PaymentMethod.CARD || this.online.enabled);
+  }
+}
+
+/** "Tell me when it is back in stock". */
+@ApiTags('Store · Stock alerts')
+@CustomerOnly()
+@Controller('store/stock-alerts')
+export class StoreStockAlertsController {
+  constructor(private readonly engagement: EngagementService) {}
+
+  @Get()
+  mine(@CurrentUser() u: AuthPrincipal) {
+    return this.engagement.mine(u.id);
+  }
+
+  @Post(':variantId')
+  @HttpCode(HttpStatus.OK)
+  watch(@Param('variantId', ParseUUIDPipe) variantId: string, @CurrentUser() u: AuthPrincipal) {
+    return this.engagement.watch(u.id, variantId);
+  }
+
+  @Delete(':variantId')
+  @HttpCode(HttpStatus.OK)
+  unwatch(@Param('variantId', ParseUUIDPipe) variantId: string, @CurrentUser() u: AuthPrincipal) {
+    return this.engagement.unwatch(u.id, variantId);
   }
 }

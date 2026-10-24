@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { ProductStatus, PurchaseKind, PurchaseOrderStatus, StockMovementType } from '../generated/prisma/client';
+import { Prisma, ProductStatus, PurchaseKind, PurchaseOrderStatus, StockMovementType, SupplierKind } from '../generated/prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { AuditService } from '../common/audit.service';
@@ -66,6 +66,7 @@ export class ImportService {
     const commissionPercent = dto.commissionPercent != null ? dec(dto.commissionPercent) : dec(0);
     if (commissionPercent.gte(100)) throw new BadRequestException('Commission must be below 100%');
     const toSar = foreignPerUsd && sarPerUsd ? sarPerUsd.div(foreignPerUsd) : dec(0);
+    if (dto.shippingCompanyId) await this.shippingCompany(this.prisma, dto.shippingCompanyId);
 
     const created = await this.draftProducts(fresh, toSar, userId);
     const lines = [...items.map((i) => ({ ...i, createdProduct: false })), ...created];
@@ -80,6 +81,8 @@ export class ImportService {
           supplierId: supplier.id,
           warehouseId: warehouse.id,
           supplierInvoiceNo: dto.supplierInvoiceNo,
+          invoiceImageUrl: dto.invoiceImageUrl ?? null,
+          shippingCompanyId: dto.shippingCompanyId,
           expectedDate: dto.expectedDate ? parseDateOnly(dto.expectedDate) : null,
           note: dto.note,
           foreignCurrency: dto.foreignCurrency ?? 'CNY',
@@ -109,9 +112,10 @@ export class ImportService {
     const po = await this.prisma.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.kind !== PurchaseKind.IMPORT) throw new BadRequestException('Not an import order');
-    if (po.status !== PurchaseOrderStatus.ORDERED || po.items.some((i) => i.receivedQty > 0)) {
-      throw new UnprocessableEntityException('Only import orders not received yet can be changed');
-    }
+    if (po.status === PurchaseOrderStatus.CANCELLED) throw new UnprocessableEntityException('This order was deleted');
+    if (dto.shippingCompanyId) await this.shippingCompany(this.prisma, dto.shippingCompanyId);
+    // After arrival only prices, notes, inland shipping and the invoice can change.
+    if (po.status !== PurchaseOrderStatus.ORDERED || po.items.some((i) => i.receivedQty > 0)) return this.updateReceived(po, dto, userId);
     // Existing new-product lines can stay (sent again in items) or go.
     const keptDrafts = new Set(po.items.filter((i) => i.createdProduct).map((i) => i.variantId));
     const foreignPerUsd = po.foreignPerUsd ?? (await this.ledger_.lastRate(this.prisma, po.supplierId));
@@ -130,6 +134,8 @@ export class ImportService {
         where: { id },
         data: {
           supplierInvoiceNo: dto.supplierInvoiceNo ?? undefined,
+          invoiceImageUrl: dto.invoiceImageUrl,
+          shippingCompanyId: dto.shippingCompanyId,
           note: dto.note ?? undefined,
           domesticShipping: money(domestic),
           subtotal: totals.subtotal,
@@ -143,6 +149,76 @@ export class ImportService {
       await this.audit.log({ userId, action: 'UPDATE', entityType: 'PurchaseOrder', entityId: id, after: dto }, tx);
     });
     return this.purchasing.getOrder(id);
+  }
+
+  /**
+   * A received import order corrected afterwards (the supplier's invoice differs): prices,
+   * notes, inland shipping and the invoice. Quantities stay as counted. The supplier's
+   * account is rewritten in yuan and the difference in SAR goes to payables and inventory adjustments.
+   */
+  private async updateReceived(po: Prisma.PurchaseOrderGetPayload<{ include: { items: true } }>, dto: UpdateImportOrderDto, userId: string) {
+    if (dto.newProducts?.length) throw new UnprocessableEntityException('Goods already arrived; add new items in a new order');
+    const byVariant = new Map(dto.items.map((i) => [i.variantId, i]));
+    if (dto.items.length !== po.items.length || po.items.some((i) => !byVariant.has(i.variantId) || byVariant.get(i.variantId)!.quantity !== i.quantity)) {
+      throw new UnprocessableEntityException('Goods already arrived: lines and quantities cannot change, only prices and notes');
+    }
+    const toSar = po.foreignPerUsd && po.sarPerUsd ? dec(po.sarPerUsd).div(po.foreignPerUsd) : dec(0);
+    if (toSar.isZero()) throw new UnprocessableEntityException('This order has no exchange rate');
+    const commission = dec(po.commissionPercent).div(100);
+    // What the supplier is owed in SAR for the pieces that came, before and after.
+    const owed = (price: (i: (typeof po.items)[number]) => Decimal, domestic: Decimal) =>
+      money(po.items.reduce((t, i) => t.add(price(i).mul(i.receivedQty)), dec(0)).mul(toSar).mul(dec(1).add(commission)).add(domestic.mul(toSar)));
+    const domestic = dto.domesticShipping != null ? dec(dto.domesticShipping) : dec(po.domesticShipping);
+    const before = owed((i) => dec(i.unitPriceForeign ?? 0), dec(po.domesticShipping));
+    const after = owed((i) => dec(byVariant.get(i.variantId)!.unitPriceForeign), domestic);
+    const diff = after.sub(before);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${po.id}::uuid FOR UPDATE`;
+      for (const i of po.items) {
+        const line = byVariant.get(i.variantId)!;
+        await tx.purchaseOrderItem.update({ where: { id: i.id }, data: { unitPriceForeign: dec(line.unitPriceForeign), note: line.note ?? i.note } });
+      }
+      await tx.purchaseOrder.update({
+        where: { id: po.id },
+        data: {
+          supplierInvoiceNo: dto.supplierInvoiceNo ?? undefined,
+          invoiceImageUrl: dto.invoiceImageUrl,
+          shippingCompanyId: dto.shippingCompanyId,
+          note: dto.note ?? undefined,
+          domesticShipping: money(domestic),
+          grandTotal: money(dec(po.grandTotal).add(diff)),
+        },
+      });
+      if (!diff.isZero()) {
+        await this.ledger.post(tx, {
+          description: `Supplier invoice of ${po.number} corrected after arrival`,
+          sourceType: 'PURCHASE_ORDER',
+          sourceId: po.id,
+          userId,
+          // The pieces are already valued in stock (and may be sold): the correction goes to inventory adjustments.
+          lines: diff.gt(0)
+            ? [{ account: 'INVENTORY_ADJUSTMENT', debit: diff }, { account: 'AP', credit: diff, supplierId: po.supplierId }]
+            : [{ account: 'AP', debit: diff.neg(), supplierId: po.supplierId }, { account: 'INVENTORY_ADJUSTMENT', credit: diff.neg() }],
+        });
+      }
+      await this.writeOrderEntry(tx, po.id);
+      // The shortage, if any, at the corrected prices.
+      const shortage = await tx.supplierAccountEntry.findFirst({ where: { sourceId: po.id, sourceType: 'SHORTAGE' } });
+      if (shortage) {
+        const short = po.items.reduce((t, i) => t.add(dec(byVariant.get(i.variantId)!.unitPriceForeign).mul(i.quantity - i.receivedQty)), dec(0));
+        await tx.supplierAccountEntry.update({ where: { id: shortage.id }, data: { amount: money(short).neg() } });
+      }
+      await this.audit.log({ userId, action: 'UPDATE', entityType: 'PurchaseOrder', entityId: po.id, after: { correctedAfterArrival: dto } }, tx);
+    });
+    return this.purchasing.getOrder(po.id);
+  }
+
+  /** A supplier of kind SHIPPING_COMPANY. */
+  private async shippingCompany(db: Tx | PrismaService, id: string) {
+    const company = await db.supplier.findUnique({ where: { id } });
+    if (!company || company.kind !== SupplierKind.SHIPPING_COMPANY) throw new BadRequestException('Pick a shipping company');
+    return company;
   }
 
   /** Brand-new items become draft products (not on sale) held for the order. */
@@ -281,6 +357,9 @@ export class ImportService {
         });
       }
 
+      // Freight and customs are part of the cost but owed to the shipping company (in dollars), not the supplier.
+      const shipperId = dto.shippingCompanyId ?? po.shippingCompanyId;
+      const shipper = shipperId ? await this.shippingCompany(tx, shipperId) : null;
       await this.ledger.post(tx, {
         description: `Import shipment received for ${po.number}${po.supplierInvoiceNo ? ` (invoice ${po.supplierInvoiceNo})` : ''}`,
         sourceType: 'PURCHASE_ORDER',
@@ -289,14 +368,29 @@ export class ImportService {
         lines: [
           { account: 'INVENTORY', debit: c.totals.total },
           { account: 'AP', credit: owed, supplierId: po.supplierId },
-          { account: 'ACCRUED_EXPENSES', credit: c.totals.freight, description: `Freight & customs ${c.totals.cbm} m³` },
+          shipper
+            ? { account: 'AP', credit: c.totals.freight, supplierId: shipper.id, description: `Freight & customs ${c.totals.cbm} m³ — ${shipper.name}` }
+            : { account: 'ACCRUED_EXPENSES', credit: c.totals.freight, description: `Freight & customs ${c.totals.cbm} m³` },
         ],
       });
+      if (shipper && c.totals.freight.gt(0)) {
+        await tx.supplierAccountEntry.create({
+          data: {
+            supplierId: shipper.id,
+            currency: 'USD',
+            amount: money(c.totals.freight.div(c.sarPerUsd)),
+            sourceType: 'FREIGHT',
+            sourceId: po.id,
+            note: `شحن وجمارك ${po.number}: ${c.totals.cbm} م³ × ${c.cbmRateUsd.toFixed()} $`,
+          },
+        });
+      }
       await tx.purchaseOrder.update({
         where: { id },
         data: {
           status: PurchaseOrderStatus.RECEIVED,
           receivedAt: new Date(),
+          shippingCompanyId: shipper?.id ?? undefined,
           foreignPerUsd: c.foreignPerUsd,
           sarPerUsd: c.sarPerUsd,
           commissionPercent: c.commissionPercent,

@@ -30,6 +30,8 @@ export interface BankAccountInput {
   accountNumber: string;
   iban?: string;
   currency: string;
+  currencies?: string[];
+  imageUrl?: string | null;
   instructions?: string;
   isActive?: boolean;
   sortOrder?: number;
@@ -60,17 +62,30 @@ export class WalletService {
   }
 
   async createBankAccount(dto: BankAccountInput, userId: string) {
-    await this.currencies.requireActive(dto.currency);
-    const row = await this.prisma.storeBankAccount.create({ data: dto });
+    const currencies = await this.accountCurrencies(dto.currency, dto.currencies);
+    const row = await this.prisma.storeBankAccount.create({ data: { ...dto, currency: currencies[0], currencies } });
     await this.audit.log({ userId, action: 'CREATE', entityType: 'StoreBankAccount', entityId: row.id, after: row });
     return row;
   }
 
   async updateBankAccount(id: string, dto: Partial<BankAccountInput>, userId: string) {
-    if (dto.currency) await this.currencies.requireActive(dto.currency);
-    const row = await this.prisma.storeBankAccount.update({ where: { id }, data: dto });
+    const before = await this.prisma.storeBankAccount.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Bank account not found');
+    const data = { ...dto };
+    if (dto.currency || dto.currencies) {
+      const currencies = await this.accountCurrencies(dto.currency ?? before.currency, dto.currencies ?? (dto.currency ? undefined : before.currencies));
+      Object.assign(data, { currency: currencies[0], currencies });
+    }
+    const row = await this.prisma.storeBankAccount.update({ where: { id }, data });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'StoreBankAccount', entityId: id, after: row });
     return row;
+  }
+
+  /** The account's currencies: the main one first, each active, no repeats. */
+  private async accountCurrencies(main: string, list?: string[]) {
+    const all = [...new Set([main, ...(list ?? [])])];
+    for (const c of all) await this.currencies.requireActive(c);
+    return all;
   }
 
   // ------------------------------------------------------------- customer ---
@@ -87,6 +102,8 @@ export class WalletService {
     if (dto.bankAccountId) {
       const bank = await this.prisma.storeBankAccount.findUnique({ where: { id: dto.bankAccountId } });
       if (!bank || !bank.isActive) throw new NotFoundException('Bank account not found');
+      const takes = bank.currencies.length ? bank.currencies : [bank.currency];
+      if (!takes.includes(dto.currency)) throw new UnprocessableEntityException(`${bank.bankName} does not take ${dto.currency}`);
     }
     if (await this.prisma.walletTopUp.count({ where: { customerId, status: TopUpStatus.PENDING } }) >= 5) {
       throw new ConflictException('You already have several requests under review');
@@ -124,6 +141,8 @@ export class WalletService {
     if (dto.bankAccountId) {
       const bank = await this.prisma.storeBankAccount.findUnique({ where: { id: dto.bankAccountId } });
       if (!bank || !bank.isActive) throw new NotFoundException('Bank account not found');
+      const takes = bank.currencies.length ? bank.currencies : [bank.currency];
+      if (!takes.includes(currency)) throw new UnprocessableEntityException(`${bank.bankName} does not take ${currency}`);
     }
     // Still pending at write time (staff may be reviewing it right now).
     const res = await this.prisma.walletTopUp.updateMany({

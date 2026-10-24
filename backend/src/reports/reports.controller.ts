@@ -44,6 +44,13 @@ export class ReportsController {
     return this.reports.revenue(q);
   }
 
+  /** Each cashier's invoices, revenue, discounts, deleted invoices and shift over/short. */
+  @RequirePermissions('reports.sales')
+  @Get('staff')
+  staff(@Query() q: PeriodQueryDto) {
+    return this.reports.staff(q);
+  }
+
   /** Best sellers of the period with profit, and dead stock. */
   @RequirePermissions('reports.sales')
   @Get('products')

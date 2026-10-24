@@ -2,6 +2,8 @@
 
 package com.dejavu.admin.ui.purchasing
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -57,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,6 +91,8 @@ import com.dejavu.core.admin.PurchaseOrderStatus
 import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.Supplier
 import com.dejavu.core.admin.SupplierDetail
+import com.dejavu.core.admin.SupplierKind
+import com.dejavu.core.data.userMessage
 import com.dejavu.core.admin.UpdateImportOrderRequest
 import com.dejavu.core.admin.VariantPlanner
 import com.dejavu.core.model.Money
@@ -103,7 +109,9 @@ import com.dejavu.core.ui.media.rememberImagePicker
 import com.dejavu.core.ui.theme.Button
 import com.dejavu.core.ui.theme.OutlinedButton
 import com.dejavu.core.ui.theme.OutlinedTextField
+import com.dejavu.core.ui.theme.Success
 import com.dejavu.core.ui.toLoad
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -155,13 +163,24 @@ class SuppliersViewModel(private val repo: PurchasingRepository) : BaseViewModel
     private val _state = MutableStateFlow<Load<List<Supplier>>>(Load.Loading)
     val state = _state.asStateFlow()
 
-    fun load() {
-        viewModelScope.launch { _state.value = repo.suppliers().map { it.items }.toLoad() }
+    /** Null = all accounts. */
+    var kind by mutableStateOf<SupplierKind?>(null)
+        private set
+
+    fun filter(k: SupplierKind?) {
+        kind = k
+        _state.value = Load.Loading
+        load()
     }
 
-    fun create(name: String, phone: String, commission: String, then: (String) -> Unit) {
+    fun load() {
+        val k = kind
+        viewModelScope.launch { _state.value = repo.suppliers(kind = k).map { it.items }.toLoad() }
+    }
+
+    fun create(name: String, phone: String, commission: String, kind: SupplierKind, then: (String) -> Unit) {
         viewModelScope.launch {
-            repo.createSupplier(name, phone, commission).orSay()?.let {
+            repo.createSupplier(name, phone, commission, kind).orSay()?.let {
                 say("تمت إضافة ${it.name}")
                 load()
                 then(it.id)
@@ -169,6 +188,13 @@ class SuppliersViewModel(private val repo: PurchasingRepository) : BaseViewModel
         }
     }
 }
+
+/** "مورد" (goods, yuan) or "شركة شحن" (freight and customs, dollars). */
+internal val SupplierKind.kindLabel: String
+    get() = when (this) {
+        SupplierKind.SUPPLIER -> "مورد"
+        SupplierKind.SHIPPING_COMPANY -> "شركة شحن"
+    }
 
 /** Suppliers with their balance; opens a supplier's file. */
 @Composable
@@ -193,24 +219,34 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
                     containerColor = Lux.GoldDeep,
                     contentColor = Color.White,
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("مورد جديد") },
+                    text = { Text("حساب جديد") },
                 )
             }
         },
     ) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
-            if (list.isEmpty()) {
-                EmptyState(Icons.Filled.Add, "لا يوجد موردون بعد", modifier = Modifier.padding(padding))
-            } else {
-                LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(list, key = { it.id }) { s ->
-                        GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp, onClick = { openSupplier(s.id) }) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(s.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${s.code}${s.phone?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        Column(Modifier.padding(padding)) {
+            Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = vm.kind == null, onClick = { vm.filter(null) }, label = { Text("الكل") })
+                FilterChip(selected = vm.kind == SupplierKind.SUPPLIER, onClick = { vm.filter(SupplierKind.SUPPLIER) }, label = { Text("الموردون") })
+                FilterChip(selected = vm.kind == SupplierKind.SHIPPING_COMPANY, onClick = { vm.filter(SupplierKind.SHIPPING_COMPANY) }, label = { Text("شركات الشحن") })
+            }
+            LoadContent(state, onRetry = vm::load) { list ->
+                if (list.isEmpty()) {
+                    EmptyState(Icons.Filled.Add, if (vm.kind == SupplierKind.SHIPPING_COMPANY) "لا توجد شركات شحن بعد" else "لا يوجد موردون بعد")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(list, key = { it.id }) { s ->
+                            GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp, onClick = { openSupplier(s.id) }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(s.name, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            StatusChip(s.kind.kindLabel, if (s.kind == SupplierKind.SHIPPING_COMPANY) Lux.InkSoft else Lux.GoldDeep)
+                                        }
+                                        Text("${s.code}${s.phone?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                                    }
+                                    Text(sar(s.balance), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                                 }
-                                Text(sar(s.balance), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                             }
                         }
                     }
@@ -219,20 +255,44 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
         }
     }
     // Commission is billed in USD per period on the supplier's account, not as a percent.
-    if (adding) SupplierDialog(onDismiss = { adding = false }) { name, phone -> adding = false; vm.create(name, phone, "", openSupplier) }
+    if (adding) {
+        SupplierDialog(initialKind = vm.kind ?: SupplierKind.SUPPLIER, onDismiss = { adding = false }) { name, phone, kind ->
+            adding = false
+            vm.create(name, phone, "", kind, openSupplier)
+        }
+    }
 }
 
 @Composable
-private fun SupplierDialog(onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+private fun SupplierDialog(initialKind: SupplierKind, onDismiss: () -> Unit, onSave: (String, String, SupplierKind) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
+    var kind by rememberSaveable { mutableStateOf(initialKind) }
     val ok = name.trim().length >= 2
+    val shipping = kind == SupplierKind.SHIPPING_COMPANY
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("مورد جديد") },
+        title = { Text(if (shipping) "شركة شحن جديدة" else "مورد جديد") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it.take(150) }, label = { Text("اسم المورد") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("نوع الحساب", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !shipping, onClick = { kind = SupplierKind.SUPPLIER }, label = { Text("مورد") })
+                    FilterChip(selected = shipping, onClick = { kind = SupplierKind.SHIPPING_COMPANY }, label = { Text("شركة شحن") })
+                }
+                Text(
+                    if (shipping) "شركة الشحن: حسابها بالدولار، ويُسجَّل عليها الشحن الخارجي والجمارك عند وصول البضاعة"
+                    else "المورد: حسابه باليوان، ويُسجَّل عليه سعر البضاعة والشحن الداخلي",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Lux.InkSoft,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(150) },
+                    label = { Text(if (shipping) "اسم شركة الشحن" else "اسم المورد") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it.take(30) },
@@ -241,10 +301,10 @@ private fun SupplierDialog(onDismiss: () -> Unit, onSave: (String, String) -> Un
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("العمولة تُضاف بالدولار من كشف حساب المورد عند المطابقة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                if (!shipping) Text("العمولة تُضاف بالدولار من كشف حساب المورد عند المطابقة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(name, phone) }, enabled = ok) { Text("حفظ") } },
+        confirmButton = { TextButton(onClick = { onSave(name, phone, kind) }, enabled = ok) { Text("حفظ") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
     )
 }
@@ -489,24 +549,26 @@ abstract class ImportLinesViewModel(protected val inventory: InventoryRepository
     }
 }
 
-/** The "+ existing item / + new item" buttons and one card per line. */
-private fun LazyListScope.importLineItems(vm: ImportLinesViewModel, addExisting: () -> Unit, addNew: () -> Unit) {
-    item {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = addExisting, modifier = Modifier.weight(1f)) { Text("+ صنف موجود") }
-            OutlinedButton(onClick = addNew, modifier = Modifier.weight(1f)) { Text("+ صنف جديد") }
+/** The "+ existing item / + new item" buttons and one card per line; [locked] (goods arrived) keeps lines and quantities as they are. */
+private fun LazyListScope.importLineItems(vm: ImportLinesViewModel, addExisting: () -> Unit, addNew: () -> Unit, locked: Boolean = false) {
+    if (!locked) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = addExisting, modifier = Modifier.weight(1f)) { Text("+ صنف موجود") }
+                OutlinedButton(onClick = addNew, modifier = Modifier.weight(1f)) { Text("+ صنف جديد") }
+            }
         }
     }
-    if (vm.lines.isEmpty()) {
+    if (vm.lines.isEmpty() && !locked) {
         item { Text("أضف الأصناف المطلوبة من المورد. الأصناف الجديدة تُحفظ كمسودة ولا تظهر في الكاشير أو المتجر إلا بعد الاستلام.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
     }
     itemsIndexed(vm.lines, key = { _, l -> l.key }) { i, l ->
-        ImportLineCard(l, vm.currency, onChange = { vm.update(i, it) }, onRemove = { vm.remove(i) })
+        ImportLineCard(l, vm.currency, onChange = { vm.update(i, it) }, onRemove = { vm.remove(i) }, locked = locked)
     }
 }
 
 @Composable
-private fun ImportLineCard(l: ImportLine, currency: String, onChange: (ImportLine) -> Unit, onRemove: () -> Unit) {
+private fun ImportLineCard(l: ImportLine, currency: String, onChange: (ImportLine) -> Unit, onRemove: () -> Unit, locked: Boolean = false) {
     GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             when (l) {
@@ -529,12 +591,13 @@ private fun ImportLineCard(l: ImportLine, currency: String, onChange: (ImportLin
                     }
                 }
             }
-            IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error) }
+            if (!locked) IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            when (l) {
-                is ImportLine.Existing -> NumberField("الكمية", l.quantity, Modifier.weight(1f), integer = true) { onChange(l.copy(quantity = it)) }
-                is ImportLine.New -> Text("${l.pieces} قطعة", Modifier.weight(1f).padding(top = 18.dp), style = MaterialTheme.typography.titleSmall)
+            when {
+                locked -> Text("${l.pieces} قطعة", Modifier.weight(1f).padding(top = 18.dp), style = MaterialTheme.typography.titleSmall)
+                l is ImportLine.Existing -> NumberField("الكمية", l.quantity, Modifier.weight(1f), integer = true) { onChange(l.copy(quantity = it)) }
+                else -> Text("${l.pieces} قطعة", Modifier.weight(1f).padding(top = 18.dp), style = MaterialTheme.typography.titleSmall)
             }
             NumberField("سعر القطعة ($currency)", l.priceForeign, Modifier.weight(1.3f)) { p ->
                 onChange(
@@ -563,6 +626,148 @@ private fun ImportLineCard(l: ImportLine, currency: String, onChange: (ImportLin
     }
 }
 
+// ===================================== invoice photo and shipping company ===
+
+/** The bytes of a private file ("admin/files/<id>"), e.g. a supplier invoice photo, or null. */
+internal suspend fun PurchasingRepository.privateFileBytes(url: String): ByteArray? =
+    url.trimEnd('/').substringAfterLast('/').ifBlank { null }?.let { file(it).getOrNull() }
+
+/** The supplier-invoice photo of an order being written or edited: uploaded at once, sent as invoiceImageUrl. */
+class InvoicePhoto(private val scope: CoroutineScope, private val repo: PurchasingRepository, private val onError: (String) -> Unit) {
+    var preview by mutableStateOf<ByteArray?>(null)
+        private set
+
+    /** "admin/files/<id>" once uploaded. */
+    var url by mutableStateOf<String?>(null)
+        private set
+    var uploading by mutableStateOf(false)
+        private set
+
+    /** The photo the order had when it was opened. */
+    private var saved: String? = null
+
+    fun upload(bytes: ByteArray) {
+        preview = bytes
+        url = null
+        uploading = true
+        scope.launch {
+            repo.uploadInvoiceImage(bytes).fold(
+                { url = it.url },
+                { e ->
+                    preview = null
+                    onError(e.userMessage())
+                },
+            )
+            uploading = false
+        }
+    }
+
+    fun remove() {
+        url = null
+        preview = null
+    }
+
+    /** Shows an order's saved photo. */
+    fun showSaved(savedUrl: String?) {
+        saved = savedUrl?.ifBlank { null }
+        url = saved
+        preview = null
+        saved?.let { u -> scope.launch { val bytes = repo.privateFileBytes(u); if (url == u) preview = bytes } }
+    }
+
+    /** For an update: null = unchanged, "" = removed, else the new photo. */
+    fun change(): String? = when (url) {
+        saved -> null
+        null -> ""
+        else -> url
+    }
+
+    /** Clears it (after a purchase was saved). */
+    fun clear() {
+        saved = null
+        remove()
+    }
+}
+
+/** "صورة فاتورة المورد": camera or gallery, thumbnail with change / remove. */
+@Composable
+internal fun InvoicePhotoField(photo: InvoicePhoto, modifier: Modifier = Modifier) {
+    val picker = rememberImagePicker { bytes -> photo.upload(bytes) }
+    val preview = photo.preview
+    val has = preview != null || photo.url != null
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (has) {
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne), contentAlignment = Alignment.Center) {
+                val bitmap = remember(preview) { preview?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+                if (bitmap != null) Image(bitmap, contentDescription = "صورة فاتورة المورد", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                if (photo.uploading || (bitmap == null && photo.url != null)) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        photo.uploading -> "جارٍ رفع صورة الفاتورة…"
+                        photo.url != null -> "صورة فاتورة المورد ✓"
+                        else -> "صورة فاتورة المورد"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (photo.url != null) Success else Lux.InkSoft,
+                )
+                Row {
+                    TextButton(onClick = picker.fromCamera, enabled = !photo.uploading) { Text("تغيير") }
+                    TextButton(onClick = photo::remove, enabled = !photo.uploading) { Text("إزالة", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        } else {
+            Text("صورة فاتورة المورد", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = picker.fromCamera) { Text("تصوير") }
+            TextButton(onClick = picker.fromGallery) { Text("من المعرض") }
+        }
+    }
+}
+
+/** Picks the shipping company (kind SHIPPING_COMPANY) owed the freight and customs; null = none. */
+@Composable
+internal fun ShippingCompanyField(companies: List<Supplier>, selectedId: String?, onPick: (String?) -> Unit, modifier: Modifier = Modifier, allowNone: Boolean = true) {
+    var open by remember { mutableStateOf(false) }
+    val selected = companies.firstOrNull { it.id == selectedId }
+    Column(modifier) {
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                when {
+                    selected != null -> "شركة الشحن: ${selected.name}"
+                    selectedId != null -> "شركة الشحن: …"
+                    else -> "اختر شركة الشحن"
+                },
+            )
+        }
+        Text("الشحن الخارجي والجمارك تُسجل على شركة الشحن بالدولار", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft, modifier = Modifier.padding(top = 2.dp))
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("شركة الشحن") },
+            text = {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
+                    if (companies.isEmpty()) Text("أضف شركة شحن من شاشة الموردين (نوع الحساب: شركة شحن)", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    companies.forEach { c ->
+                        Text(
+                            c.name,
+                            color = if (c.id == selectedId) Lux.GoldDeep else Color.Unspecified,
+                            modifier = Modifier.fillMaxWidth().clickable { open = false; onPick(c.id) }.padding(vertical = 10.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("إغلاق") } },
+            dismissButton = if (allowNone && selectedId != null) {
+                { TextButton(onClick = { open = false; onPick(null) }) { Text("بدون شركة") } }
+            } else {
+                null
+            },
+        )
+    }
+}
+
 // ======================================================= new import order ===
 
 class NewImportViewModel(
@@ -572,6 +777,10 @@ class NewImportViewModel(
 ) : ImportLinesViewModel(inventory) {
     private val _suppliers = MutableStateFlow<List<Supplier>>(emptyList())
     val suppliers = _suppliers.asStateFlow()
+    private val _shippers = MutableStateFlow<List<Supplier>>(emptyList())
+
+    /** Shipping companies (freight and customs, in dollars). */
+    val shippers = _shippers.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
     private val _created = MutableSharedFlow<String>(extraBufferCapacity = 1)
@@ -585,13 +794,16 @@ class NewImportViewModel(
     var domestic by mutableStateOf("")
     var invoiceNo by mutableStateOf("")
     var note by mutableStateOf("")
+    var shippingCompanyId by mutableStateOf<String?>(null)
+    val invoicePhoto = InvoicePhoto(viewModelScope, repo) { say(it) }
 
     /** The supplier's latest payment-voucher rate (used for the estimate when none is typed). */
     var lastRate by mutableStateOf<String?>(null)
         private set
 
     fun load() {
-        viewModelScope.launch { repo.suppliers().getOrNull()?.items?.let { _suppliers.value = it } }
+        viewModelScope.launch { repo.suppliers(kind = SupplierKind.SUPPLIER).getOrNull()?.items?.let { _suppliers.value = it } }
+        viewModelScope.launch { repo.suppliers(kind = SupplierKind.SHIPPING_COMPANY).getOrNull()?.items?.let { list -> _shippers.value = list.filter { it.isActive } } }
         loadCategories()
         supplierId?.let(::loadLastRate)
     }
@@ -618,6 +830,7 @@ class NewImportViewModel(
         val sid = supplierId ?: return say("اختر المورد")
         if (foreignPerUsd.isNotBlank() && num(foreignPerUsd)?.signum() != 1) return say("سعر صرف الدولار غير صحيح")
         if (!linesValid()) return
+        if (invoicePhoto.uploading) return say("انتظر حتى يكتمل رفع صورة الفاتورة")
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
@@ -631,6 +844,8 @@ class NewImportViewModel(
                 note = note.trim().ifBlank { null },
                 items = itemRequests(),
                 newProducts = newProductRequests(),
+                invoiceImageUrl = invoicePhoto.url,
+                shippingCompanyId = shippingCompanyId,
             )
             repo.createImport(request).orSay()?.let {
                 say("تم إنشاء طلبية ${it.number}")
@@ -646,6 +861,7 @@ class NewImportViewModel(
 fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -> Unit) {
     val vm = adminViewModel(key = "import-new:${supplierId.orEmpty()}") { NewImportViewModel(supplierId, it.purchasing, it.inventory) }
     val suppliers by vm.suppliers.collectAsStateWithLifecycle()
+    val shippers by vm.shippers.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -665,7 +881,8 @@ fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -
             GlassCard(Modifier.fillMaxWidth().padding(12.dp), contentPadding = 12.dp) {
                 SummaryRow("قيمة البضاعة", "${plain(value)} ${vm.currency}")
                 sarEstimate?.let { SummaryRow("تقديري بالريال (قبل الشحن الخارجي)", sar(it.toPlainString()), strong = true, valueColor = Lux.GoldDeep) }
-                Button(onClick = vm::save, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                Text("قيمة البضاعة والشحن الداخلي تُسجَّل على حساب المورد بعملته الآن", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                Button(onClick = vm::save, enabled = !busy && !vm.invoicePhoto.uploading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
                     if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White) else Text("حفظ الطلبية (تبقى لدى المورد حتى الاستلام)")
                 }
             }
@@ -700,10 +917,12 @@ fun NewImportScreen(supplierId: String?, onBack: () -> Unit, created: (String) -
                     OutlinedTextField(
                         value = vm.invoiceNo,
                         onValueChange = { vm.invoiceNo = it.take(60) },
-                        label = { Text("رقم فاتورة المورد") },
+                        label = { Text("رقم فاتورة المورد (اختياري)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    InvoicePhotoField(vm.invoicePhoto, Modifier.fillMaxWidth().padding(top = 4.dp))
+                    ShippingCompanyField(shippers, vm.shippingCompanyId, onPick = { vm.shippingCompanyId = it }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                     OutlinedTextField(
                         value = vm.note,
                         onValueChange = { vm.note = it.take(500) },
@@ -897,9 +1116,12 @@ private fun NewItemDialog(vm: ImportLinesViewModel, categories: List<Pair<AdminC
 
 // ====================================================== edit import order ===
 
-/** True when an import order can still be changed: ordered (or draft) and nothing received yet. */
-internal fun PurchaseOrderDetail.importEditable(): Boolean =
-    isImport && (status == PurchaseOrderStatus.ORDERED || status == PurchaseOrderStatus.DRAFT) && items.all { it.receivedQty == 0 }
+/** True when an import order can be changed: any status except cancelled (after arrival only prices, notes and costs). */
+internal fun PurchaseOrderDetail.importEditable(): Boolean = isImport && status != PurchaseOrderStatus.CANCELLED
+
+/** The goods (or some of them) arrived: lines and quantities stay as they are. */
+internal fun PurchaseOrderDetail.importArrived(): Boolean =
+    status == PurchaseOrderStatus.RECEIVED || status == PurchaseOrderStatus.PARTIALLY_RECEIVED || items.any { it.receivedQty > 0 }
 
 class EditImportViewModel(
     private val id: String,
@@ -912,23 +1134,39 @@ class EditImportViewModel(
     val busy = _busy.asStateFlow()
     private val _saved = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val saved = _saved.asSharedFlow()
+    private val _shippers = MutableStateFlow<List<Supplier>>(emptyList())
+
+    /** Shipping companies (freight and customs, in dollars). */
+    val shippers = _shippers.asStateFlow()
 
     var domestic by mutableStateOf("")
     var invoiceNo by mutableStateOf("")
     var note by mutableStateOf("")
+    var shippingCompanyId by mutableStateOf<String?>(null)
+    val invoicePhoto = InvoicePhoto(viewModelScope, repo) { say(it) }
+
+    /** Goods arrived: only prices, notes, inland shipping, the invoice and the shipping company change. */
+    var locked by mutableStateOf(false)
+        private set
+    private var savedShippingCompanyId: String? = null
     private var filled = false
 
     fun load() {
         loadCategories()
+        viewModelScope.launch { repo.suppliers(kind = SupplierKind.SHIPPING_COMPANY).getOrNull()?.items?.let { list -> _shippers.value = list.filter { it.isActive } } }
         viewModelScope.launch {
             val r = repo.order(id)
             r.getOrNull()?.let { po ->
+                locked = po.importArrived()
                 if (!filled) {
                     filled = true
                     currency = po.foreignCurrency ?: "CNY"
                     domestic = num(po.domesticShipping)?.let(::plain).orEmpty()
                     invoiceNo = po.supplierInvoiceNo.orEmpty()
                     note = po.note.orEmpty()
+                    shippingCompanyId = po.shippingCompanyId
+                    savedShippingCompanyId = po.shippingCompanyId
+                    invoicePhoto.showSaved(po.invoiceImageUrl)
                     lines.clear()
                     lines.addAll(
                         po.items.map {
@@ -953,15 +1191,19 @@ class EditImportViewModel(
 
     fun save() {
         if (!linesValid()) return
+        if (invoicePhoto.uploading) return say("انتظر حتى يكتمل رفع صورة الفاتورة")
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
             val request = UpdateImportOrderRequest(
                 items = itemRequests(),
-                newProducts = newProductRequests(),
+                // After arrival the lines stay as they are (no new items).
+                newProducts = if (locked) emptyList() else newProductRequests(),
                 domesticShipping = plain(num(domestic) ?: BigDecimal.ZERO),
                 supplierInvoiceNo = invoiceNo.trim().ifBlank { null },
                 note = note.trim().ifBlank { null },
+                invoiceImageUrl = invoicePhoto.change(),
+                shippingCompanyId = shippingCompanyId?.takeIf { it != savedShippingCompanyId },
             )
             repo.updateImport(id, request).orSay()?.let {
                 say("تم حفظ تعديل الطلبية ${it.number}")
@@ -972,12 +1214,13 @@ class EditImportViewModel(
     }
 }
 
-/** Changes an import order that has not arrived: lines, quantities, prices, notes and inland shipping. */
+/** Changes an import order: before arrival lines, quantities, prices, notes and costs; after arrival prices, notes, inland shipping and the invoice. */
 @Composable
 fun EditImportScreen(id: String, onBack: () -> Unit, saved: () -> Unit) {
     val vm = adminViewModel(key = "import-edit:$id") { EditImportViewModel(id, it.purchasing, it.inventory) }
     val order by vm.order.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
+    val shippers by vm.shippers.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var addingExisting by remember { mutableStateOf(false) }
@@ -996,7 +1239,7 @@ fun EditImportScreen(id: String, onBack: () -> Unit, saved: () -> Unit) {
                 GlassCard(Modifier.fillMaxWidth().padding(12.dp), contentPadding = 12.dp) {
                     SummaryRow("قيمة البضاعة", "${plain(vm.goodsValue())} ${vm.currency}", strong = true, valueColor = Lux.GoldDeep)
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Button(onClick = vm::save, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("حفظ التعديلات") }
+                    Button(onClick = vm::save, enabled = !busy && !vm.invoicePhoto.uploading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("حفظ التعديلات") }
                 }
             }
         },
@@ -1006,12 +1249,19 @@ fun EditImportScreen(id: String, onBack: () -> Unit, saved: () -> Unit) {
                 Column(Modifier.padding(padding).padding(16.dp)) {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("لا يمكن تعديل هذه الطلبية", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
-                        Text("التعديل متاح فقط لطلبيات الاستيراد التي لم يُستلم منها شيء بعد.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                        Text("التعديل متاح لطلبيات الاستيراد غير الملغاة فقط.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("رجوع") }
                     }
                 }
             } else {
                 LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (vm.locked) {
+                        item {
+                            GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp) {
+                                Text("البضاعة وصلت: يمكن تعديل الأسعار والملاحظات والشحن الداخلي وصورة الفاتورة فقط", style = MaterialTheme.typography.bodyMedium, color = Lux.GoldDeep)
+                            }
+                        }
+                    }
                     item {
                         GlassCard(Modifier.fillMaxWidth()) {
                             Text("${po.supplier.name} · ${formatDate(po.orderDate)} · ${vm.currency}", style = MaterialTheme.typography.titleSmall)
@@ -1020,26 +1270,34 @@ fun EditImportScreen(id: String, onBack: () -> Unit, saved: () -> Unit) {
                                 OutlinedTextField(
                                     value = vm.invoiceNo,
                                     onValueChange = { vm.invoiceNo = it.take(60) },
-                                    label = { Text("رقم فاتورة المورد") },
+                                    label = { Text("رقم فاتورة المورد (اختياري)") },
                                     singleLine = true,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
+                            InvoicePhotoField(vm.invoicePhoto, Modifier.fillMaxWidth().padding(top = 4.dp))
+                            ShippingCompanyField(
+                                shippers,
+                                vm.shippingCompanyId,
+                                onPick = { vm.shippingCompanyId = it },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                allowNone = po.shippingCompanyId == null,
+                            )
                             OutlinedTextField(
                                 value = vm.note,
                                 onValueChange = { vm.note = it.take(500) },
                                 label = { Text("ملاحظة على الطلبية (اختياري)") },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             )
                         }
                     }
-                    importLineItems(vm, addExisting = { addingExisting = true }, addNew = { addingNew = true })
+                    importLineItems(vm, addExisting = { addingExisting = true }, addNew = { addingNew = true }, locked = vm.locked)
                 }
             }
         }
     }
-    if (addingExisting) ExistingItemDialog(vm, onDismiss = { addingExisting = false })
-    if (addingNew) NewItemDialog(vm, categories, onDismiss = { addingNew = false })
+    if (addingExisting && !vm.locked) ExistingItemDialog(vm, onDismiss = { addingExisting = false })
+    if (addingNew && !vm.locked) NewItemDialog(vm, categories, onDismiss = { addingNew = false })
 }
 
 // ============================================================== receiving ===
@@ -1059,7 +1317,15 @@ class ImportReceiveViewModel(private val id: String, private val repo: Purchasin
     private val _done = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val done = _done.asSharedFlow()
 
+    private val _shippers = MutableStateFlow<List<Supplier>>(emptyList())
+
+    /** Shipping companies (freight and customs, in dollars). */
+    val shippers = _shippers.asStateFlow()
+
     val rows = mutableStateListOf<CountRow>()
+
+    /** Owed the freight and customs; the order's own by default. */
+    var shippingCompanyId by mutableStateOf<String?>(null)
     var totalCbm by mutableStateOf("")
     var cbmRate by mutableStateOf("")
     var foreignPerUsd by mutableStateOf("")
@@ -1068,11 +1334,13 @@ class ImportReceiveViewModel(private val id: String, private val repo: Purchasin
     var domestic by mutableStateOf("")
 
     fun load() {
+        viewModelScope.launch { repo.suppliers(kind = SupplierKind.SHIPPING_COMPANY).getOrNull()?.items?.let { list -> _shippers.value = list.filter { it.isActive } } }
         viewModelScope.launch {
             val r = repo.order(id)
             r.getOrNull()?.let { po ->
                 if (rows.isEmpty()) {
                     rows.addAll(po.items.map { CountRow(it.id, it.quantity.toString(), "") })
+                    shippingCompanyId = po.shippingCompanyId
                     foreignPerUsd = po.foreignPerUsd?.let { plain(BigDecimal(it)) }.orEmpty()
                     sarPerUsd = po.sarPerUsd?.let { plain(BigDecimal(it)) }.orEmpty()
                     commission = plain(BigDecimal(po.commissionPercent))
@@ -1107,6 +1375,7 @@ class ImportReceiveViewModel(private val id: String, private val repo: Purchasin
             sarPerUsd = num(sarPerUsd)?.takeIf { it.signum() > 0 }?.let(::plain),
             commissionPercent = num(commission)?.let(::plain),
             domesticShipping = num(domestic)?.let(::plain),
+            shippingCompanyId = shippingCompanyId,
         )
     }
 
@@ -1141,6 +1410,7 @@ fun ImportReceiveScreen(id: String, onBack: () -> Unit, done: () -> Unit) {
     val vm = adminViewModel(key = "import-receive:$id") { ImportReceiveViewModel(id, it.purchasing) }
     val order by vm.order.collectAsStateWithLifecycle()
     val costs by vm.costs.collectAsStateWithLifecycle()
+    val shippers by vm.shippers.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var confirm by remember { mutableStateOf(false) }
@@ -1186,6 +1456,7 @@ fun ImportReceiveScreen(id: String, onBack: () -> Unit, done: () -> Unit) {
                             NumberField("عمولة المورد %", vm.commission, Modifier.weight(1f)) { v -> vm.edit { vm.commission = v } }
                             NumberField("الشحن الداخلي ($cur)", vm.domestic, Modifier.weight(1f)) { v -> vm.edit { vm.domestic = v } }
                         }
+                        ShippingCompanyField(shippers, vm.shippingCompanyId, onPick = { v -> vm.edit { vm.shippingCompanyId = v } }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                     }
                 }
                 item { Text("طابق الكميات الفعلية المستلمة", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep) }
@@ -1232,7 +1503,14 @@ fun ImportReceiveScreen(id: String, onBack: () -> Unit, done: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text("استلام وتأكيد المطابقة") },
-            text = { Text("ستدخل الكميات المستلمة إلى المخزون وتظهر في الكاشير والمتجر بالتكلفة المحسوبة، وتُسجَّل على حساب المورد. لا يمكن تعديل الاستلام بعد التأكيد.") },
+            text = {
+                val shipper = shippers.firstOrNull { it.id == vm.shippingCompanyId }?.name
+                Text(
+                    "ستدخل الكميات المستلمة إلى المخزون وتظهر في الكاشير والمتجر بالتكلفة المحسوبة. قيمة البضاعة على حساب المورد، " +
+                        (if (shipper != null) "والشحن الخارجي والجمارك تُسجَّل على حساب $shipper بالدولار." else "ولم تُحدَّد شركة شحن للشحن الخارجي والجمارك.") +
+                        " لا يمكن تعديل كميات الاستلام بعد التأكيد.",
+                )
+            },
             confirmButton = { TextButton(onClick = { confirm = false; vm.receive() }) { Text("تأكيد الاستلام") } },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("تراجع") } },
         )

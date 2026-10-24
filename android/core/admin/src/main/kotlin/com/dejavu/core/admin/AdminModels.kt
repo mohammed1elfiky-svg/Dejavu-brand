@@ -671,6 +671,7 @@ data class SupplierDetail(
     val isActive: Boolean = true,
     val balance: String = "0",
     val commissionPercent: String = "0",
+    val kind: SupplierKind = SupplierKind.SUPPLIER,
     val purchaseOrders: List<SupplierOrder> = emptyList(),
 ) {
     @Serializable

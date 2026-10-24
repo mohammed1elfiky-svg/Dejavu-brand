@@ -2,7 +2,22 @@
 
 package com.dejavu.admin.ui.purchasing
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.dejavu.core.admin.PurchaseKind
+import com.dejavu.core.admin.SupplierAccount
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
@@ -190,11 +205,57 @@ class PurchaseOrderViewModel(private val id: String, private val repo: Purchasin
 
     /** Fires once the order was deleted. */
     val deleted = _deleted.asSharedFlow()
+    private val _invoiceImage = MutableStateFlow<ByteArray?>(null)
+
+    /** The supplier's invoice photo, once loaded. */
+    val invoiceImage = _invoiceImage.asStateFlow()
+    private val _invoiceImageFailed = MutableStateFlow(false)
+
+    /** The invoice photo could not be loaded. */
+    val invoiceImageFailed = _invoiceImageFailed.asStateFlow()
+    private val _shippingCompany = MutableStateFlow<String?>(null)
+
+    /** Name of the order's shipping company. */
+    val shippingCompany = _shippingCompany.asStateFlow()
+    private var shownImage: String? = null
+    private var shownCompany: String? = null
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
-        viewModelScope.launch { _state.value = repo.order(id).toLoad() }
+        viewModelScope.launch {
+            val r = repo.order(id)
+            _state.value = r.toLoad()
+            r.getOrNull()?.let(::loadExtras)
+        }
     }
+
+    /** The invoice photo and the shipping company's name (each fetched once per value). */
+    private fun loadExtras(po: PurchaseOrderDetail) {
+        val image = po.invoiceImageUrl?.ifBlank { null }
+        if (image != shownImage) {
+            shownImage = image
+            _invoiceImage.value = null
+            _invoiceImageFailed.value = false
+            if (image != null) {
+                viewModelScope.launch {
+                    val bytes = repo.privateFileBytes(image)
+                    if (shownImage == image) {
+                        _invoiceImage.value = bytes
+                        _invoiceImageFailed.value = bytes == null
+                    }
+                }
+            }
+        }
+        val company = po.shippingCompanyId?.ifBlank { null }
+        if (company != shownCompany) {
+            shownCompany = company
+            _shippingCompany.value = null
+            if (company != null) viewModelScope.launch { repo.supplier(company).getOrNull()?.let { if (shownCompany == company) _shippingCompany.value = it.name } }
+        }
+    }
+
+    /** The supplier's account balances (per currency, + = owed to the supplier) for the order PDF. */
+    suspend fun supplierBalances(supplierId: String): List<SupplierAccount.Balance> = repo.supplierAccount(supplierId).orSay()?.balances.orEmpty()
 
     fun receive(quantities: Map<String, Int>) {
         if (quantities.values.none { it > 0 }) return say("حدد الكميات المستلمة")
@@ -240,7 +301,12 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
     val receiving = remember { mutableStateMapOf<String, Int>() }
     var paying by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var exportingInvoice by remember { mutableStateOf(false) }
+    var viewingImage by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val invoiceImage by vm.invoiceImage.collectAsStateWithLifecycle()
+    val invoiceImageFailed by vm.invoiceImageFailed.collectAsStateWithLifecycle()
+    val shippingCompany by vm.shippingCompany.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     CollectMessages(vm, snackbar)
@@ -255,7 +321,8 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
             val canReceive = po.canReceive && session.can(Perm.PURCHASES_RECEIVE) && !po.isImport
             val nothingReceived = po.items.all { it.receivedQty == 0 }
             val canWrite = session.can(PURCHASES_WRITE)
-            val canEdit = canWrite && po.isImport && po.status == PurchaseOrderStatus.ORDERED && nothingReceived
+            // Import orders can be changed at any time (after arrival: prices, notes, inland shipping and the invoice only).
+            val canEdit = canWrite && po.importEditable()
             val canDelete = canWrite && nothingReceived && (po.status == PurchaseOrderStatus.DRAFT || po.status == PurchaseOrderStatus.ORDERED)
             // Prices typed in the supplier's currency (USD / CNY); SAR values come second.
             val fx = po.foreignCurrency?.ifBlank { null }
@@ -272,8 +339,24 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                             Text(po.supplier.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                             StatusChip(po.status.label, po.status.tint())
                         }
-                        po.supplierInvoiceNo?.let { Text("فاتورة المورد: $it", style = MaterialTheme.typography.bodySmall) }
+                        po.supplierInvoiceNo?.ifBlank { null }?.let { Text("فاتورة المورد: $it", style = MaterialTheme.typography.bodySmall) }
                         Text(formatDate(po.orderDate), style = MaterialTheme.typography.bodySmall)
+                        if (po.invoiceImageUrl?.isNotBlank() == true) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                                val bitmap = remember(invoiceImage) { invoiceImage?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+                                Box(
+                                    Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)).background(Lux.Champagne).clickable(enabled = bitmap != null) { viewingImage = true },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (bitmap != null) {
+                                        Image(bitmap, contentDescription = "صورة فاتورة المورد", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                    } else if (!invoiceImageFailed) {
+                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    }
+                                }
+                                Text(if (invoiceImageFailed) "تعذّر تحميل صورة فاتورة المورد" else "صورة فاتورة المورد (اضغط للتكبير)", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                            }
+                        }
                         if (fx != null && !po.isImport) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 CurrencyArt(fx, height = 18.dp)
@@ -297,6 +380,7 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                             po.foreignPerUsd?.let { SummaryRow("سعر الدولار", "$it ${po.foreignCurrency ?: ""} · ${po.sarPerUsd ?: "—"} ر.س") }
                             if (!Money.isZero(po.commissionPercent)) SummaryRow("عمولة المورد", "${po.commissionPercent}%")
                             if (!Money.isZero(po.domesticShipping)) SummaryRow("الشحن الداخلي", "${po.domesticShipping} ${po.foreignCurrency ?: ""}")
+                            if (po.shippingCompanyId != null) SummaryRow("شركة الشحن", shippingCompany ?: "…")
                             po.totalCbm?.let { SummaryRow("الحجم / سعر CBM", "$it م³ · ${po.cbmRateUsd ?: "—"} \$") }
                             if (!Money.isZero(po.freightCost)) SummaryRow("الشحن الخارجي والجمارك", Money.format(po.freightCost))
                             if (po.canReceive && session.can(Perm.PURCHASES_RECEIVE)) {
@@ -337,6 +421,24 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(if (exporting) "جارٍ تجهيز الملف…" else "ملف PDF للمطابقة (مع الصور)") }
+                }
+                if (po.isImport) {
+                    item {
+                        OutlinedButton(
+                            enabled = !exportingInvoice,
+                            onClick = {
+                                exportingInvoice = true
+                                scope.launch {
+                                    runCatching {
+                                        val balances = po.supplier.id?.let { vm.supplierBalances(it) }.orEmpty()
+                                        sharePdf(context, orderPdf(context, po, balances), "فاتورة ${po.number}")
+                                    }
+                                    exportingInvoice = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(if (exportingInvoice) "جارٍ تجهيز الفاتورة…" else "فاتورة PDF (${po.foreignCurrency ?: "CNY"} مع رصيد الحساب)") }
+                    }
                 }
                 item { Text(if (canReceive) "حدد الكميات التي وصلت الآن" else "البنود", style = MaterialTheme.typography.titleSmall) }
                 items(po.items, key = { it.id }) { line ->
@@ -407,6 +509,17 @@ fun PurchaseOrderScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
                     confirmButton = { TextButton(onClick = { confirmDelete = false; vm.delete() }) { Text("حذف", color = MaterialTheme.colorScheme.error) } },
                     dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("تراجع") } },
                 )
+            }
+            if (viewingImage) {
+                invoiceImage?.let { bytes ->
+                    Dialog(onDismissRequest = { viewingImage = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                        val full = remember(bytes) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+                        Box(Modifier.fillMaxSize().background(Color.Black).clickable { viewingImage = false }, contentAlignment = Alignment.Center) {
+                            if (full != null) Image(full, contentDescription = "صورة فاتورة المورد", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                            TextButton(onClick = { viewingImage = false }, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { Text("إغلاق", color = Color.White) }
+                        }
+                    }
+                }
             }
             if (paying && fx == null) MoneyDialog("سداد للمورد", SUPPLIER_METHODS, po.balanceDue, "سداد", { paying = false }) { amount, method, ref -> vm.pay(po, amount, method, ref) }
         }

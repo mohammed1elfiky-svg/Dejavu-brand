@@ -59,6 +59,7 @@ import com.dejavu.core.admin.PurchasingRepository
 import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.admin.SupplierAccount
 import com.dejavu.core.admin.SupplierCommissionRequest
+import com.dejavu.core.admin.SupplierKind
 import com.dejavu.core.admin.SupplierOpeningBalanceRequest
 import com.dejavu.core.admin.SupplierPaymentVoucherRequest
 import com.dejavu.core.admin.SupplierVoucher
@@ -121,6 +122,10 @@ class SupplierAccountViewModel(
     val state = _state.asStateFlow()
     private val _name = MutableStateFlow<String?>(null)
     val name = _name.asStateFlow()
+    private val _shipping = MutableStateFlow(false)
+
+    /** A shipping company: its account is in dollars (freight and customs), no yuan rate or commission. */
+    val shipping = _shipping.asStateFlow()
     private val _boxes = MutableStateFlow<List<CashBox>>(emptyList())
 
     /** Active USD boxes the payment can come from. */
@@ -134,7 +139,15 @@ class SupplierAccountViewModel(
 
     fun load() {
         viewModelScope.launch { _state.value = repo.supplierAccount(supplierId).toLoad() }
-        viewModelScope.launch { repo.supplier(supplierId).getOrNull()?.let { _name.value = it.name } }
+        viewModelScope.launch {
+            repo.supplier(supplierId).getOrNull()?.let { s ->
+                _name.value = s.name
+                // The supplier file does not carry the kind: look it up among the shipping companies.
+                repo.suppliers(s.name, kind = SupplierKind.SHIPPING_COMPANY).getOrNull()?.let { page ->
+                    _shipping.value = page.items.any { it.id == supplierId }
+                }
+            }
+        }
         viewModelScope.launch {
             treasury.all(currency = Currency.of("USD")).getOrNull()?.let { list ->
                 _boxes.value = list.filter { it.isActive && it.currency.code == "USD" }
@@ -217,6 +230,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
     val vm = adminViewModel(key = "supplier-account:$supplierId") { SupplierAccountViewModel(supplierId, it.purchasing, it.treasury, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val name by vm.name.collectAsStateWithLifecycle()
+    val shipping by vm.shipping.collectAsStateWithLifecycle()
     val boxes by vm.boxes.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val art by vm.art.collectAsStateWithLifecycle()
@@ -237,18 +251,25 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar(name?.let { "كشف حساب $it" } ?: "كشف حساب المورد", onBack) },
+        topBar = { BackTopBar(name?.let { "كشف حساب $it" } ?: if (shipping) "كشف حساب شركة الشحن" else "كشف حساب المورد", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { account ->
             val foreign = account.balances.firstOrNull { it.currency != "USD" }?.currency
-                ?: account.vouchers.firstNotNullOfOrNull { it.foreignCurrency }
+                ?: account.vouchers.firstNotNullOfOrNull { v -> v.foreignCurrency?.takeIf { it != "USD" } }
                 ?: "CNY"
+            val party = if (shipping) "شركة الشحن" else "المورد"
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
-                        Text("الرصيد مع المورد", style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("الرصيد مع $party", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                            StatusChip(if (shipping) "شركة شحن · بالدولار" else "مورد · باليوان", if (shipping) Lux.InkSoft else Lux.GoldDeep)
+                        }
+                        if (shipping) {
+                            Text("يُسجَّل عليها الشحن الخارجي والجمارك عند وصول البضاعة، وتُسدَّد بسند صرف بالدولار", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                        }
                         if (account.balances.isEmpty()) {
                             Text("لا توجد حركات بعد", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                         }
@@ -259,18 +280,20 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     CurrencyArt(b.currency, art[b.currency], height = 20.dp)
                                     when {
-                                        sign > 0 -> StatusChip("$amount · مستحق للمورد", Lux.GoldDeep)
+                                        sign > 0 -> StatusChip("$amount · مستحق لـ$party", Lux.GoldDeep)
                                         sign < 0 -> StatusChip("$amount · مدفوع زيادة", Success)
                                         else -> StatusChip("${b.currency} · مسدَّد", Lux.InkSoft)
                                     }
                                 }
                             }
                         }
-                        account.lastRate?.let { SummaryRow("آخر سعر للدولار (من سندات الصرف)", "$it $foreign") }
+                        if (!shipping) account.lastRate?.let { SummaryRow("آخر سعر للدولار (من سندات الصرف)", "$it $foreign") }
                         if (canPay) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                                Button(onClick = { paymentEdit = null; paymentOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("سند صرف") }
-                                OutlinedButton(onClick = { commissionEdit = null; commissionOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("إضافة عمولة (مطابقة)") }
+                                Button(onClick = { paymentEdit = null; paymentOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text(if (shipping) "سند صرف بالدولار" else "سند صرف") }
+                                if (!shipping) {
+                                    OutlinedButton(onClick = { commissionEdit = null; commissionOpen = true }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("إضافة عمولة (مطابقة)") }
+                                }
                             }
                         }
                         if (canOpening) {
@@ -322,15 +345,18 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
             }
 
             if (paymentOpen) {
+                // A shipping company is paid in dollars against its USD balance (no yuan rate, no commission).
+                val payCurrency = if (shipping) "USD" else paymentEdit?.foreignCurrency ?: foreign
                 PaymentVoucherDialog(
                     edit = paymentEdit,
                     lastRate = account.lastRate,
-                    currency = paymentEdit?.foreignCurrency ?: foreign,
+                    currency = payCurrency,
                     boxes = boxes,
                     busy = busy,
+                    shipping = shipping,
                     onDismiss = { paymentOpen = false },
                 ) { usd, boxId, rate, applyTo, note ->
-                    vm.pay(paymentEdit?.id, usd, boxId, rate, paymentEdit?.foreignCurrency ?: foreign, applyTo, note) { paymentOpen = false }
+                    vm.pay(paymentEdit?.id, usd, boxId, rate, payCurrency, applyTo, note) { paymentOpen = false }
                 }
             }
             if (commissionOpen) {
@@ -341,7 +367,8 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
             if (openingOpen) {
                 OpeningBalanceDialog(
                     currencies = OPENING_CURRENCIES,
-                    initial = foreign,
+                    initial = if (shipping) "USD" else foreign,
+                    party = party,
                     lastRate = account.lastRate,
                     art = art,
                     busy = busy,
@@ -385,7 +412,9 @@ private fun VoucherCard(v: SupplierVoucher, art: Map<String, String>, canEdit: B
             Text(inCurrency(v.usdAmount, "USD"), style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep)
         }
         if (v.kind == SupplierVoucherKind.PAYMENT) {
-            if (v.foreignPerUsd != null) {
+            if (v.foreignCurrency == "USD") {
+                Text("سداد من الرصيد بالدولار", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+            } else if (v.foreignPerUsd != null) {
                 Text(
                     "سعر الدولار ${v.foreignPerUsd} ${v.foreignCurrency.orEmpty()} · ${inCurrency(v.foreignAmount, v.foreignCurrency)} من البضاعة",
                     style = MaterialTheme.typography.bodySmall,
@@ -430,6 +459,7 @@ private fun PaymentVoucherDialog(
     boxes: List<CashBox>,
     busy: Boolean,
     onDismiss: () -> Unit,
+    shipping: Boolean = false,
     onSave: (usd: String, boxId: String, rate: String?, applyTo: String, note: String) -> Unit,
 ) {
     var usd by remember { mutableStateOf(edit?.usdAmount?.let { accNum(it)?.let(::accPlain) }.orEmpty()) }
@@ -439,25 +469,30 @@ private fun PaymentVoucherDialog(
     var note by remember { mutableStateOf(edit?.note.orEmpty()) }
     val usdValue = accNum(usd)?.takeIf { it.signum() > 0 }
     val rateValue = accNum(rate)?.takeIf { it.signum() > 0 }
-    val ok = usdValue != null && boxId != null && (!goods || rateValue != null)
+    val ok = usdValue != null && boxId != null && (shipping || !goods || rateValue != null)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (edit == null) "سند صرف للمورد" else "تعديل سند الصرف ${edit.number}") },
+        title = { Text(if (edit == null) (if (shipping) "سند صرف لشركة الشحن" else "سند صرف للمورد") else "تعديل سند الصرف ${edit.number}") },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AmountField("المبلغ بالدولار", usd, Modifier.fillMaxWidth()) { usd = it }
-                Text("تطبيق على:", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = goods, onClick = { goods = true }, label = { Text("البضاعة") })
-                    FilterChip(selected = !goods, onClick = { goods = false }, label = { Text("العمولة") })
-                }
-                if (goods) {
-                    AmountField("سعر الدولار ($currency لكل 1 دولار)", rate, Modifier.fillMaxWidth(), hint = lastRate?.let { "آخر سعر: $it" }) { rate = it }
-                    if (usdValue != null && rateValue != null) {
-                        SummaryRow("يُخصم من حساب البضاعة", inCurrency(usdValue.multiply(rateValue).setScale(2, RoundingMode.HALF_UP).toPlainString(), currency), strong = true, valueColor = Lux.GoldDeep)
-                    }
+                if (shipping) {
+                    Text("يُخصم المبلغ من رصيد شركة الشحن بالدولار (الشحن الخارجي والجمارك)", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    usdValue?.let { SummaryRow("يُخصم من حساب شركة الشحن", inCurrency(accPlain(it), "USD"), strong = true, valueColor = Lux.GoldDeep) }
                 } else {
-                    Text("يُخصم المبلغ من عمولة المورد بالدولار", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    Text("تطبيق على:", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = goods, onClick = { goods = true }, label = { Text("البضاعة") })
+                        FilterChip(selected = !goods, onClick = { goods = false }, label = { Text("العمولة") })
+                    }
+                    if (goods) {
+                        AmountField("سعر الدولار ($currency لكل 1 دولار)", rate, Modifier.fillMaxWidth(), hint = lastRate?.let { "آخر سعر: $it" }) { rate = it }
+                        if (usdValue != null && rateValue != null) {
+                            SummaryRow("يُخصم من حساب البضاعة", inCurrency(usdValue.multiply(rateValue).setScale(2, RoundingMode.HALF_UP).toPlainString(), currency), strong = true, valueColor = Lux.GoldDeep)
+                        }
+                    } else {
+                        Text("يُخصم المبلغ من عمولة المورد بالدولار", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    }
                 }
                 Text("الصرف من صندوق دولار", style = MaterialTheme.typography.labelLarge)
                 if (boxes.isEmpty()) {
@@ -473,7 +508,11 @@ private fun PaymentVoucherDialog(
         },
         confirmButton = {
             TextButton(enabled = ok && !busy, onClick = {
-                onSave(accPlain(usdValue!!), boxId!!, if (goods) rateValue?.let(::accPlain) else null, if (goods) "GOODS" else "COMMISSION", note)
+                when {
+                    // Dollars one-for-one against the shipping company's USD balance.
+                    shipping -> onSave(accPlain(usdValue!!), boxId!!, null, "GOODS", note)
+                    else -> onSave(accPlain(usdValue!!), boxId!!, if (goods) rateValue?.let(::accPlain) else null, if (goods) "GOODS" else "COMMISSION", note)
+                }
             }) { Text("حفظ") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
@@ -489,6 +528,7 @@ private fun OpeningBalanceDialog(
     art: Map<String, String>,
     busy: Boolean,
     onDismiss: () -> Unit,
+    party: String = "المورد",
     onSave: (currency: String, amount: String, weOwe: Boolean, sarAmount: String?, foreignPerUsd: String?, note: String) -> Unit,
 ) {
     var currency by remember { mutableStateOf(initial.takeIf { it in currencies } ?: currencies.first()) }
@@ -507,7 +547,7 @@ private fun OpeningBalanceDialog(
     val ok = amountValue != null && !sarInvalid && !rateInvalid
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("رصيد افتتاحي للمورد") },
+        title = { Text("رصيد افتتاحي لـ$party") },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("العملة", style = MaterialTheme.typography.labelLarge)
@@ -524,11 +564,11 @@ private fun OpeningBalanceDialog(
                 AmountField("المبلغ ($currency)", amount, Modifier.fillMaxWidth()) { amount = it }
                 Text("الاتجاه", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(selected = weOwe, onClick = { weOwe = true }, label = { Text("نحن مدينون للمورد") })
-                    FilterChip(selected = !weOwe, onClick = { weOwe = false }, label = { Text("المورد مدين لنا") })
+                    FilterChip(selected = weOwe, onClick = { weOwe = true }, label = { Text("نحن مدينون لـ$party") })
+                    FilterChip(selected = !weOwe, onClick = { weOwe = false }, label = { Text("$party مدين لنا") })
                 }
                 Text(
-                    if (weOwe) "يُضاف المبلغ إلى ما هو مستحق للمورد" else "يُسجَّل كمبلغ مدفوع مقدماً للمورد",
+                    if (weOwe) "يُضاف المبلغ إلى ما هو مستحق لـ$party" else "يُسجَّل كمبلغ مدفوع مقدماً لـ$party",
                     style = MaterialTheme.typography.bodySmall,
                     color = Lux.InkSoft,
                 )

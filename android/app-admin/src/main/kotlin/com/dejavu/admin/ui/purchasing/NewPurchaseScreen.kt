@@ -222,6 +222,9 @@ class NewPurchaseViewModel(
         private set
 
     var invoiceNo by mutableStateOf("")
+
+    /** Photo of the supplier's invoice (instead of, or with, its number). */
+    val invoicePhoto = InvoicePhoto(viewModelScope, purchasing) { say(it) }
     var shipping by mutableStateOf("")
     var note by mutableStateOf("")
     var receiveNow by mutableStateOf(true)
@@ -500,6 +503,7 @@ class NewPurchaseViewModel(
             !shippingValid -> "تكلفة الشحن غير صحيحة"
             !rateValid -> "أدخل سعر الدولار باليوان"
             !payAmountValid -> "المبلغ المدفوع يجب ألا يتجاوز الإجمالي"
+            invoicePhoto.uploading -> "جارٍ رفع صورة فاتورة المورد…"
             pay != PurchasePay.ON_ACCOUNT && boxes.isEmpty() -> "لا يوجد صندوق بالدولار — أنشئ صندوقاً بعملة USD من شاشة الخزينة"
             pay != PurchasePay.ON_ACCOUNT && boxId == null -> "اختر صندوق الدولار"
             else -> null
@@ -524,6 +528,7 @@ class NewPurchaseViewModel(
             currency = currency.code,
             foreignPerUsd = if (currency == PurchaseCurrency.CNY) rateOf(cnyRate)?.stripTrailingZeros()?.toPlainString() else null,
             payBoxId = if (payNow) boxId else null,
+            invoiceImageUrl = invoicePhoto.url,
         )
         busy = true
         error = null
@@ -533,6 +538,7 @@ class NewPurchaseViewModel(
                     say("تم إصدار فاتورة الشراء ${po.number}")
                     lines = emptyList()
                     newItems = emptyList()
+                    invoicePhoto.clear()
                     created(po.id)
                 },
                 { e -> error = e.userMessage() },
@@ -849,6 +855,7 @@ private fun InvoiceContent(
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    InvoicePhotoField(vm.invoicePhoto, Modifier.fillMaxWidth())
                     CompactField(
                         value = vm.note,
                         onValueChange = { vm.note = it.take(500) },

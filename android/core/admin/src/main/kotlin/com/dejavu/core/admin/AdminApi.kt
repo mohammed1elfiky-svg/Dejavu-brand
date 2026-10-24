@@ -59,6 +59,7 @@ interface AdminApi {
     @POST("admin/debtors/reminders") suspend fun remindDebtors(@Body body: DebtRemindersRequest): DebtRemindersResult
     @retrofit2.http.Streaming @GET("admin/system/backup") suspend fun backup(): ResponseBody
     @Multipart @POST("admin/system/restore") suspend fun restore(@Part file: MultipartBody.Part, @Part("confirm") confirm: okhttp3.RequestBody): RestoreResult
+    @GET("admin/reports/staff") suspend fun staffReport(@Query("from") from: String?, @Query("to") to: String?): StaffReport
     @GET("admin/reports/revenue") suspend fun revenue(@Query("from") from: String?, @Query("to") to: String?): RevenueReport
     @GET("admin/reports/sales") suspend fun sales(@Query("groupBy") groupBy: String, @Query("from") from: String?, @Query("to") to: String?): SalesReport
 
@@ -70,6 +71,7 @@ interface AdminApi {
         @Query("pageSize") pageSize: Int = 20,
     ): Page<AdminOrderSummary>
     @GET("admin/orders/{id}") suspend fun order(@Path("id") id: String): AdminOrderDetail
+    @Multipart @POST("admin/orders/{id}/shipping-receipt") suspend fun shippingReceipt(@Path("id") id: String, @Part file: MultipartBody.Part): AdminOrderDetail
     @POST("admin/orders/{id}/status") suspend fun changeStatus(@Path("id") id: String, @Body body: ChangeStatusRequest): AdminOrderDetail
     @POST("admin/orders/{id}/payments") suspend fun recordPayment(@Path("id") id: String, @Body body: PaymentRequest): AdminOrderDetail
     @POST("admin/orders/{id}/refunds") suspend fun refund(@Path("id") id: String, @Body body: PaymentRequest): AdminOrderDetail
@@ -126,7 +128,7 @@ interface AdminApi {
     @POST("admin/inventory/adjustments") suspend fun adjust(@Body body: AdjustmentRequest): AdjustmentResult
 
     // purchasing
-    @GET("admin/suppliers") suspend fun suppliers(@Query("q") query: String? = null, @Query("pageSize") pageSize: Int = 50): Page<Supplier>
+    @GET("admin/suppliers") suspend fun suppliers(@Query("q") query: String? = null, @Query("pageSize") pageSize: Int = 50, @Query("kind") kind: String? = null): Page<Supplier>
     @POST("admin/suppliers") suspend fun createSupplier(@Body body: CreateSupplierRequest): Supplier
     @GET("admin/suppliers/{id}") suspend fun supplier(@Path("id") id: String): SupplierDetail
     @PATCH("admin/suppliers/{id}") suspend fun updateSupplier(@Path("id") id: String, @Body body: UpdateSupplierRequest): Supplier

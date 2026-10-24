@@ -233,6 +233,8 @@ data class AdminOrderDetail(
     val returnedTotal: String = "0",
     val balanceDue: String,
     val customerNote: String? = null,
+    /** Photo of the shipping receipt sent to the customer. */
+    val shippingReceiptFileId: String? = null,
     val placedAt: String,
     val cancelReason: String? = null,
     val customer: PersonRef,
@@ -651,7 +653,12 @@ data class Supplier(
     val commissionPercent: String = "0",
     val email: String? = null,
     val address: String? = null,
+    val kind: SupplierKind = SupplierKind.SUPPLIER,
 )
+
+/** A goods supplier (dealt with in yuan) or a shipping company (freight and customs of imports, in dollars). */
+@Serializable
+enum class SupplierKind { SUPPLIER, SHIPPING_COMPANY }
 
 /** GET admin/suppliers/{id}: the supplier with its latest orders. */
 @Serializable
@@ -758,6 +765,10 @@ data class PurchaseOrderDetail(
     val freightCost: String = "0",
     val receivedAt: String? = null,
     val expectedDate: String? = null,
+    /** Photo of the supplier's invoice. */
+    val invoiceImageUrl: String? = null,
+    /** Import orders: the shipping company owed the freight and customs. */
+    val shippingCompanyId: String? = null,
 ) {
     val canReceive: Boolean get() = status == PurchaseOrderStatus.ORDERED || status == PurchaseOrderStatus.PARTIALLY_RECEIVED
     val isImport: Boolean get() = kind == PurchaseKind.IMPORT
@@ -800,6 +811,10 @@ data class ImportOrderRequest(
     val note: String? = null,
     val items: List<ImportItemRequest> = emptyList(),
     val newProducts: List<ImportNewProduct> = emptyList(),
+    /** Photo of the supplier's invoice ("admin/files/<id>"). */
+    val invoiceImageUrl: String? = null,
+    /** Shipping company owed the freight and customs (kind SHIPPING_COMPANY). */
+    val shippingCompanyId: String? = null,
 )
 
 /** Counted pieces and the costs known on arrival (preview and "receive & confirm"). */
@@ -813,6 +828,8 @@ data class ImportReceiveRequest(
     val commissionPercent: String? = null,
     val domesticShipping: String? = null,
     val note: String? = null,
+    /** Shipping company owed the freight and customs (in dollars); the order's one by default. */
+    val shippingCompanyId: String? = null,
 ) {
     @Serializable data class Line(val itemId: String, val quantity: Int, val cbm: String? = null)
 }
@@ -1091,6 +1108,9 @@ data class UpdateImportOrderRequest(
     val domesticShipping: String? = null,
     val supplierInvoiceNo: String? = null,
     val note: String? = null,
+    /** "" removes the invoice photo. */
+    val invoiceImageUrl: String? = null,
+    val shippingCompanyId: String? = null,
 )
 
 // ------------------------------------------------- supplier own account ---
@@ -1437,4 +1457,26 @@ data class StockCountDetail(
 @Serializable
 data class CreateStockCountRequest(val warehouseId: String, val items: List<Line>, val note: String? = null) {
     @Serializable data class Line(val variantId: String, val countedQty: Int)
+}
+
+// ----------------------------------------------------------- staff report ---
+
+/** GET admin/reports/staff: each cashier's period at the till. */
+@Serializable
+data class StaffReport(val from: String, val to: String, val staff: List<Row> = emptyList()) {
+    @Serializable
+    data class Row(
+        val user: NameRef,
+        val invoices: Int = 0,
+        val voided: Int = 0,
+        val revenue: String = "0",
+        val grossProfit: String = "0",
+        val averageInvoice: String = "0",
+        val discounts: String = "0",
+        /** + over, − short, per currency. */
+        val shiftDifferences: List<Diff> = emptyList(),
+        val closedShifts: Int = 0,
+    )
+
+    @Serializable data class Diff(val currency: String, val difference: String)
 }

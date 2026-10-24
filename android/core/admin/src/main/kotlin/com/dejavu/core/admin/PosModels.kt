@@ -411,6 +411,10 @@ data class BankAccountRequest(
     val iban: String? = null,
     val instructions: String? = null,
     val isActive: Boolean? = null,
+    /** Every currency the account takes (the main one included). */
+    val currencies: List<String>? = null,
+    /** "" removes the picture. */
+    val imageUrl: String? = null,
 )
 
 // -------------------------------------------------------------- promotions ---
@@ -745,6 +749,8 @@ data class QuickPurchaseRequest(
     val foreignPerUsd: String? = null,
     /** Orders in USD/CNY: the dollar box the payment comes from. */
     val payBoxId: String? = null,
+    /** Photo of the supplier's invoice ("admin/files/<id>" from uploadPrivate). */
+    val invoiceImageUrl: String? = null,
 )
 
 @Serializable
@@ -765,4 +771,10 @@ data class LocalNewProduct(
 )
 
 @Serializable
-data class CreateSupplierRequest(val name: String, val phone: String? = null, val commissionPercent: String? = null)
+data class CreateSupplierRequest(
+    val name: String,
+    val phone: String? = null,
+    val commissionPercent: String? = null,
+    /** SUPPLIER (goods, yuan) or SHIPPING_COMPANY (freight & customs, dollars). */
+    val kind: SupplierKind? = null,
+)

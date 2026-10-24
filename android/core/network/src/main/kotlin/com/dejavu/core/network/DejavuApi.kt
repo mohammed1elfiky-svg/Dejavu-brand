@@ -65,6 +65,15 @@ interface DejavuApi {
     @POST("auth/customer/otp")
     suspend fun sendOtp(@Body body: com.dejavu.core.model.OtpRequest): com.dejavu.core.model.OtpSent
 
+    @GET("store/stock-alerts")
+    suspend fun stockAlerts(): List<com.dejavu.core.model.StockAlert>
+
+    @POST("store/stock-alerts/{variantId}")
+    suspend fun watchStock(@Path("variantId") variantId: String): List<com.dejavu.core.model.StockAlert>
+
+    @DELETE("store/stock-alerts/{variantId}")
+    suspend fun unwatchStock(@Path("variantId") variantId: String): List<com.dejavu.core.model.StockAlert>
+
     @POST("auth/customer/otp/reset")
     suspend fun sendResetCode(@Body body: com.dejavu.core.model.OtpRequest): com.dejavu.core.model.OtpSent
 

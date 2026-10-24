@@ -360,6 +360,8 @@ data class OrderDetail(
     val grandTotal: String,
     val amountPaid: String,
     val customerNote: String? = null,
+    /** Photo of the shipping receipt (سند الإرسال), read with the customer token: store/me/files/{id}. */
+    val shippingReceiptFileId: String? = null,
     val placedAt: String,
     val deliveredAt: String? = null,
     val cancelledAt: String? = null,
@@ -528,7 +530,17 @@ data class StoreBankAccount(
     val instructions: String? = null,
     val isActive: Boolean = true,
     val sortOrder: Int = 0,
-)
+    /** Every currency the account takes (the main one first); empty on old servers = only [currency]. */
+    val currencies: List<String> = emptyList(),
+    /** Picture / logo of the account. */
+    val imageUrl: String? = null,
+) {
+    val accepted: List<String> get() = currencies.ifEmpty { listOf(currency.code) }
+}
+
+/** A size/colour the customer asked to be told about when it is back in stock. */
+@Serializable
+data class StockAlert(val variantId: String, val createdAt: String? = null, val size: String? = null, val color: String? = null, val productName: String? = null, val productSlug: String? = null)
 
 @Serializable
 enum class TopUpStatus { PENDING, APPROVED, REJECTED }

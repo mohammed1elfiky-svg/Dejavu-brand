@@ -132,6 +132,13 @@ private fun String.normalizedPhone() = filterNot { it.isWhitespace() }
 enum class ProductSort(val wire: String?) { NEWEST(null), PRICE_ASC("price_asc"), PRICE_DESC("price_desc") }
 
 class CatalogRepository(private val api: DejavuApi) {
+    /** Sizes/colours the signed-in customer waits for. */
+    suspend fun stockAlerts() = apiCall { api.stockAlerts() }
+
+    /** "Tell me when it is back": a notification arrives once [variantId] is in stock again. */
+    suspend fun watchStock(variantId: String) = apiCall { api.watchStock(variantId) }
+    suspend fun unwatchStock(variantId: String) = apiCall { api.unwatchStock(variantId) }
+
     private var categoriesCache: List<Category>? = null
     private var zonesCache: List<ShippingZone>? = null
 

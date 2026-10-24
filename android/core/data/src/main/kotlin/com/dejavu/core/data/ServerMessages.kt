@@ -34,6 +34,7 @@ object ServerMessages {
         "Upload the deposit receipt first" to "أرفق صورة إيصال الإيداع أولاً",
         "Bank account not found" to "الحساب البنكي غير متاح",
         "This order exceeds your credit limit" to "الطلب يتجاوز حد الشراء الآجل لحسابك، سدّد جزءاً من المستحق أو تواصل معنا",
+        "This size is in stock now" to "هذا المقاس متوفر الآن، يمكنك طلبه",
         "No account uses this phone number" to "لا يوجد حساب بهذا الرقم",
         "Wrong verification code" to "رمز التحقق غير صحيح",
         "The verification code expired; request a new one" to "انتهت صلاحية الرمز، اطلب رمزاً جديداً",

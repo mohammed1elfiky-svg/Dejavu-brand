@@ -127,6 +127,9 @@ class DashboardRepository(private val api: AdminApi) {
     /** Revenue of till and app sales, retail and merchants (dates yyyy-MM-dd; null = this month). */
     suspend fun revenue(from: String? = null, to: String? = null) = apiCall { api.revenue(from, to) }
 
+    /** Each cashier's invoices, revenue, discounts, deleted invoices and shift over/short. */
+    suspend fun staff(from: String? = null, to: String? = null) = apiCall { api.staffReport(from, to) }
+
     /** Best sellers with profit, and dead stock (no sale for [deadDays]). */
     suspend fun products(from: String? = null, to: String? = null, deadDays: Int? = null, limit: Int? = null) = apiCall { api.productsReport(from, to, deadDays, limit) }
 
@@ -144,6 +147,11 @@ class AdminOrderRepository(private val api: AdminApi) {
         apiCall { api.orders(status?.name, query?.trim()?.ifBlank { null }, page) }
 
     suspend fun get(id: String) = apiCall { api.order(id) }
+
+    /** Photo of the shipping receipt (سند الإرسال): the customer is notified and sees it on the order. */
+    suspend fun sendShippingReceipt(id: String, bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.shippingReceipt(id, MultipartBody.Part.createFormData("file", "receipt.jpg", bytes.toRequestBody(mimeType.toMediaType())))
+    }
 
     suspend fun changeStatus(id: String, status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null) =
         apiCall { api.changeStatus(id, ChangeStatusRequest(status, note?.ifBlank { null }, carrier?.ifBlank { null }, tracking?.ifBlank { null })) }
@@ -265,9 +273,17 @@ class InventoryRepository(private val api: AdminApi) {
 }
 
 class PurchasingRepository(private val api: AdminApi) {
-    suspend fun suppliers(query: String? = null) = apiCall { api.suppliers(query?.trim()?.ifBlank { null }) }
-    suspend fun createSupplier(name: String, phone: String? = null, commissionPercent: String? = null) =
-        apiCall { api.createSupplier(CreateSupplierRequest(name.trim(), phone?.trim()?.ifBlank { null }, commissionPercent?.trim()?.ifBlank { null })) }
+    suspend fun suppliers(query: String? = null, kind: SupplierKind? = null) = apiCall { api.suppliers(query?.trim()?.ifBlank { null }, kind = kind?.name) }
+    suspend fun createSupplier(name: String, phone: String? = null, commissionPercent: String? = null, kind: SupplierKind = SupplierKind.SUPPLIER) =
+        apiCall { api.createSupplier(CreateSupplierRequest(name.trim(), phone?.trim()?.ifBlank { null }, commissionPercent?.trim()?.ifBlank { null }, kind)) }
+
+    /** Photo of a supplier's invoice; send the returned url as invoiceImageUrl. Read it back with [file]. */
+    suspend fun uploadInvoiceImage(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadPrivate(MultipartBody.Part.createFormData("file", "invoice.jpg", bytes.toRequestBody(mimeType.toMediaType())))
+    }
+
+    /** A private file (invoice photo) by its id, read with the staff token. */
+    suspend fun file(id: String) = apiCall { api.file(id).bytes() }
     suspend fun supplier(id: String) = apiCall { api.supplier(id) }
     suspend fun updateSupplier(id: String, request: UpdateSupplierRequest) = apiCall { api.updateSupplier(id, request) }
 

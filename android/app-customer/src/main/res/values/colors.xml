@@ -3,4 +3,6 @@
     <color name="brand_background">#FBF8F4</color>
     <color name="brand_primary">#2B1B2F</color>
     <color name="brand_gold">#B08D57</color>
+    <color name="logo_gold">#D4AF37</color>
+    <color name="icon_background">#FFFFFF</color>
 </resources>

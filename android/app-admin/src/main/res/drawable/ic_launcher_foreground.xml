@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- "D" monogram with an underline bar marking the staff app. -->
+<!-- The DEJAVU logo (DE over JAVU, rounded gold strokes), centred in the 66dp safe zone of the adaptive icon. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#2B1B2F"
-        android:pathData="M38,30h16c13.3,0 22,8.7 22,22s-8.7,22 -22,22H38V30zM46,38v28h8c8.6,0 14,-5.4 14,-14s-5.4,-14 -14,-14h-8z" />
-    <path
-        android:fillColor="#2B1B2F"
-        android:pathData="M38,80h38v4H38z" />
+    <group
+        android:scaleX="0.14"
+        android:scaleY="0.14"
+        android:translateX="-13.9"
+        android:translateY="-32.17">
+        <path
+            android:pathData="M272,522 H400 A37,37 0 0 1 400,596 H272 M472,522 H566 M472,559 H546 M472,596 H566 M291,635 V690 A19,19 0 0 1 272,709 M328,709 L372,642 Q383,627 394,642 L437,709 M454,635 L498,702 Q509,717 520,702 L563,635 M600,635 V680 A29,29 0 0 0 629,709 H668 A29,29 0 0 0 697,680 V635"
+            android:strokeColor="@color/logo_gold"
+            android:strokeWidth="16"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
 </vector>

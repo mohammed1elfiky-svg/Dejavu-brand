@@ -2,4 +2,6 @@
 <resources>
     <color name="brand_background">#FBF8F4</color>
     <color name="brand_gold">#B08D57</color>
+    <color name="logo_gold">#D4AF37</color>
+    <color name="icon_background">#2B1B2F</color>
 </resources>

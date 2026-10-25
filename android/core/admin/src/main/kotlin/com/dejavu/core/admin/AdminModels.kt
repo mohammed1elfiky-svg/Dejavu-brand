@@ -1481,3 +1481,29 @@ data class StaffReport(val from: String, val to: String, val staff: List<Row> = 
 
     @Serializable data class Diff(val currency: String, val difference: String)
 }
+
+// ------------------------------------------------------- customer app setup ---
+
+@Serializable
+data class BankAccountDeleted(val deleted: Boolean = false, val hidden: Boolean = false)
+
+@Serializable
+data class StorePaymentMethodsRequest(val methods: List<com.dejavu.core.model.PaymentMethod>)
+
+/** A customer's review waiting for approval or shown in the store. */
+@Serializable
+data class AdminReview(
+    val id: String,
+    val rating: Int,
+    val comment: String? = null,
+    val images: List<String> = emptyList(),
+    val isApproved: Boolean = false,
+    val createdAt: String,
+    val customer: PersonRef? = null,
+    val product: Product? = null,
+) {
+    @Serializable data class Product(val id: String, val nameAr: String, val slug: String, val images: List<ImageUrl> = emptyList())
+}
+
+@Serializable
+data class ApproveReviewRequest(val approved: Boolean)

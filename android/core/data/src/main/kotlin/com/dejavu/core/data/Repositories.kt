@@ -132,6 +132,21 @@ private fun String.normalizedPhone() = filterNot { it.isWhitespace() }
 enum class ProductSort(val wire: String?) { NEWEST(null), PRICE_ASC("price_asc"), PRICE_DESC("price_desc") }
 
 class CatalogRepository(private val api: DejavuApi) {
+    /** Approved reviews of a product with the average rating. */
+    suspend fun reviews(slug: String, page: Int = 1) = apiCall { api.reviews(slug, page) }
+
+    /** The signed-in customer's own review and whether they received the product (may review). */
+    suspend fun myReview(slug: String) = apiCall { api.myReview(slug) }
+
+    /** Adds or replaces the review; it shows in the store once the store approves it. */
+    suspend fun writeReview(slug: String, rating: Int, comment: String?, images: List<String>) =
+        apiCall { api.writeReview(slug, com.dejavu.core.model.WriteReviewRequest(rating, comment?.trim()?.ifBlank { null }, images)) }
+
+    /** A photo for a review; send the returned url in writeReview. */
+    suspend fun uploadReviewPhoto(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadReviewPhoto(okhttp3.MultipartBody.Part.createFormData("file", "review.jpg", bytes.toRequestBody(mimeType.toMediaType())))
+    }
+
     /** Sizes/colours the signed-in customer waits for. */
     suspend fun stockAlerts() = apiCall { api.stockAlerts() }
 
@@ -224,12 +239,15 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
 
     private var methodsCache: List<PaymentMethod>? = null
 
-    /** Methods the checkout accepts right now (card only while a payment gateway is configured). */
-    suspend fun paymentMethods(): List<PaymentMethod> {
-        methodsCache?.let { return it }
-        return apiCall { api.paymentMethods() }.getOrNull()
+    /**
+     * Methods the checkout accepts right now, as the store set them (card only while a payment
+     * gateway is configured; cash on delivery only where the store offers it for [governorate]).
+     */
+    suspend fun paymentMethods(governorate: String? = null): List<PaymentMethod> {
+        if (governorate == null) methodsCache?.let { return it }
+        return apiCall { api.paymentMethods(governorate) }.getOrNull()
             ?.filter { it in CHECKOUT_METHODS }
-            ?.also { methodsCache = it }
+            ?.also { if (governorate == null) methodsCache = it }
             ?: CHECKOUT_METHODS.filter { it != PaymentMethod.CARD && it != PaymentMethod.CUSTOMER_ACCOUNT }
     }
 
@@ -238,7 +256,6 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
         val CHECKOUT_METHODS = listOf(
             PaymentMethod.CASH_ON_DELIVERY,
             PaymentMethod.CARD,
-            PaymentMethod.INSTAPAY,
             PaymentMethod.WALLET,
             PaymentMethod.BANK_TRANSFER,
             PaymentMethod.CUSTOMER_ACCOUNT,

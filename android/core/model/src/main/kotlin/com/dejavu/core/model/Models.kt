@@ -156,7 +156,42 @@ data class StoreProduct(
 }
 
 @Serializable
-data class ShippingZone(val governorate: String, val fee: String, val estimatedDays: Int, val isActive: Boolean = true)
+data class ShippingZone(
+    val governorate: String,
+    val fee: String = "0",
+    val estimatedDays: Int = 3,
+    val isActive: Boolean = true,
+    /** Cash on delivery is offered for addresses here. */
+    val codEnabled: Boolean = true,
+)
+
+// --------------------------------------------------------------- reviews ---
+
+/** A customer's review: stars, comment and photos. */
+@Serializable
+data class ProductReview(
+    val id: String,
+    val rating: Int,
+    val comment: String? = null,
+    val images: List<String> = emptyList(),
+    val createdAt: String,
+    /** First name of the customer. */
+    val customerName: String? = null,
+    val isApproved: Boolean = true,
+)
+
+/** GET store/products/{slug}/reviews (approved only). */
+@Serializable
+data class ProductReviews(val average: String = "0", val count: Int = 0, val items: List<ProductReview> = emptyList(), val total: Int = 0, val page: Int = 1, val pageSize: Int = 20) {
+    val hasMore: Boolean get() = page * pageSize < total
+}
+
+/** The customer's own review (waiting for approval or shown) and whether they may write one. */
+@Serializable
+data class MyReview(val review: ProductReview? = null, val canReview: Boolean = false)
+
+@Serializable
+data class WriteReviewRequest(val rating: Int, val comment: String? = null, val images: List<String> = emptyList())
 
 // ------------------------------------------------------------- addresses ---
 

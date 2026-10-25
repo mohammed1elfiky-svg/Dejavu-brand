@@ -240,6 +240,18 @@ interface AdminApi {
     @GET("admin/bank-accounts") suspend fun bankAccounts(): List<StoreBankAccount>
     @POST("admin/bank-accounts") suspend fun createBankAccount(@Body body: BankAccountRequest): StoreBankAccount
     @PATCH("admin/bank-accounts/{id}") suspend fun updateBankAccount(@Path("id") id: String, @Body body: BankAccountRequest): StoreBankAccount
+    @DELETE("admin/bank-accounts/{id}") suspend fun deleteBankAccount(@Path("id") id: String): BankAccountDeleted
+
+    // what the customer app offers
+    @GET("admin/store-payment-methods") suspend fun storePaymentMethods(): List<com.dejavu.core.model.PaymentMethod>
+    @PUT("admin/store-payment-methods") suspend fun setStorePaymentMethods(@Body body: StorePaymentMethodsRequest): List<com.dejavu.core.model.PaymentMethod>
+    @GET("admin/shipping-zones") suspend fun shippingZones(): List<com.dejavu.core.model.ShippingZone>
+    @PUT("admin/shipping-zones") suspend fun saveShippingZone(@Body body: com.dejavu.core.model.ShippingZone): com.dejavu.core.model.ShippingZone
+
+    // customer reviews
+    @GET("admin/reviews") suspend fun reviews(@Query("status") status: String? = null, @Query("page") page: Int = 1): Page<AdminReview>
+    @POST("admin/reviews/{id}/approve") suspend fun approveReview(@Path("id") id: String, @Body body: ApproveReviewRequest): AdminReview
+    @DELETE("admin/reviews/{id}") suspend fun deleteReview(@Path("id") id: String): Response<Unit>
 
     // promotions
     @GET("admin/promotions") suspend fun promotions(): List<Promotion>

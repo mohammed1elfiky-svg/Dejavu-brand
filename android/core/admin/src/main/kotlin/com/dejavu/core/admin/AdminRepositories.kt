@@ -504,6 +504,24 @@ class WalletAdminRepository(private val api: AdminApi) {
     suspend fun bankAccounts() = apiCall { api.bankAccounts() }
     suspend fun createBankAccount(request: BankAccountRequest) = apiCall { api.createBankAccount(request) }
     suspend fun updateBankAccount(id: String, request: BankAccountRequest) = apiCall { api.updateBankAccount(id, request) }
+
+    /** Deletes the account; one already used by top-ups is hidden instead ([BankAccountDeleted.hidden]). */
+    suspend fun deleteBankAccount(id: String) = apiCall { api.deleteBankAccount(id) }
+}
+
+/** What the customer app offers: payment methods, delivery areas and cash on delivery per governorate, reviews. */
+class StoreSetupRepository(private val api: AdminApi) {
+    suspend fun paymentMethods() = apiCall { api.storePaymentMethods() }
+    suspend fun setPaymentMethods(methods: List<com.dejavu.core.model.PaymentMethod>) = apiCall { api.setStorePaymentMethods(StorePaymentMethodsRequest(methods)) }
+    suspend fun zones() = apiCall { api.shippingZones() }
+    suspend fun saveZone(zone: com.dejavu.core.model.ShippingZone) = apiCall { api.saveShippingZone(zone) }
+
+    suspend fun reviews(status: String? = null, page: Int = 1) = apiCall { api.reviews(status, page) }
+    suspend fun approveReview(id: String, approved: Boolean) = apiCall { api.approveReview(id, ApproveReviewRequest(approved)) }
+    suspend fun deleteReview(id: String) = apiCall {
+        val res = api.deleteReview(id)
+        if (!res.isSuccessful) throw HttpException(res)
+    }
 }
 
 class PromotionRepository(private val api: AdminApi) {

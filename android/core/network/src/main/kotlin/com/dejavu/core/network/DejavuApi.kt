@@ -170,7 +170,20 @@ interface DejavuApi {
 
     // payments
     @GET("store/payment-methods")
-    suspend fun paymentMethods(): List<PaymentMethod>
+    suspend fun paymentMethods(@Query("governorate") governorate: String? = null): List<PaymentMethod>
+
+    @GET("store/products/{slug}/reviews")
+    suspend fun reviews(@Path("slug") slug: String, @Query("page") page: Int = 1): com.dejavu.core.model.ProductReviews
+
+    @GET("store/products/{slug}/my-review")
+    suspend fun myReview(@Path("slug") slug: String): com.dejavu.core.model.MyReview
+
+    @PUT("store/products/{slug}/my-review")
+    suspend fun writeReview(@Path("slug") slug: String, @Body body: com.dejavu.core.model.WriteReviewRequest): com.dejavu.core.model.ProductReview
+
+    @Multipart
+    @POST("store/me/review-photos")
+    suspend fun uploadReviewPhoto(@Part file: okhttp3.MultipartBody.Part): com.dejavu.core.model.UploadedFile
 
     @POST("store/orders/{number}/pay")
     suspend fun payByCard(@Path("number") number: String): CardCheckout

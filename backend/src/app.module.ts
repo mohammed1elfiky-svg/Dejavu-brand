@@ -21,6 +21,7 @@ import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { SmsModule } from './sms/sms.module';
 import { SystemModule } from './system/system.module';
+import { HomeModule } from './home/home.module';
 import { TreasuryModule } from './treasury/treasury.module';
 import { UsersModule } from './users/users.module';
 
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
     ExpensesModule,
     ReportsModule,
     SystemModule,
+    HomeModule,
     SmsModule,
   ],
   controllers: [HealthController],

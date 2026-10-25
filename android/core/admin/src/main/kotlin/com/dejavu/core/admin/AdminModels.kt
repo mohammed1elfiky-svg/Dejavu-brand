@@ -1507,3 +1507,53 @@ data class AdminReview(
 
 @Serializable
 data class ApproveReviewRequest(val approved: Boolean)
+
+// ------------------------------------------------------------------ home ---
+
+/** GET admin/home/search: everything matching one search box (only what the user may see). */
+@Serializable
+data class HomeSearch(
+    val products: List<P> = emptyList(),
+    val customers: List<C> = emptyList(),
+    val orders: List<O> = emptyList(),
+    val suppliers: List<S> = emptyList(),
+    val purchaseOrders: List<PO> = emptyList(),
+) {
+    val isEmpty: Boolean get() = products.isEmpty() && customers.isEmpty() && orders.isEmpty() && suppliers.isEmpty() && purchaseOrders.isEmpty()
+
+    @Serializable data class P(val id: String, val nameAr: String, val skuNumber: Int? = null, val status: String? = null, val basePrice: String = "0", val imageUrl: String? = null)
+    @Serializable data class C(val id: String, val name: String, val phone: String? = null, val code: String? = null, val isMerchant: Boolean = false)
+    @Serializable
+    data class O(
+        val id: String,
+        val number: String,
+        val status: String,
+        /** POS (till) or ONLINE (customer app). */
+        val channel: String,
+        val grandTotal: String,
+        val grandTotalInCurrency: String = grandTotal,
+        val currency: String = "SAR",
+        val placedAt: String,
+        val customer: NameRef? = null,
+    )
+    @Serializable data class S(val id: String, val name: String, val code: String? = null, val kind: SupplierKind = SupplierKind.SUPPLIER)
+    @Serializable data class PO(val id: String, val number: String, val status: String, val kind: String = "LOCAL", val supplier: NameRef? = null)
+}
+
+/** Counters for badges on the home screen and menu. */
+@Serializable
+data class HomeBadges(
+    val newOrders: Int = 0,
+    val topUps: Int = 0,
+    val reviews: Int = 0,
+    val openShifts: Int = 0,
+    val smsWaiting: Int = 0,
+    val returns: Int = 0,
+    val lowStock: Int = 0,
+)
+
+/** GET admin/home/daily-sales: revenue per day (SAR, net of tax) and the total of the period before. */
+@Serializable
+data class DailySales(val days: List<Day> = emptyList(), val total: String = "0", val previousTotal: String = "0") {
+    @Serializable data class Day(val date: String, val revenue: String, val orders: Int = 0)
+}

@@ -38,6 +38,9 @@ interface AdminApi {
 
     // dashboard & reports
     @GET("admin/reports/dashboard") suspend fun dashboard(): Dashboard
+    @GET("admin/home/search") suspend fun homeSearch(@Query("q") q: String): HomeSearch
+    @GET("admin/home/badges") suspend fun badges(): HomeBadges
+    @GET("admin/home/daily-sales") suspend fun dailySales(@Query("days") days: Int = 7): DailySales
     @GET("admin/reports/income-statement") suspend fun incomeStatement(@Query("from") from: String?, @Query("to") to: String?): IncomeStatement
     @GET("admin/reports/balance-sheet") suspend fun balanceSheet(@Query("asOf") asOf: String? = null): BalanceSheet
     @GET("admin/reports/products") suspend fun productsReport(@Query("from") from: String?, @Query("to") to: String?, @Query("deadDays") deadDays: Int? = null, @Query("limit") limit: Int? = null): ProductsReport

@@ -120,6 +120,15 @@ class StaffSessionRepository(private val api: AdminApi, private val tokens: Toke
 
 class DashboardRepository(private val api: AdminApi) {
     suspend fun dashboard() = apiCall { api.dashboard() }
+
+    /** One search box: products (name, SKU, barcode), customers, invoices, suppliers, purchase orders. */
+    suspend fun search(query: String) = apiCall { api.homeSearch(query.trim()) }
+
+    /** Counters for badges (new app orders, top-ups, reviews, open shifts, texts waiting, returns, low stock). */
+    suspend fun badges() = apiCall { api.badges() }
+
+    /** Revenue per day for the home chart, with the previous period's total. */
+    suspend fun dailySales(days: Int = 7) = apiCall { api.dailySales(days) }
     suspend fun incomeStatement(from: String? = null, to: String? = null) = apiCall { api.incomeStatement(from, to) }
     suspend fun balanceSheet() = apiCall { api.balanceSheet() }
     suspend fun sales(groupBy: String, from: String? = null, to: String? = null) = apiCall { api.sales(groupBy, from, to) }

@@ -85,6 +85,13 @@ import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.TextDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.UndoableDeletes
+import com.dejavu.admin.ui.showUndoDelete
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
@@ -109,7 +116,6 @@ import com.dejavu.core.model.TopUpStatus
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -182,6 +188,18 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
         }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val s = status
+        val res = repo.list(s, 1)
+        if (s == status) {
+            page = 1
+            _hasMore.value = res.getOrNull()?.hasMore == true
+            _state.value = res.map { it.items }.toLoad()
+        }
+    }
+
     fun more() {
         val current = (_state.value as? Load.Ready)?.value ?: return
         if (_loadingMore.value || !_hasMore.value) return
@@ -204,6 +222,7 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val loadingMore by vm.loadingMore.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var status by rememberSaveable { mutableStateOf(vm.status) }
     CollectMessages(vm, snackbar)
@@ -228,8 +247,21 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
                 },
             )
             LoadContent(state, onRetry = { vm.load() }) { list ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (list.isEmpty()) {
-                    EmptyState(Icons.Filled.Email, if (status == TopUpStatus.PENDING) "لا توجد طلبات بانتظار المراجعة" else "لا توجد طلبات")
+                    if (status == TopUpStatus.PENDING) {
+                        EmptyList(Icons.Filled.Email, "لا توجد طلبات بانتظار المراجعة", "تظهر هنا طلبات شحن الرصيد التي يرسلها العملاء مع صورة الإيصال")
+                    } else {
+                        EmptyList(
+                            Icons.Filled.Email,
+                            "لا توجد طلبات",
+                            action = if (status != null) "عرض الكل" else null,
+                            onAction = {
+                                status = null
+                                vm.select(null)
+                            },
+                        )
+                    }
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(list, key = { it.id }) { t -> TopUpRow(t) { open(t.id) } }
@@ -241,6 +273,7 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -595,6 +628,7 @@ class BankAccountsViewModel(
     private val repo: WalletAdminRepository,
     private val finance: FinanceRepository,
     private val inventory: InventoryRepository,
+    appScope: CoroutineScope,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<StoreBankAccount>>>(Load.Loading)
     val state = _state.asStateFlow()
@@ -619,6 +653,13 @@ class BankAccountsViewModel(
         }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.bankAccounts().toLoad() }
+
+    /** Deleted accounts wait a few seconds for "تراجع" before the server is asked. */
+    val deletes = UndoableDeletes(appScope, viewModelScope) { say(it) }
+
     /** Uploads the account's picture and hands back its URL (saved with the account later). */
     fun uploadPicture(bytes: ByteArray, done: (String) -> Unit) {
         if (_uploading.value) return
@@ -640,15 +681,22 @@ class BankAccountsViewModel(
 
     fun setActive(a: StoreBankAccount, active: Boolean) = save(a, a.toRequest().copy(isActive = active)) {}
 
-    /** Deletes the account; one already used by top-ups is hidden from the app instead. */
-    fun delete(a: StoreBankAccount) = act {
-        repo.deleteBankAccount(a.id).orSay()?.let { res ->
-            say(
-                if (res.hidden) "الحساب مستخدم في طلبات شحن سابقة، فتم إخفاؤه من التطبيق بدل حذفه"
-                else "تم حذف الحساب ${a.bankName}",
-            )
+    /**
+     * Hides the account now and deletes it once the undo snackbar is gone; one already used by
+     * top-ups is hidden from the app by the server instead, and comes back here as inactive.
+     */
+    fun delete(a: StoreBankAccount) = deletes.hide(a.id) {
+        repo.deleteBankAccount(a.id).onSuccess { res ->
+            if (res.hidden) {
+                say("الحساب مستخدم في طلبات شحن سابقة، فتم إخفاؤه من التطبيق بدل حذفه")
+                deletes.show(a.id)
+            }
             repo.bankAccounts().getOrNull()?.let { list -> _state.value = Load.Ready(list) }
         }
+    }
+
+    override fun onCleared() {
+        deletes.flush()
     }
 
     private fun act(block: suspend () -> Unit) {
@@ -675,8 +723,11 @@ private fun StoreBankAccount.toRequest() = BankAccountRequest(
 /** Store bank accounts shown to customers for deposits. */
 @Composable
 fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
-    val vm = adminViewModel { BankAccountsViewModel(it.wallet, it.finance, it.inventory) }
+    val vm = adminViewModel { BankAccountsViewModel(it.wallet, it.finance, it.inventory, it.appScope) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
+    val hidden by vm.deletes.hidden.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     val currencies by vm.currencies.collectAsStateWithLifecycle()
     val currencyImages by vm.currencyImages.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -708,17 +759,20 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             }
         },
     ) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { all ->
+            val list = all.filterNot { it.id in hidden }
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
             if (list.isEmpty()) {
-                EmptyState(
+                EmptyList(
                     Icons.Filled.Home,
                     "لا توجد حسابات بنكية",
                     "أضف حسابات المتجر ليحوّل إليها العملاء عند شحن أرصدتهم.",
-                    modifier = Modifier.padding(padding),
+                    action = if (canEdit) "إضافة حساب" else null,
+                    onAction = { adding = true },
                 )
             } else {
                 LazyColumn(
-                    Modifier.padding(padding),
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -735,6 +789,7 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                         )
                     }
                 }
+            }
             }
         }
     }
@@ -757,7 +812,10 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             "حذف حساب ${a.bankName} (${a.accountNumber})؟ إن كان مستخدماً في طلبات شحن سابقة فسيُخفى من التطبيق بدل حذفه.",
             "حذف",
             onDismiss = { deleting = null },
-        ) { vm.delete(a) }
+        ) {
+            vm.delete(a)
+            scope.showUndoDelete(snackbar, vm.deletes, a.id, "تم حذف حساب ${a.bankName}")
+        }
     }
 }
 

@@ -66,6 +66,9 @@ import com.dejavu.admin.ui.JournalEntriesCard
 import com.dejavu.admin.ui.MoneyDialog
 import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.foundation.layout.height
 import com.dejavu.admin.ui.theme.Lux
 import androidx.compose.ui.graphics.Color
 import com.dejavu.admin.ui.label
@@ -124,6 +127,15 @@ class PurchasingViewModel(private val repo: PurchasingRepository) : BaseViewMode
         viewModelScope.launch { _orders.value = repo.orders(status).map { it.items }.toLoad() }
         viewModelScope.launch { repo.suppliers().getOrNull()?.let { _suppliers.value = it.items } }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val s = status
+        repo.suppliers().getOrNull()?.let { _suppliers.value = it.items }
+        val res = repo.orders(s).map { it.items }.toLoad()
+        if (s == status) _orders.value = res
+    }
 }
 
 @Composable
@@ -132,6 +144,7 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
     val canWrite = adminContainer().session.can(PURCHASES_WRITE)
     val orders by vm.orders.collectAsStateWithLifecycle()
     val suppliers by vm.suppliers.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -151,7 +164,8 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
             }
         },
     ) { padding ->
-        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(bottom = 88.dp)) {
+        RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
             item {
                 Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = openSuppliers, modifier = Modifier.weight(1f)) { Text("الموردون والبضائع المعلقة") }
@@ -173,7 +187,22 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
                 Load.Loading -> item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp)) }
                 is Load.Failed -> item { TextButton(onClick = { vm.load() }) { Text("${s.message} — إعادة المحاولة") } }
                 is Load.Ready -> {
-                    if (s.value.isEmpty()) item { EmptyState(Icons.AutoMirrored.Filled.List, "لا توجد أوامر شراء") }
+                    if (s.value.isEmpty()) {
+                        item {
+                            EmptyState(
+                                Icons.AutoMirrored.Filled.List,
+                                "لا توجد أوامر شراء",
+                                if (vm.status != null) "لا أوامر بهذه الحالة" else "سجّل مشترياتك من الموردين لتدخل المخزون وتُقيَّد في الحسابات",
+                                action = when {
+                                    vm.status != null -> "عرض الكل"
+                                    canWrite -> "أمر شراء جديد"
+                                    else -> null
+                                },
+                                onAction = { if (vm.status != null) vm.filter(null) else newPurchase() },
+                                modifier = Modifier.height(320.dp),
+                            )
+                        }
+                    }
                     items(s.value, key = { it.id }) { po ->
                         Card(
                             onClick = { openOrder(po.id) },
@@ -192,6 +221,7 @@ fun PurchasingScreen(onBack: () -> Unit, openOrder: (String) -> Unit, newPurchas
                     }
                 }
             }
+        }
         }
     }
 }

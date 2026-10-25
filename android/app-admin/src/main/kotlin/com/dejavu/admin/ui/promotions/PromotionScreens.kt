@@ -70,8 +70,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.UndoableDeletes
+import com.dejavu.admin.ui.showUndoDelete
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
@@ -86,7 +93,6 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.ProductImage
@@ -164,7 +170,7 @@ private fun Promotion.toRequest(isActive: Boolean = this.isActive) = PromotionRe
 
 // --------------------------------------------------------------------- list ---
 
-class PromotionsViewModel(private val repo: PromotionRepository) : BaseViewModel() {
+class PromotionsViewModel(private val repo: PromotionRepository, appScope: CoroutineScope) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<Promotion>>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _busy = MutableStateFlow(false)
@@ -175,6 +181,13 @@ class PromotionsViewModel(private val repo: PromotionRepository) : BaseViewModel
         viewModelScope.launch { _state.value = repo.list().toLoad() }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list().toLoad() }
+
+    /** Deleted promotions wait a few seconds for "تراجع" before the server is asked. */
+    val deletes = UndoableDeletes(appScope, viewModelScope) { say(it) }
+
     fun setActive(p: Promotion, active: Boolean) = act {
         repo.update(p.id, p.toRequest(isActive = active)).orSay()?.let { updated ->
             replace(updated)
@@ -182,11 +195,15 @@ class PromotionsViewModel(private val repo: PromotionRepository) : BaseViewModel
         }
     }
 
-    fun delete(p: Promotion) = act {
-        repo.delete(p.id).orSay()?.let {
+    /** Hides the promotion now; it is deleted (prices go back to normal) once the undo snackbar is gone. */
+    fun delete(p: Promotion) = deletes.hide(p.id) {
+        repo.delete(p.id).onSuccess {
             (_state.value as? Load.Ready)?.let { s -> _state.value = Load.Ready(s.value.filter { it.id != p.id }) }
-            say("تم حذف العرض")
         }
+    }
+
+    override fun onCleared() {
+        deletes.flush()
     }
 
     private fun replace(p: Promotion) {
@@ -206,12 +223,14 @@ class PromotionsViewModel(private val repo: PromotionRepository) : BaseViewModel
 /** Percent-off promotions on chosen products. [open] gets "new" or a promotion id. */
 @Composable
 fun PromotionsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, open: (String) -> Unit) {
-    val vm = adminViewModel { PromotionsViewModel(it.promotions) }
+    val vm = adminViewModel { PromotionsViewModel(it.promotions, it.appScope) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
+    val hidden by vm.deletes.hidden.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     val canManage = session.can(Perm.PROMOTIONS_MANAGE)
-    var deleting by remember { mutableStateOf<Promotion?>(null) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -234,17 +253,20 @@ fun PromotionsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, open: (
             }
         },
     ) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { all ->
+            val list = all.filterNot { it.id in hidden }
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
             if (list.isEmpty()) {
-                EmptyState(
+                EmptyList(
                     Icons.Filled.Favorite,
                     "لا توجد عروض بعد",
                     "أنشئ عرضاً بنسبة خصم على منتجات مختارة، يظهر للعملاء وفي الكاشير تلقائياً.",
-                    modifier = Modifier.padding(padding),
+                    action = if (canManage) "إنشاء عرض" else null,
+                    onAction = { open("new") },
                 )
             } else {
                 LazyColumn(
-                    Modifier.padding(padding),
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -256,21 +278,16 @@ fun PromotionsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, open: (
                             busy = busy,
                             onOpen = { open(p.id) },
                             onToggle = { vm.setActive(p, it) },
-                            onDelete = { deleting = p },
+                            onDelete = {
+                                vm.delete(p)
+                                scope.showUndoDelete(snackbar, vm.deletes, p.id, "تم حذف عرض \"${p.name}\"")
+                            },
                         )
                     }
                 }
             }
+            }
         }
-    }
-
-    deleting?.let { p ->
-        ConfirmDialog(
-            "حذف العرض",
-            "سيُحذف عرض \"${p.name}\" وتعود أسعار منتجاته (${p.products.size}) إلى طبيعتها.",
-            "حذف",
-            onDismiss = { deleting = null },
-        ) { vm.delete(p) }
     }
 }
 

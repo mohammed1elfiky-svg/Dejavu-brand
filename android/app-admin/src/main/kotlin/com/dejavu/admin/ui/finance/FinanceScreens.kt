@@ -89,6 +89,12 @@ import com.dejavu.admin.ui.ChipFilter
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.ListDetail
+import com.dejavu.admin.ui.RecentItem
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.isWideScreen
 import com.dejavu.admin.ui.pos.decimalInput
 import com.dejavu.admin.ui.pos.validAmount
 import com.dejavu.admin.ui.treasury.sourceLabel
@@ -994,6 +1000,13 @@ class CustomersViewModel(private val repo: FinanceRepository) : BaseViewModel() 
         viewModelScope.launch { fetch(reset = false) }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        search?.cancel()
+        fetch(reset = true)
+    }
+
     private suspend fun fetch(reset: Boolean) {
         val next = if (reset) 1 else page + 1
         repo.customers(query, next).fold(
@@ -1008,10 +1021,39 @@ class CustomersViewModel(private val repo: FinanceRepository) : BaseViewModel() 
     }
 }
 
+/**
+ * Customer list. On a wide screen with a [detailPane] the chosen customer opens beside the list;
+ * otherwise [openCustomer] navigates to it.
+ */
 @Composable
-fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
+fun CustomersScreen(
+    onBack: () -> Unit,
+    openCustomer: (String) -> Unit,
+    detailPane: (@Composable (id: String, close: () -> Unit) -> Unit)? = null,
+) {
+    if (detailPane != null && isWideScreen()) {
+        var selected by rememberSaveable { mutableStateOf<String?>(null) }
+        ListDetail(
+            list = { CustomersList(onBack, openCustomer = { selected = it }, selected) },
+            detail = {
+                val id = selected
+                if (id == null) {
+                    EmptyState(Icons.Filled.Person, "اختر عميلاً", "يظهر حساب العميل وطلباته هنا")
+                } else {
+                    androidx.compose.runtime.key(id) { detailPane(id) { selected = null } }
+                }
+            },
+        )
+    } else {
+        CustomersList(onBack, openCustomer, selected = null)
+    }
+}
+
+@Composable
+private fun CustomersList(onBack: () -> Unit, openCustomer: (String) -> Unit, selected: String?) {
     val vm = adminViewModel { CustomersViewModel(it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var query by rememberSaveable { mutableStateOf("") }
@@ -1035,15 +1077,31 @@ fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
             )
             LoadContent(state, onRetry = vm::load) { customers ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (customers.isEmpty()) {
-                    EmptyState(Icons.Filled.Person, "لا يوجد عملاء مطابقون")
-                    return@LoadContent
+                    if (query.isNotBlank()) {
+                        EmptyList(
+                            Icons.Filled.Search,
+                            "لا يوجد عملاء مطابقون",
+                            "جرّب اسماً أو رقماً آخر",
+                            action = "مسح البحث",
+                            onAction = {
+                                query = ""
+                                vm.search("")
+                            },
+                        )
+                    } else {
+                        EmptyList(Icons.Filled.Person, "لا يوجد عملاء بعد", "يُضاف العملاء تلقائياً عند الطلب من التطبيق أو البيع في نقطة البيع")
+                    }
+                    return@RefreshList
                 }
                 LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
                     items(customers, key = { it.id }) { c ->
                         Card(
                             onClick = { openCustomer(c.id) },
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (c.id == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                            ),
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                         ) {
                             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1063,6 +1121,7 @@ fun CustomersScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
                             OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(16.dp)) { Text("عرض المزيد") }
                         }
                     }
+                }
                 }
             }
         }
@@ -1244,6 +1303,11 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
+    }
+    val uiPrefs = adminContainer().uiPrefs
+    val loaded = (state as? Load.Ready)?.value
+    LaunchedEffect(loaded?.id) {
+        if (loaded != null) uiPrefs.addRecent(RecentItem("customer", id, loaded.name, listOf(loaded.code, loaded.phone).filter { it.isNotBlank() }.joinToString(" · ")))
     }
     if (collecting) {
         CollectDialog(currencies, hasPhone, onDismiss = { collecting = false }) { currency, amount, sendSms ->

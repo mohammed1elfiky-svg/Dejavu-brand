@@ -56,6 +56,9 @@ import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.JournalEntriesCard
 import com.dejavu.admin.ui.TextDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
 import com.dejavu.admin.ui.label
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.ExpenseCategory
@@ -72,7 +75,6 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -104,12 +106,22 @@ class ExpensesViewModel(private val repo: ExpenseRepository) : BaseViewModel() {
         if (reset || _state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.list(status).toLoad() }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val s = status
+        val res = repo.list(s).toLoad()
+        if (s == status) _state.value = res
+    }
 }
 
 @Composable
 fun ExpensesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openExpense: (String) -> Unit, newExpense: () -> Unit) {
     val vm = adminViewModel { ExpensesViewModel(it.expenses) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
+    val canWrite = session.can(Perm.EXPENSES_WRITE)
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -124,8 +136,19 @@ fun ExpensesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openExpen
         Column(Modifier.padding(padding)) {
             ChipFilter(listOf(null) + ExpenseStatus.entries, vm.status, { it?.label ?: "الكل" }, vm::filter)
             LoadContent(state, onRetry = { vm.load() }) { page ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (page.items.isEmpty()) {
-                    EmptyState(Icons.AutoMirrored.Filled.List, "لا توجد مصروفات")
+                    EmptyList(
+                        Icons.AutoMirrored.Filled.List,
+                        "لا توجد مصروفات",
+                        if (vm.status != null) "لا مصروفات بهذه الحالة" else "سجّل الإيجار والرواتب والفواتير لتظهر في التقارير",
+                        action = when {
+                            vm.status != null -> "عرض الكل"
+                            canWrite -> "مصروف جديد"
+                            else -> null
+                        },
+                        onAction = { if (vm.status != null) vm.filter(null) else newExpense() },
+                    )
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         item { SummaryRow("الإجمالي (${page.total})", Money.format(page.totals.amount), strong = true) }
@@ -142,6 +165,7 @@ fun ExpensesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openExpen
                             }
                         }
                     }
+                }
                 }
             }
         }

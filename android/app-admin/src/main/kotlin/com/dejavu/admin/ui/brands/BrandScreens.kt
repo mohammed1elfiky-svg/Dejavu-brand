@@ -29,10 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,8 +41,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
-import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.UndoableDeletes
+import com.dejavu.admin.ui.showUndoDelete
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminBrand
@@ -53,7 +58,6 @@ import com.dejavu.core.admin.InventoryRepository
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.media.rememberImagePicker
@@ -67,7 +71,7 @@ import kotlinx.coroutines.launch
 /** What the brand dialog is editing: null id = a new brand. */
 data class BrandDraft(val id: String? = null, val name: String = "", val logoUrl: String = "", val savedLogo: String = "", val isActive: Boolean = true)
 
-class BrandsViewModel(private val repo: InventoryRepository) : BaseViewModel() {
+class BrandsViewModel(private val repo: InventoryRepository, appScope: CoroutineScope) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<AdminBrand>>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _draft = MutableStateFlow<BrandDraft?>(null)
@@ -80,6 +84,13 @@ class BrandsViewModel(private val repo: InventoryRepository) : BaseViewModel() {
     fun load() {
         viewModelScope.launch { _state.value = repo.brands().toLoad() }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.brands().toLoad() }
+
+    /** Deleted brands wait a few seconds for "تراجع" before the server is asked. */
+    val deletes = UndoableDeletes(appScope, viewModelScope) { say(it) }
 
     fun open(brand: AdminBrand?) {
         _draft.value = brand?.let { BrandDraft(it.id, it.name, it.logoUrl.orEmpty(), it.logoUrl.orEmpty(), it.isActive) } ?: BrandDraft()
@@ -122,25 +133,32 @@ class BrandsViewModel(private val repo: InventoryRepository) : BaseViewModel() {
         }
     }
 
+    /** Hides the brand now; it is deleted (its products keep no brand) once the undo snackbar is gone. */
     fun delete(brand: AdminBrand) {
-        viewModelScope.launch {
-            repo.deleteBrand(brand.id).orSay()?.let {
-                say("تم حذف ${brand.name}")
-                _draft.value = null
-                load()
+        _draft.value = null
+        deletes.hide(brand.id) {
+            repo.deleteBrand(brand.id).onSuccess {
+                repo.brands().onSuccess { _state.value = Load.Ready(it) }
             }
         }
+    }
+
+    override fun onCleared() {
+        deletes.flush()
     }
 }
 
 /** Brands list: logo, name and product count; add, edit, delete and open its products. */
 @Composable
 fun BrandsScreen(canEdit: Boolean, onBack: () -> Unit, openProducts: (String) -> Unit) {
-    val vm = adminViewModel { BrandsViewModel(it.inventory) }
+    val vm = adminViewModel { BrandsViewModel(it.inventory, it.appScope) }
     val state by vm.state.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
+    val hidden by vm.deletes.hidden.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     CollectMessages(vm, snackbar)
     LaunchedEffect(vm) { vm.load() }
 
@@ -160,12 +178,20 @@ fun BrandsScreen(canEdit: Boolean, onBack: () -> Unit, openProducts: (String) ->
             }
         },
     ) { padding ->
-        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { brands ->
+        LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { all ->
+            val brands = all.filterNot { it.id in hidden }
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
             if (brands.isEmpty()) {
-                EmptyState(Icons.Filled.Add, "لا توجد ماركات بعد", modifier = Modifier.padding(padding))
+                EmptyList(
+                    Icons.Filled.Star,
+                    "لا توجد ماركات بعد",
+                    "أضف الماركات التي تبيعها ليختار العملاء منتجاتهم حسب الماركة",
+                    action = if (canEdit) "إضافة ماركة" else null,
+                    onAction = { vm.open(null) },
+                )
             } else {
                 LazyColumn(
-                    Modifier.padding(padding),
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -187,19 +213,29 @@ fun BrandsScreen(canEdit: Boolean, onBack: () -> Unit, openProducts: (String) ->
                     }
                 }
             }
+            }
         }
     }
 
     draft?.let { d ->
         val brand = (state as? Load.Ready)?.value?.firstOrNull { it.id == d.id }
-        BrandDialog(d, busy, vm, onDelete = brand?.let { b -> { vm.delete(b) } })
+        BrandDialog(
+            d,
+            busy,
+            vm,
+            onDelete = brand?.let { b ->
+                {
+                    vm.delete(b)
+                    scope.showUndoDelete(snackbar, vm.deletes, b.id, "تم حذف ${b.name}")
+                }
+            },
+        )
     }
 }
 
 @Composable
 private fun BrandDialog(d: BrandDraft, busy: Boolean, vm: BrandsViewModel, onDelete: (() -> Unit)?) {
     val picker = rememberImagePicker(maxSide = 600) { vm.uploadLogo(it) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = vm::close,
         title = { Text(if (d.id == null) "ماركة جديدة" else "تعديل الماركة") },
@@ -227,7 +263,7 @@ private fun BrandDialog(d: BrandDraft, busy: Boolean, vm: BrandsViewModel, onDel
                         Switch(checked = d.isActive, onCheckedChange = { v -> vm.edit { it.copy(isActive = v) } })
                     }
                     if (onDelete != null) {
-                        TextButton(onClick = { confirmDelete = true }) { Text("حذف الماركة", color = MaterialTheme.colorScheme.error) }
+                        TextButton(onClick = onDelete) { Text("حذف الماركة", color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }
@@ -235,17 +271,6 @@ private fun BrandDialog(d: BrandDraft, busy: Boolean, vm: BrandsViewModel, onDel
         confirmButton = { TextButton(onClick = vm::save, enabled = !busy && d.name.isNotBlank()) { Text("حفظ") } },
         dismissButton = { TextButton(onClick = vm::close) { Text("إلغاء") } },
     )
-    if (confirmDelete && onDelete != null) {
-        ConfirmDialog(
-            "حذف الماركة",
-            "ستُحذف الماركة \"${d.name}\" وتبقى منتجاتها بدون ماركة.",
-            "حذف",
-            onDismiss = { confirmDelete = false },
-        ) {
-            confirmDelete = false
-            onDelete()
-        }
-    }
 }
 
 /** Round brand logo, or the first letter in gold when there is none. */

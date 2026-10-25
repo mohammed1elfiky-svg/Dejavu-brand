@@ -71,6 +71,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RecentItem
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.material.icons.filled.Person
 import com.dejavu.admin.ui.label
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
@@ -99,7 +105,6 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -178,6 +183,14 @@ class SuppliersViewModel(private val repo: PurchasingRepository) : BaseViewModel
         viewModelScope.launch { _state.value = repo.suppliers(kind = k).map { it.items }.toLoad() }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val k = kind
+        val res = repo.suppliers(kind = k).map { it.items }.toLoad()
+        if (k == kind) _state.value = res
+    }
+
     fun create(name: String, phone: String, commission: String, kind: SupplierKind, then: (String) -> Unit) {
         viewModelScope.launch {
             repo.createSupplier(name, phone, commission, kind).orSay()?.let {
@@ -201,6 +214,7 @@ internal val SupplierKind.kindLabel: String
 fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (String) -> Unit) {
     val vm = adminViewModel { SuppliersViewModel(it.purchasing) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var adding by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
@@ -231,8 +245,16 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
                 FilterChip(selected = vm.kind == SupplierKind.SHIPPING_COMPANY, onClick = { vm.filter(SupplierKind.SHIPPING_COMPANY) }, label = { Text("شركات الشحن") })
             }
             LoadContent(state, onRetry = vm::load) { list ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (list.isEmpty()) {
-                    EmptyState(Icons.Filled.Add, if (vm.kind == SupplierKind.SHIPPING_COMPANY) "لا توجد شركات شحن بعد" else "لا يوجد موردون بعد")
+                    val shipping = vm.kind == SupplierKind.SHIPPING_COMPANY
+                    EmptyList(
+                        Icons.Filled.Person,
+                        if (shipping) "لا توجد شركات شحن بعد" else "لا يوجد موردون بعد",
+                        if (shipping) "أضف شركة الشحن لتسجيل الشحن الخارجي والجمارك عليها" else "أضف موردك لتسجيل طلبيات الاستيراد وحسابه",
+                        action = if (canManage) (if (shipping) "إضافة شركة شحن" else "إضافة مورد") else null,
+                        onAction = { adding = true },
+                    )
                 } else {
                     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(list, key = { it.id }) { s ->
@@ -250,6 +272,7 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -345,6 +368,11 @@ fun SupplierScreen(
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
+    }
+    val uiPrefs = adminContainer().uiPrefs
+    val loaded = (state as? Load.Ready)?.value?.first
+    LaunchedEffect(loaded?.id) {
+        if (loaded != null) uiPrefs.addRecent(RecentItem("supplier", id, loaded.name, "${loaded.kind.kindLabel} · ${loaded.code}"))
     }
     Scaffold(
         contentWindowInsets = WindowInsets(0),

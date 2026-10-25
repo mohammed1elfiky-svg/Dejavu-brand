@@ -78,6 +78,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.ListDetail
+import com.dejavu.admin.ui.RecentItem
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.isWideScreen
 import com.dejavu.core.admin.AdjustmentReason
 import com.dejavu.core.admin.AdminBrand
 import com.dejavu.core.admin.AdminProduct
@@ -245,6 +252,14 @@ class StockViewModel(private val repo: InventoryRepository) : BaseViewModel() {
         }
     }
 
+    val refresher = Refresher()
+
+    /** Pull to refresh: re-fetches what is shown, keeping the list on screen. */
+    fun pullRefresh() = refresher.run(viewModelScope) {
+        load()
+        job?.join()
+    }
+
     fun loadMore() {
         val current = (_state.value as? Load.Ready)?.value ?: return
         if (!current.hasMore || current.loadingMore || job?.isActive == true) return
@@ -283,6 +298,7 @@ fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit, openPr
     val categories by vm.categories.collectAsStateWithLifecycle()
     val warehouses by vm.warehouses.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var query by rememberSaveable { mutableStateOf(vm.query) }
     var onlyLow by rememberSaveable { mutableStateOf(false) }
@@ -340,16 +356,19 @@ fun StockScreen(session: StaffSession.LoggedIn, openProducts: () -> Unit, openPr
                 }
             }
             LoadContent(state, onRetry = { vm.load(reset = true) }) { page ->
-                StockList(
-                    page = page,
-                    categories = categories,
-                    onlyLow = onlyLow,
-                    canAdjust = canAdjust,
-                    onAdjust = { p, v -> adjusting = p to v },
-                    openProduct = openProduct?.takeIf { canProducts },
-                    openProducts = openProducts.takeIf { canProducts },
-                    loadMore = vm::loadMore,
-                )
+                RefreshList(refreshing, onRefresh = vm::pullRefresh) {
+                    StockList(
+                        page = page,
+                        categories = categories,
+                        onlyLow = onlyLow,
+                        filtered = vm.query.isNotBlank() || vm.categoryId != null,
+                        canAdjust = canAdjust,
+                        onAdjust = { p, v -> adjusting = p to v },
+                        openProduct = openProduct?.takeIf { canProducts },
+                        openProducts = openProducts.takeIf { canProducts },
+                        loadMore = vm::loadMore,
+                    )
+                }
             }
         }
     }
@@ -366,6 +385,7 @@ private fun StockList(
     page: StockPage,
     categories: List<Pair<AdminCategory, Int>>,
     onlyLow: Boolean,
+    filtered: Boolean,
     canAdjust: Boolean,
     onAdjust: (AdminProduct, AdminVariant) -> Unit,
     openProduct: ((String) -> Unit)?,
@@ -407,7 +427,18 @@ private fun StockList(
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
                 } else {
-                    EmptyState(Icons.Filled.ShoppingCart, if (onlyLow) "لا توجد نواقص" else "لا توجد أصناف", modifier = Modifier.height(280.dp))
+                    when {
+                        onlyLow -> EmptyState(Icons.Filled.ShoppingCart, "لا توجد نواقص", "كل الأصناف فوق حد التنبيه", modifier = Modifier.height(320.dp))
+                        filtered -> EmptyState(Icons.Filled.Search, "لا توجد نتائج", "جرّب اسماً أو باركوداً آخر أو قسماً آخر", modifier = Modifier.height(320.dp))
+                        else -> EmptyState(
+                            Icons.Filled.ShoppingCart,
+                            "لا توجد أصناف بعد",
+                            "أضف منتجاتك ليظهر مخزونها هنا",
+                            action = if (openProducts != null) "إدارة المنتجات" else null,
+                            onAction = { openProducts?.invoke() },
+                            modifier = Modifier.height(320.dp),
+                        )
+                    }
                 }
             }
         }
@@ -714,12 +745,55 @@ class ProductsViewModel(private val repo: InventoryRepository, initialBrandId: S
         viewModelScope.launch { _state.value = repo.products(query, pageSize = 100, brandId = _brandId.value).map { it.items }.toLoad() }
         viewModelScope.launch { repo.brands().onSuccess { list -> _brands.value = list.filter { it.productCount > 0 || it.id == _brandId.value } } }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        _state.value = repo.products(query, pageSize = 100, brandId = _brandId.value).map { it.items }.toLoad()
+    }
+
+    fun clearFilters() {
+        query = ""
+        _brandId.value = null
+        load(reset = true)
+    }
+}
+
+/**
+ * Product list. On a wide screen with a [detailPane] the chosen product opens beside the list;
+ * otherwise [openProduct] navigates to it.
+ */
+@Composable
+fun ProductsScreen(
+    onBack: () -> Unit,
+    openProduct: (String) -> Unit,
+    newProduct: (() -> Unit)?,
+    initialBrandId: String? = null,
+    detailPane: (@Composable (id: String, close: () -> Unit) -> Unit)? = null,
+) {
+    if (detailPane != null && isWideScreen()) {
+        var selected by rememberSaveable { mutableStateOf<String?>(null) }
+        ListDetail(
+            list = { ProductsList(onBack, openProduct = { selected = it }, newProduct, initialBrandId, selected) },
+            detail = {
+                val id = selected
+                if (id == null) {
+                    EmptyState(Icons.Filled.ShoppingCart, "اختر منتجاً", "تظهر تفاصيل المنتج هنا")
+                } else {
+                    androidx.compose.runtime.key(id) { detailPane(id) { selected = null } }
+                }
+            },
+        )
+    } else {
+        ProductsList(onBack, openProduct, newProduct, initialBrandId, selected = null)
+    }
 }
 
 @Composable
-fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct: (() -> Unit)?, initialBrandId: String? = null) {
+private fun ProductsList(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct: (() -> Unit)?, initialBrandId: String?, selected: String?) {
     val vm = adminViewModel(key = "products:${initialBrandId.orEmpty()}") { ProductsViewModel(it.inventory, initialBrandId) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val brands by vm.brands.collectAsStateWithLifecycle()
     val brandId by vm.brandId.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(vm.query) }
@@ -760,9 +834,28 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct
                 }
             }
             LoadContent(state, onRetry = { vm.load() }) { list ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
+                if (list.isEmpty()) {
+                    val filtered = vm.query.isNotBlank() || brandId != null
+                    when {
+                        filtered -> EmptyList(
+                            Icons.Filled.Search,
+                            "لا توجد نتائج",
+                            "لا منتجات تطابق البحث أو الماركة المختارة",
+                            action = "عرض كل المنتجات",
+                            onAction = {
+                                query = ""
+                                vm.clearFilters()
+                            },
+                        )
+                        newProduct != null -> EmptyList(Icons.Filled.ShoppingCart, "لا توجد منتجات بعد", "أضف أول منتج ليظهر في المتجر ونقطة البيع", action = "إضافة منتج", onAction = newProduct)
+                        else -> EmptyList(Icons.Filled.ShoppingCart, "لا توجد منتجات بعد")
+                    }
+                } else {
                 LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(list, key = { it.id }) { p ->
-                        Card(onClick = { openProduct(p.id) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        val bg = if (p.id == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+                        Card(onClick = { openProduct(p.id) }, colors = CardDefaults.cardColors(containerColor = bg)) {
                             Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 ProductImage(p.images.firstOrNull()?.url, Modifier.size(56.dp).clip(MaterialTheme.shapes.small))
                                 Column(Modifier.weight(1f)) {
@@ -774,6 +867,8 @@ fun ProductsScreen(onBack: () -> Unit, openProduct: (String) -> Unit, newProduct
                             }
                         }
                     }
+                }
+                }
                 }
             }
         }
@@ -863,6 +958,11 @@ fun ProductDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -
         onPauseOrDispose {}
     }
     val canEdit = session.can(Perm.PRODUCTS_WRITE)
+    val uiPrefs = adminContainer().uiPrefs
+    val loaded = (state as? Load.Ready)?.value
+    LaunchedEffect(loaded?.id) {
+        if (loaded != null) uiPrefs.addRecent(RecentItem("product", id, loaded.nameAr, loaded.skuNumber?.let { "SKU $it" } ?: loaded.category.nameAr))
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),

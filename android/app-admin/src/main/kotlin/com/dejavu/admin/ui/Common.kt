@@ -4,12 +4,33 @@ package com.dejavu.admin.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import com.dejavu.core.data.userMessage
+import com.dejavu.core.ui.EmptyState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -281,4 +302,132 @@ fun AccountPickerDialog(title: String, accounts: List<LedgerAccount>, onDismiss:
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
     )
+}
+
+// ------------------------------------------------------ pull to refresh ---
+
+/**
+ * The "pulled to refresh" flag of a list ViewModel. [run] keeps it on while the reload runs;
+ * the list stays on screen meanwhile (no full-screen spinner).
+ */
+class Refresher {
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    fun run(scope: CoroutineScope, block: suspend () -> Unit) {
+        if (_refreshing.value) return
+        _refreshing.value = true
+        scope.launch {
+            try {
+                block()
+            } finally {
+                _refreshing.value = false
+            }
+        }
+    }
+}
+
+/** A list that reloads when pulled down. The content must scroll (a LazyColumn or [EmptyList]). */
+@Composable
+fun RefreshList(refreshing: Boolean, onRefresh: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
+        content()
+    }
+}
+
+/** [EmptyState] that can still be pulled to refresh inside [RefreshList]. */
+@Composable
+fun EmptyList(icon: ImageVector, title: String, message: String? = null, action: String? = null, onAction: () -> Unit = {}) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { EmptyState(icon, title, message, action, onAction, Modifier.fillParentMaxSize()) }
+    }
+}
+
+// ------------------------------------------------------------ undo delete ---
+
+/**
+ * Deletes that can be undone. [hide] hides the item at once; the real delete runs when the undo
+ * snackbar closes without "تراجع" ([confirm]), after [UNDO_WINDOW_MS] at the latest, or when the
+ * ViewModel is cleared ([flush]). The delete itself runs in [appScope] so it still happens after
+ * leaving the screen. On failure the item comes back and [onError] gets the message.
+ */
+class UndoableDeletes(
+    private val appScope: CoroutineScope,
+    private val scope: CoroutineScope,
+    private val onError: (String) -> Unit,
+) {
+    private class Pending(val delete: suspend () -> Result<*>, val timer: Job)
+
+    private val _hidden = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Ids hidden from the list: waiting for undo, or deleted. */
+    val hidden: StateFlow<Set<String>> = _hidden.asStateFlow()
+    private val pending = mutableMapOf<String, Pending>()
+
+    fun hide(id: String, delete: suspend () -> Result<*>) {
+        confirm(id)
+        _hidden.update { it + id }
+        val timer = scope.launch {
+            delay(UNDO_WINDOW_MS)
+            confirm(id)
+        }
+        pending[id] = Pending(delete, timer)
+    }
+
+    /** Brings the item back if its delete has not been sent yet. */
+    fun undo(id: String) {
+        val p = pending.remove(id) ?: return
+        p.timer.cancel()
+        _hidden.update { it - id }
+    }
+
+    /** Shows [id] again, e.g. when the server kept the item (hid it instead of deleting it). */
+    fun show(id: String) {
+        _hidden.update { it - id }
+    }
+
+    /** Sends the delete now. */
+    fun confirm(id: String) {
+        val p = pending.remove(id) ?: return
+        appScope.launch {
+            p.delete().onFailure { e ->
+                _hidden.update { it - id }
+                onError(e.userMessage())
+            }
+        }
+        p.timer.cancel()
+    }
+
+    /** Sends every delete still waiting; call from onCleared. */
+    fun flush() {
+        pending.keys.toList().forEach(::confirm)
+    }
+
+    companion object {
+        const val UNDO_WINDOW_MS = 10_000L
+    }
+}
+
+/** Shows "تم الحذف" with "تراجع"; undoes the delete of [id] or sends it when the snackbar closes. */
+fun CoroutineScope.showUndoDelete(snackbar: SnackbarHostState, deletes: UndoableDeletes, id: String, message: String = "تم الحذف") {
+    launch {
+        val result = snackbar.showSnackbar(message, actionLabel = "تراجع", duration = SnackbarDuration.Short)
+        if (result == SnackbarResult.ActionPerformed) deletes.undo(id) else deletes.confirm(id)
+    }
+}
+
+// --------------------------------------------------------------- two pane ---
+
+/** Tablets and wide windows (≥ 840dp) show a list and its details side by side. */
+@Composable
+fun isWideScreen(): Boolean = LocalConfiguration.current.screenWidthDp >= 840
+
+/** List on one side, details on the other (start/end follow RTL). */
+@Composable
+fun ListDetail(list: @Composable () -> Unit, detail: @Composable () -> Unit) {
+    Row(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(0.42f).fillMaxHeight()) { list() }
+        VerticalDivider()
+        Box(Modifier.weight(0.58f).fillMaxHeight()) { detail() }
+    }
 }

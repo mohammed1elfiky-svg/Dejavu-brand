@@ -52,6 +52,10 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.foundation.layout.fillMaxSize
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
@@ -63,7 +67,6 @@ import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -152,6 +155,10 @@ class CouponsViewModel(private val repo: CouponRepository) : BaseViewModel() {
         viewModelScope.launch { _state.value = repo.list().toLoad() }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list().toLoad() }
+
     /** Creates the coupon ([id] = null) or saves changes to it. */
     fun save(id: String?, request: CouponRequest, done: () -> Unit) = act {
         val result = if (id == null) repo.create(request) else repo.update(id, request)
@@ -192,6 +199,7 @@ fun CouponsScreen(onBack: () -> Unit) {
     val vm = adminViewModel(key = "coupons") { CouponsViewModel(it.coupons) }
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var formOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<AdminCoupon?>(null) }
@@ -216,16 +224,18 @@ fun CouponsScreen(onBack: () -> Unit) {
         },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { list ->
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
             if (list.isEmpty()) {
-                EmptyState(
+                EmptyList(
                     Icons.Filled.Favorite,
                     "لا توجد أكواد خصم بعد",
                     "أنشئ كوداً بنسبة أو مبلغ ثابت أو شحن مجاني، يعمل في التطبيق وفي الكاشير.",
-                    modifier = Modifier.padding(padding),
+                    action = "إنشاء كود",
+                    onAction = { editing = null; formOpen = true },
                 )
             } else {
                 LazyColumn(
-                    Modifier.padding(padding),
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -239,6 +249,7 @@ fun CouponsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+            }
             }
         }
     }

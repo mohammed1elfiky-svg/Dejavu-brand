@@ -57,8 +57,14 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
-import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.UndoableDeletes
+import com.dejavu.admin.ui.showUndoDelete
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminReview
@@ -68,7 +74,6 @@ import com.dejavu.core.model.ShippingZone
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.ProductImage
@@ -337,7 +342,7 @@ private enum class ReviewTab(val status: String, val title: String) {
     APPROVED("approved", "المنشورة"),
 }
 
-class ReviewsViewModel(private val repo: StoreSetupRepository) : BaseViewModel() {
+class ReviewsViewModel(private val repo: StoreSetupRepository, appScope: CoroutineScope) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<AdminReview>>>(Load.Loading)
     val state = _state.asStateFlow()
     private val _hasMore = MutableStateFlow(false)
@@ -372,6 +377,21 @@ class ReviewsViewModel(private val repo: StoreSetupRepository) : BaseViewModel()
         }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val wanted = status
+        val res = repo.reviews(wanted, 1)
+        if (wanted == status) {
+            page = 1
+            _hasMore.value = res.getOrNull()?.hasMore == true
+            _state.value = res.map { it.items }.toLoad()
+        }
+    }
+
+    /** Deleted reviews wait a few seconds for "تراجع" before the server is asked. */
+    val deletes = UndoableDeletes(appScope, viewModelScope) { say(it) }
+
     fun more() {
         val current = (_state.value as? Load.Ready)?.value ?: return
         if (_loadingMore.value || !_hasMore.value) return
@@ -397,11 +417,13 @@ class ReviewsViewModel(private val repo: StoreSetupRepository) : BaseViewModel()
         }
     }
 
-    fun delete(r: AdminReview) = act(r.id) {
-        repo.deleteReview(r.id).orSay()?.let {
-            remove(r.id)
-            say("تم حذف التقييم")
-        }
+    /** Hides the review now; it is deleted once the undo snackbar is gone. */
+    fun delete(r: AdminReview) = deletes.hide(r.id) {
+        repo.deleteReview(r.id).onSuccess { remove(r.id) }
+    }
+
+    override fun onCleared() {
+        deletes.flush()
     }
 
     private fun remove(id: String) {
@@ -422,15 +444,17 @@ class ReviewsViewModel(private val repo: StoreSetupRepository) : BaseViewModel()
 /** Customers' product reviews: approve them for the store, hide or delete them. */
 @Composable
 fun ReviewsScreen(onBack: () -> Unit) {
-    val vm = adminViewModel(key = "reviews") { ReviewsViewModel(it.storeSetup) }
+    val vm = adminViewModel(key = "reviews") { ReviewsViewModel(it.storeSetup, it.appScope) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val loadingMore by vm.loadingMore.collectAsStateWithLifecycle()
     val tab by vm.tab.collectAsStateWithLifecycle()
     val acting by vm.acting.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
+    val hidden by vm.deletes.hidden.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var zoom by remember { mutableStateOf<String?>(null) }
-    var deleting by remember { mutableStateOf<AdminReview?>(null) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -448,12 +472,16 @@ fun ReviewsScreen(onBack: () -> Unit) {
                     Tab(selected = i == tab, onClick = { vm.select(i) }, text = { Text(t.title) })
                 }
             }
-            LoadContent(state, onRetry = { vm.load() }) { list ->
+            LoadContent(state, onRetry = { vm.load() }) { all ->
+                val list = all.filterNot { it.id in hidden }
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (list.isEmpty()) {
-                    EmptyState(
+                    EmptyList(
                         Icons.Filled.Star,
                         if (tab == 0) "لا توجد تقييمات بانتظار الموافقة" else "لا توجد تقييمات منشورة",
-                        if (tab == 0) "تظهر هنا تقييمات العملاء الجديدة لتنشرها في التطبيق." else null,
+                        if (tab == 0) "تظهر هنا تقييمات العملاء الجديدة لتنشرها في التطبيق." else "التقييمات التي توافق عليها تظهر هنا وفي صفحة المنتج.",
+                        action = if (tab == 1) "عرض التقييمات الجديدة" else null,
+                        onAction = { vm.select(0) },
                     )
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -463,7 +491,10 @@ fun ReviewsScreen(onBack: () -> Unit) {
                                 busy = r.id in acting,
                                 onZoom = { zoom = it },
                                 onApprove = { vm.approve(r, it) },
-                                onDelete = { deleting = r },
+                                onDelete = {
+                                    vm.delete(r)
+                                    scope.showUndoDelete(snackbar, vm.deletes, r.id, "تم حذف التقييم")
+                                },
                             )
                         }
                         if (hasMore) {
@@ -475,18 +506,11 @@ fun ReviewsScreen(onBack: () -> Unit) {
                         }
                     }
                 }
+                }
             }
         }
     }
 
-    deleting?.let { r ->
-        ConfirmDialog(
-            "حذف التقييم",
-            "حذف تقييم ${r.customer?.name ?: "العميل"} نهائياً؟ لا يمكن التراجع عن الحذف.",
-            "حذف",
-            onDismiss = { deleting = null },
-        ) { vm.delete(r) }
-    }
     zoom?.let { url -> PhotoDialog(url) { zoom = null } }
 }
 

@@ -61,6 +61,14 @@ import com.dejavu.admin.ui.MoneyDialog
 import com.dejavu.admin.ui.TextDialog
 import com.dejavu.admin.ui.actionLabel
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.adminContainer
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.ListDetail
+import com.dejavu.admin.ui.RecentItem
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import com.dejavu.admin.ui.isWideScreen
+import androidx.compose.runtime.LaunchedEffect
 import com.dejavu.admin.ui.tint
 import com.dejavu.core.admin.AdminOrderDetail
 import com.dejavu.core.admin.WalletAdminRepository
@@ -143,16 +151,51 @@ class OrdersViewModel(private val repo: AdminOrderRepository) : BaseViewModel() 
         load(reset = true)
     }
 
+    fun clearFilters() {
+        status = null
+        query = ""
+        load(reset = true)
+    }
+
     fun load(reset: Boolean = false) {
         if (reset || _state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.list(status, query).toLoad() }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list(status, query).toLoad() }
+}
+
+/**
+ * The orders tab. On a wide screen with a [detailPane] the chosen order opens beside the list;
+ * otherwise [openOrder] navigates to it.
+ */
+@Composable
+fun OrdersScreen(openOrder: (String) -> Unit, detailPane: (@Composable (id: String, close: () -> Unit) -> Unit)? = null) {
+    if (detailPane != null && isWideScreen()) {
+        var selected by rememberSaveable { mutableStateOf<String?>(null) }
+        ListDetail(
+            list = { OrdersList(openOrder = { selected = it }, selected = selected) },
+            detail = {
+                val id = selected
+                if (id == null) {
+                    EmptyState(Icons.AutoMirrored.Filled.List, "اختر طلباً", "تظهر تفاصيل الطلب هنا")
+                } else {
+                    androidx.compose.runtime.key(id) { detailPane(id) { selected = null } }
+                }
+            },
+        )
+    } else {
+        OrdersList(openOrder, selected = null)
+    }
 }
 
 @Composable
-fun OrdersScreen(openOrder: (String) -> Unit) {
+private fun OrdersList(openOrder: (String) -> Unit, selected: String?) {
     val vm = adminViewModel { OrdersViewModel(it.orders) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(vm.query) }
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -173,12 +216,24 @@ fun OrdersScreen(openOrder: (String) -> Unit) {
             )
             ChipFilter(listOf(null) + OrderStatus.entries, vm.status, { it?.label ?: "الكل" }, vm::filter)
             LoadContent(state, onRetry = { vm.load() }) { page ->
-                if (page.items.isEmpty()) {
-                    EmptyState(Icons.AutoMirrored.Filled.List, "لا توجد طلبات")
-                } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item { Text("${page.total} طلب", style = MaterialTheme.typography.labelMedium) }
-                        items(page.items, key = { it.id }) { o -> OrderRow(o) { openOrder(o.id) } }
+                RefreshList(refreshing, onRefresh = vm::refresh) {
+                    if (page.items.isEmpty()) {
+                        val filtered = vm.status != null || vm.query.isNotBlank()
+                        EmptyList(
+                            Icons.AutoMirrored.Filled.List,
+                            "لا توجد طلبات",
+                            if (filtered) "لا طلبات تطابق البحث أو الحالة المختارة" else "ستظهر هنا طلبات المتجر ونقطة البيع",
+                            action = if (filtered) "عرض كل الطلبات" else null,
+                            onAction = {
+                                query = ""
+                                vm.clearFilters()
+                            },
+                        )
+                    } else {
+                        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item { Text("${page.total} طلب", style = MaterialTheme.typography.labelMedium) }
+                            items(page.items, key = { it.id }) { o -> OrderRow(o, o.id == selected) { openOrder(o.id) } }
+                        }
                     }
                 }
             }
@@ -187,8 +242,9 @@ fun OrdersScreen(openOrder: (String) -> Unit) {
 }
 
 @Composable
-private fun OrderRow(o: AdminOrderSummary, onClick: () -> Unit) {
-    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+private fun OrderRow(o: AdminOrderSummary, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+    Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = bg)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(o.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
@@ -328,6 +384,11 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
+    }
+    val uiPrefs = adminContainer().uiPrefs
+    val loaded = (state as? Load.Ready)?.value
+    LaunchedEffect(loaded?.id) {
+        if (loaded != null) uiPrefs.addRecent(RecentItem("order", id, loaded.number, loaded.customer.name))
     }
 
     Scaffold(
@@ -663,12 +724,17 @@ class ReturnsViewModel(private val repo: AdminReturnRepository) : BaseViewModel(
         if (reset || _state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.list(status?.name).toLoad() }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list(status?.name).toLoad() }
 }
 
 @Composable
 fun ReturnsScreen(onBack: () -> Unit, openReturn: (String) -> Unit) {
     val vm = adminViewModel { ReturnsViewModel(it.returns) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     LifecycleResumeEffect(vm) {
         vm.load()
         onPauseOrDispose {}
@@ -677,8 +743,15 @@ fun ReturnsScreen(onBack: () -> Unit, openReturn: (String) -> Unit) {
         Column(Modifier.padding(padding)) {
             ChipFilter(listOf(null) + ReturnStatus.entries, vm.status, { it?.label ?: "الكل" }, vm::filter)
             LoadContent(state, onRetry = { vm.load() }) { page ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (page.items.isEmpty()) {
-                    EmptyState(Icons.AutoMirrored.Filled.List, "لا توجد مرتجعات")
+                    EmptyList(
+                        Icons.AutoMirrored.Filled.List,
+                        "لا توجد مرتجعات",
+                        if (vm.status != null) "لا مرتجعات بهذه الحالة" else "تظهر هنا طلبات الإرجاع من العملاء",
+                        action = if (vm.status != null) "عرض الكل" else null,
+                        onAction = { vm.filter(null) },
+                    )
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(page.items, key = { it.id }) { r ->
@@ -695,6 +768,7 @@ fun ReturnsScreen(onBack: () -> Unit, openReturn: (String) -> Unit) {
                             }
                         }
                     }
+                }
                 }
             }
         }

@@ -73,6 +73,9 @@ import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.foundation.layout.fillMaxSize
 import com.dejavu.admin.ui.pos.LuxButton
 import com.dejavu.admin.ui.pos.decimalInput
 import com.dejavu.admin.ui.pos.validAmount
@@ -307,6 +310,13 @@ class CashBoxesViewModel(
         viewModelScope.launch { finance.rateTable().onSuccess { _rates.value = it } }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        if (!manager) treasury.safes().onSuccess { _safes.value = it }
+        _state.value = (if (manager) treasury.all() else treasury.mine()).toLoad()
+    }
+
     fun transfer(from: CashBox, to: CashBox, amount: String, toAmount: String?, note: String, done: () -> Unit) {
         if (_busy.value) return
         _busy.value = true
@@ -344,6 +354,7 @@ fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox:
     val rates by vm.rates.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val uploading by vm.uploading.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var transferring by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
@@ -363,7 +374,8 @@ fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox:
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { boxes ->
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item { TotalsCard(boxes) }
                 item {
@@ -379,7 +391,18 @@ fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox:
                         }
                     }
                 }
-                if (boxes.isEmpty()) item { EmptyState(Icons.Filled.Lock, "لا توجد صناديق") }
+                if (boxes.isEmpty()) {
+                    item {
+                        EmptyState(
+                            Icons.Filled.Lock,
+                            "لا توجد صناديق",
+                            if (manager) "أضف خزينة أو حساباً بنكياً، وتُنشأ أدراج الكاشير عند فتح الوردية" else "لم يُسند إليك أي درج كاشير بعد، تواصل مع المدير",
+                            action = if (manager) "إضافة خزينة/حساب بنكي" else null,
+                            onAction = { creating = true },
+                            modifier = Modifier.height(320.dp),
+                        )
+                    }
+                }
 
                 val cashier = boxes.filter { it.kind == CashBoxKind.CASHIER }.groupBy { it.user?.name ?: "بدون كاشير" }
                 cashier.forEach { (owner, list) ->
@@ -396,6 +419,7 @@ fun CashBoxesScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openBox:
                     item(key = "h:bank") { GroupTitle("البنوك") }
                     items(banks, key = { it.id }) { b -> BoxCard(b, showOwner = true) { openBox(b.id) } }
                 }
+            }
             }
 
             if (transferring) {

@@ -36,6 +36,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import com.dejavu.core.ui.EmptyState
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.Debtor
@@ -81,6 +87,15 @@ class DebtorsViewModel(private val repo: SystemRepository) : BaseViewModel() {
         }
     }
 
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) {
+        val days = _minDays.value
+        val res = repo.debtors(days).toLoad()
+        if (days == _minDays.value) _state.value = res
+        (res as? Load.Ready)?.value?.items?.map { it.id }?.toSet()?.let { ids -> _selected.value = _selected.value intersect ids }
+    }
+
     fun filter(days: Int?) {
         if (days == _minDays.value) return
         _minDays.value = days
@@ -122,6 +137,7 @@ fun DebtorsScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, 
     val minDays by vm.minDays.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var confirm by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
@@ -153,6 +169,7 @@ fun DebtorsScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, 
                 DAY_FILTERS.forEach { d -> FilterChip(selected = d == minDays, onClick = { vm.filter(d) }, label = { Text(dayFilterLabel(d)) }) }
             }
             LoadContent(state, onRetry = vm::load) { data ->
+                RefreshList(refreshing, onRefresh = vm::refresh) {
                 LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item(key = "total") {
                         GlassCard(Modifier.fillMaxWidth()) {
@@ -162,7 +179,16 @@ fun DebtorsScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, 
                         }
                     }
                     if (data.items.isEmpty()) {
-                        item(key = "empty") { Text("لا يوجد عملاء مدينون", color = Lux.InkSoft) }
+                        item(key = "empty") {
+                            EmptyState(
+                                Icons.Filled.CheckCircle,
+                                "لا يوجد عملاء مدينون",
+                                if (minDays != null) "لا ديون متأخرة أكثر من $minDays يوم" else "كل العملاء سددوا ما عليهم",
+                                action = if (minDays != null) "عرض الكل" else null,
+                                onAction = { vm.filter(null) },
+                                modifier = Modifier.height(320.dp),
+                            )
+                        }
                     } else {
                         item(key = "all") {
                             val ids = data.items.map { it.id }
@@ -174,6 +200,7 @@ fun DebtorsScreen(@Suppress("UNUSED_PARAMETER") session: StaffSession.LoggedIn, 
                     items(data.items, key = { it.id }) { d ->
                         DebtorRow(d, checked = d.id in selected, onCheck = { vm.toggle(d.id) }, onOpen = { openCustomer(d.id) })
                     }
+                }
                 }
             }
         }

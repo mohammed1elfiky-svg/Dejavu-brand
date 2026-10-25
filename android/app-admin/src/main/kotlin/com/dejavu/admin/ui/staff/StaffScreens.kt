@@ -60,6 +60,10 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.EmptyList
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.foundation.layout.fillMaxSize
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
@@ -79,7 +83,6 @@ import com.dejavu.core.model.Currency
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.CollectMessages
-import com.dejavu.core.ui.EmptyState
 import com.dejavu.core.ui.Load
 import com.dejavu.core.ui.LoadContent
 import com.dejavu.core.ui.StatusChip
@@ -164,6 +167,10 @@ class StaffListViewModel(private val repo: StaffRepository) : BaseViewModel() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
         viewModelScope.launch { _state.value = repo.list().map { it.items }.toLoad() }
     }
+
+    val refresher = Refresher()
+
+    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list().map { it.items }.toLoad() }
 }
 
 /** Employees with their roles, own permissions, status and assigned boxes. */
@@ -171,6 +178,7 @@ class StaffListViewModel(private val repo: StaffRepository) : BaseViewModel() {
 fun StaffScreen(onBack: () -> Unit, open: (String) -> Unit) {
     val vm = adminViewModel { StaffListViewModel(it.staff) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
@@ -197,16 +205,24 @@ fun StaffScreen(onBack: () -> Unit, open: (String) -> Unit) {
         },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { users ->
+            RefreshList(refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
             if (users.isEmpty()) {
-                EmptyState(Icons.Filled.Person, "لا يوجد موظفون", modifier = Modifier.padding(padding))
+                EmptyList(
+                    Icons.Filled.Person,
+                    "لا يوجد موظفون",
+                    "أضف الكاشير والموظفين وحدّد صلاحيات كل منهم",
+                    action = "إضافة موظف",
+                    onAction = { open("new") },
+                )
             } else {
                 LazyColumn(
-                    Modifier.padding(padding),
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(users, key = { it.id }) { u -> StaffCard(u) { open(u.id) } }
                 }
+            }
             }
         }
     }

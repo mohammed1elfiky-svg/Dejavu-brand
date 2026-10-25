@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,6 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.adminViewModel
+import com.dejavu.admin.ui.RefreshList
+import com.dejavu.admin.ui.Refresher
+import androidx.compose.material.icons.automirrored.filled.List
+import com.dejavu.core.ui.EmptyState
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminCategory
@@ -81,6 +86,15 @@ class CategoriesViewModel(private val repo: InventoryRepository) : BaseViewModel
 
     private suspend fun refresh() {
         repo.categories().onSuccess { _state.value = Load.Ready(it) }
+    }
+
+    val refresher = Refresher()
+
+    /** Pull to refresh; a failure keeps the list shown and says why. */
+    fun pullRefresh() = refresher.run(viewModelScope) {
+        val r = repo.categories()
+        if (r.isSuccess || _state.value !is Load.Ready) _state.value = r.toLoad()
+        r.exceptionOrNull()?.let { say(it.userMessage()) }
     }
 
     private fun tell(message: String) {
@@ -148,6 +162,7 @@ class CategoriesViewModel(private val repo: InventoryRepository) : BaseViewModel
 @Composable
 fun CategoriesScreen(onBack: () -> Unit) {
     val vm = adminViewModel(key = "categories") { CategoriesViewModel(it.inventory) }
+    val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     Scaffold(
@@ -159,11 +174,13 @@ fun CategoriesScreen(onBack: () -> Unit) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        CategoryManager(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
-            vm = vm,
-            inlineStatus = false,
-        )
+        RefreshList(refreshing, onRefresh = vm::pullRefresh, modifier = Modifier.padding(padding)) {
+            CategoryManager(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                vm = vm,
+                inlineStatus = false,
+            )
+        }
     }
 }
 
@@ -196,7 +213,18 @@ fun CategoryManager(
         }
         LoadContent(state, onRetry = vm::load, modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) { list ->
             if (list.isEmpty()) {
-                Text("لا توجد أقسام بعد", style = MaterialTheme.typography.bodyMedium, color = Lux.InkSoft)
+                if (inlineStatus) {
+                    Text("لا توجد أقسام بعد", style = MaterialTheme.typography.bodyMedium, color = Lux.InkSoft)
+                } else {
+                    EmptyState(
+                        Icons.AutoMirrored.Filled.List,
+                        "لا توجد أقسام بعد",
+                        "الأقسام ترتّب منتجاتك في التطبيق والكاشير، مثل: فساتين، عبايات، أحذية",
+                        action = "إضافة قسم",
+                        onAction = { addParent = null; adding = true },
+                        modifier = Modifier.height(360.dp),
+                    )
+                }
             } else {
                 GlassCard(Modifier.fillMaxWidth(), contentPadding = 8.dp, elevation = 4.dp) {
                     Column(Modifier.verticalScroll(rememberScrollState())) {

@@ -297,7 +297,12 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     openSettlements = { nav.navigate(R.SETTLEMENTS) },
                 )
             }
-            composable(R.ORDERS) { OrdersScreen(openOrder = { open(R.ORDER, it) }) }
+            composable(R.ORDERS) {
+                OrdersScreen(
+                    openOrder = { open(R.ORDER, it) },
+                    detailPane = { id, close -> OrderDetailScreen(id, session, close, openReturn = { open(R.RETURN, it) }) },
+                )
+            }
             composable(R.ORDER) { e -> OrderDetailScreen(e.arguments?.getString("id").orEmpty(), session, back, openReturn = { open(R.RETURN, it) }) }
             composable(R.RETURNS) { ReturnsScreen(back, openReturn = { open(R.RETURN, it) }) }
             composable(R.RETURN) { e -> ReturnDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
@@ -307,6 +312,7 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     back,
                     openProduct = { open(R.PRODUCT, it) },
                     newProduct = if (session.can(Perm.PRODUCTS_WRITE)) ({ nav.navigate(R.PRODUCT_NEW) }) else null,
+                    detailPane = { id, close -> ProductDetailScreen(id, session, close, edit = { open(R.PRODUCT_EDIT, id) }) },
                 )
             }
             composable(R.BRANDS) {
@@ -373,7 +379,13 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.NEW_EXPENSE) { NewExpenseScreen(back, created = { id -> nav.navigate(R.of(R.EXPENSE, id)) { popUpTo(R.EXPENSES) } }) }
             composable(R.SETTLEMENTS) { SettlementsScreen(session, back) }
             composable(R.REPORTS) { ReportsScreen(session, back) }
-            composable(R.CUSTOMERS) { CustomersScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
+            composable(R.CUSTOMERS) {
+                CustomersScreen(
+                    back,
+                    openCustomer = { open(R.CUSTOMER, it) },
+                    detailPane = { id, close -> CustomerDetailScreen(id, close, openOrder = { open(R.ORDER, it) }) },
+                )
+            }
             composable(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
             composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             composable(R.SERVER) { ServerScreen(back) }

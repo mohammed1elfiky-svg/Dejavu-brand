@@ -1,8 +1,9 @@
+import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { CashBoxKind, OrderChannel, OrderStatus, ShiftStatus } from '../generated/prisma/client';
 import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
-import { CurrencyService, inCurrency, toBase } from '../common/currency.service';
+import { CurrencyService, formatAmount, inCurrency, toBase } from '../common/currency.service';
 import { paginated, PaginationQueryDto } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence.service';
 import { dec, money, sum } from '../common/utils/money';
@@ -39,6 +40,7 @@ export class ShiftService {
     private readonly currencies: CurrencyService,
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
+    private readonly ownerAlerts: OwnerAlertsService,
   ) {}
 
   /** The employee's open shift (with live figures), or null. */
@@ -81,6 +83,7 @@ export class ShiftService {
   }
 
   async close(dto: CloseShiftInput, user: User, shiftId?: string) {
+    let shortSar = dec(0);
     const id = await this.prisma.$transaction(async (tx) => {
       const shift = shiftId
         ? await tx.cashierShift.findUnique({ where: { id: shiftId }, include: { lines: true } })
@@ -102,6 +105,7 @@ export class ShiftService {
           const box = await tx.cashBox.findUniqueOrThrow({ where: { id: line.cashBoxId } });
           const sar = toBase(difference.abs(), line.currency, await this.currencies.rate(line.currency, tx));
           const over = difference.gt(0);
+          if (!over) shortSar = shortSar.add(sar);
           const moved = await this.treasury.moneyLines(tx, {
             account: { id: box.accountId },
             currency: line.currency,
@@ -128,7 +132,14 @@ export class ShiftService {
       await this.audit.log({ userId: user.id, action: 'UPDATE', entityType: 'CashierShift', entityId: shift.id, after: { closed: dto } }, tx);
       return shift.id;
     });
-    return this.get(id);
+    const closed = await this.get(id);
+    if (shortSar.gt(0)) {
+      const lines = closed.lines.filter((l) => dec(l.difference ?? 0).lt(0)).map((l) => `${dec(l.difference ?? 0).abs().toFixed()} ${l.currency}`);
+      void this.ownerAlerts.raise('SHORTAGE', 'عجز في الصندوق ⚠️', `وردية ${closed.number} لـ ${closed.user.name}: عجز ${lines.join(' + ')} (≈ ${formatAmount(shortSar)})`, { shiftId: id }, {
+        shortage: shortSar.toNumber(),
+      });
+    }
+    return closed;
   }
 
   /** Shifts of everyone (managers) or of one employee, newest first. */

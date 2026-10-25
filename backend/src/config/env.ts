@@ -48,6 +48,8 @@ export function validateEnv(raw: Record<string, unknown>) {
     /** Unpaid card orders are cancelled (and their stock released) after this many minutes. 0 = never. */
     /** Firebase service-account key (JSON or base64 JSON). Empty = in-app notifications only, no push. */
     FCM_SERVICE_ACCOUNT: str('FCM_SERVICE_ACCOUNT', ''),
+    /** Google AI Studio key for the shopping assistant (empty = assistant off). */
+    GEMINI_API_KEY: str('GEMINI_API_KEY', ''),
     CARD_PAYMENT_TIMEOUT_MINUTES: raw.CARD_PAYMENT_TIMEOUT_MINUTES === '0' ? 0 : int('CARD_PAYMENT_TIMEOUT_MINUTES', 60),
   };
 

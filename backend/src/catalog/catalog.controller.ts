@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthPrincipal, CurrentUser, Public, RequirePermissions } from '../common/decorators/auth.decorators';
 import { CatalogService } from './catalog.service';
@@ -117,6 +117,8 @@ export class AdminCatalogController {
   }
 }
 
+const customerOf = (u?: AuthPrincipal) => (u?.type === 'customer' ? u.id : undefined);
+
 @ApiTags('Store · Catalog')
 @Public()
 @Controller('store')
@@ -124,23 +126,34 @@ export class StoreCatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get('categories')
-  categories() {
+  async categories(@CurrentUser() u?: AuthPrincipal) {
+    await this.catalog.storeGate(customerOf(u));
     return this.catalog.categoryTree();
   }
 
   @Get('brands')
-  brands() {
+  async brands(@CurrentUser() u?: AuthPrincipal) {
+    await this.catalog.storeGate(customerOf(u));
     return this.catalog.storeBrands();
   }
 
   @Get('products')
-  products(@Query() q: StoreProductsQueryDto, @CurrentUser() u?: AuthPrincipal) {
-    return this.catalog.storeProducts(q, u?.type === 'customer' ? u.id : undefined);
+  async products(@Query() q: StoreProductsQueryDto, @CurrentUser() u?: AuthPrincipal, @Headers('x-device-id') deviceId?: string) {
+    await this.catalog.storeGate(customerOf(u));
+    return this.catalog.storeProducts(q, customerOf(u), deviceId);
   }
 
   @Get('products/:slug')
-  product(@Param('slug') slug: string, @CurrentUser() u?: AuthPrincipal) {
-    return this.catalog.storeProduct(slug, u?.type === 'customer' ? u.id : undefined);
+  async product(@Param('slug') slug: string, @CurrentUser() u?: AuthPrincipal) {
+    await this.catalog.storeGate(customerOf(u));
+    return this.catalog.storeProduct(slug, customerOf(u));
+  }
+
+  /** "يناسبه أيضاً" and "اشترت العميلات أيضاً" for a product page. */
+  @Get('products/:slug/related')
+  async related(@Param('slug') slug: string, @CurrentUser() u?: AuthPrincipal) {
+    await this.catalog.storeGate(customerOf(u));
+    return this.catalog.relatedProducts(slug, customerOf(u));
   }
 }
 

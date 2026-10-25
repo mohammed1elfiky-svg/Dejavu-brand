@@ -65,6 +65,18 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     this.kick();
   }
 
+  /** Adds [n] to the inbox of these customers; pushed by the dispatcher. Returns how many. */
+  async notifyMany(customerIds: string[], n: NewNotification & { image?: string | null }) {
+    const data = { ...(n.data ?? {}), ...(n.image ? { image: n.image } : {}) };
+    for (let i = 0; i < customerIds.length; i += 1000) {
+      await this.prisma.notification.createMany({
+        data: customerIds.slice(i, i + 1000).map((id) => ({ customerId: id, type: n.type, title: n.title, body: n.body, data })),
+      });
+    }
+    this.kick();
+    return customerIds.length;
+  }
+
   /**
    * Adds [n] to the inbox of every active customer (or merchants only); the dispatcher
    * pushes it. [image] (an https URL) is shown as a big picture. Returns how many got it.
@@ -221,7 +233,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
           })
         : [],
     ]);
-    const alerts = [
+    const alerts: { id: string; kind: 'ORDER' | 'TOP_UP' | 'OWNER'; title: string; body: string; data: Record<string, string>; at: Date }[] = [
       ...orders.map((o) => ({
         id: `order:${o.id}`,
         kind: 'ORDER' as const,
@@ -239,6 +251,13 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         at: t.createdAt,
       })),
     ].sort((a, b) => b.at.getTime() - a.at.getTime());
+    if (can('settings.manage')) {
+      const owner = await this.prisma.ownerAlert.findMany({ where: { createdAt: { gt: from } }, orderBy: { createdAt: 'desc' }, take: 20 });
+      alerts.push(
+        ...owner.map((a) => ({ id: `owner:${a.id}`, kind: 'OWNER' as const, title: a.title, body: a.body, data: (a.data ?? {}) as Record<string, string>, at: a.createdAt })),
+      );
+      alerts.sort((a, b) => b.at.getTime() - a.at.getTime());
+    }
     const pendingTopUps = can('wallet.manage') ? await this.prisma.walletTopUp.count({ where: { status: 'PENDING' } }) : 0;
     return { now: new Date(), alerts, pendingTopUps };
   }

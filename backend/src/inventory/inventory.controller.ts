@@ -7,6 +7,8 @@ import {
   LowStockQueryDto,
   MovementsQueryDto,
   StockAdjustmentDto,
+  StockDamageDto,
+  DamagesQueryDto,
   StockCountsQueryDto,
   StockLevelsQueryDto,
   StockTransferDto,
@@ -52,6 +54,19 @@ export class InventoryController {
   @Post('inventory/adjustments')
   adjust(@Body() dto: StockAdjustmentDto, @CurrentUser() u: AuthPrincipal) {
     return this.inventory.adjust(dto, u.id);
+  }
+
+  /** Damaged pieces written off, with photos. */
+  @RequirePermissions('stock.adjust')
+  @Post('inventory/damages')
+  damage(@Body() dto: StockDamageDto, @CurrentUser() u: AuthPrincipal) {
+    return this.inventory.writeOffDamage(dto, u.id);
+  }
+
+  @RequirePermissions('stock.read')
+  @Get('inventory/damages')
+  damages(@Query() q: DamagesQueryDto) {
+    return this.inventory.listDamages(q);
   }
 
   @RequirePermissions('stock.transfer')

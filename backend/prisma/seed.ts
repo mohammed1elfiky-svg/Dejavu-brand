@@ -47,6 +47,7 @@ const ACCOUNTS: AccountSeed[] = [
   { code: "2102", ar: "ضريبة القيمة المضافة - مخرجات", en: "VAT Output", parent: "21", key: "VAT_OUTPUT" },
   { code: "2103", ar: "دفعات مقدمة من العملاء", en: "Customer Advances", parent: "21", key: "CUSTOMER_ADVANCES" },
   { code: "2104", ar: "مصروفات مستحقة", en: "Accrued Expenses", parent: "21", key: "ACCRUED_EXPENSES" },
+  { code: "2105", ar: "بطاقات هدايا مباعة", en: "Gift Cards Outstanding", parent: "21", key: "GIFT_CARDS" },
 
   // 3 — Equity
   { code: "3", ar: "حقوق الملكية", en: "Equity", group: true },
@@ -98,14 +99,14 @@ const PERMISSIONS: Record<string, string[]> = {
   dashboard: ["dashboard.view"],
   catalog: ["products.read", "products.write", "categories.write"],
   inventory: ["stock.read", "stock.adjust", "stock.transfer", "stock.count"],
-  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage", "promotions.manage", "pos.sell", "pos.edit_sales"],
+  sales: ["orders.read", "orders.update_status", "orders.cancel", "returns.manage", "coupons.manage", "promotions.manage", "pos.sell", "pos.edit_sales", "layaways.manage"],
   customers: ["customers.read", "customers.write"],
   purchasing: ["suppliers.manage", "purchases.read", "purchases.write", "purchases.receive"],
-  payments: ["payments.read", "payments.record", "supplier_payments.record", "cashboxes.manage", "wallet.manage"],
+  payments: ["payments.read", "payments.record", "supplier_payments.record", "cashboxes.manage", "wallet.manage", "giftcards.manage"],
   expenses: ["expenses.read", "expenses.write", "expenses.approve"],
   accounting: ["accounts.manage", "journal.read", "journal.write", "journal.post", "journal.reverse", "periods.close"],
   reports: ["reports.sales", "reports.inventory", "reports.financial"],
-  system: ["users.manage", "roles.manage", "settings.manage", "audit.read", "notifications.send", "system.backup"],
+  system: ["users.manage", "roles.manage", "settings.manage", "audit.read", "notifications.send", "system.backup", "chat.manage"],
 };
 
 const ROLES: Record<string, { description: string; permissions: string[] | "*" }> = {
@@ -126,11 +127,11 @@ const ROLES: Record<string, { description: string; permissions: string[] | "*" }
   },
   sales: {
     description: "Order handling and customer service",
-    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales", "pos.sell", "pos.edit_sales"],
+    permissions: ["dashboard.view", "products.read", "stock.read", "orders.read", "orders.update_status", "orders.cancel", "returns.manage", "customers.read", "customers.write", "payments.read", "reports.sales", "pos.sell", "pos.edit_sales", "layaways.manage", "giftcards.manage"],
   },
   cashier: {
     description: "Point of sale: sells at the till and sees only their own cash drawers",
-    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell", "pos.edit_sales", "orders.read"],
+    permissions: ["products.read", "stock.read", "customers.read", "customers.write", "pos.sell", "pos.edit_sales", "orders.read", "layaways.manage", "giftcards.manage"],
   },
 };
 

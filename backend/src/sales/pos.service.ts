@@ -1,3 +1,4 @@
+import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CouponType,
@@ -14,7 +15,7 @@ import {
 import { LedgerService, PostingLine } from '../accounting/ledger.service';
 import { activePromotions, buyerPrice, promotedPrice } from '../catalog/promotions';
 import { AuditService } from '../common/audit.service';
-import { BASE_CURRENCY, CurrencyService, inCurrency, toBase, toCurrency } from '../common/currency.service';
+import { BASE_CURRENCY, CurrencyService, formatAmount, inCurrency, toBase, toCurrency } from '../common/currency.service';
 import { SequenceService } from '../common/sequence.service';
 import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
@@ -85,6 +86,7 @@ export class PosService {
     private readonly audit: AuditService,
     private readonly returns: ReturnsService,
     private readonly shifts: ShiftService,
+    private readonly ownerAlerts: OwnerAlertsService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -663,7 +665,15 @@ export class PosService {
    */
   async voidSale(id: string, reason: string | undefined, user: { id: string; permissions: string[] }) {
     await this.prisma.$transaction((tx) => this.voidIn(tx, id, reason, user));
-    return this.receipt(id);
+    const sale = await this.receipt(id);
+    const who = await this.prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+    void this.ownerAlerts.raise(
+      'VOID',
+      'حذف فاتورة 🗑️',
+      `${who?.name ?? 'موظف'} حذف الفاتورة ${sale.number} بقيمة ${formatAmount(sale.grandTotal)}${reason ? ` — السبب: ${reason}` : ''}`,
+      { orderId: id },
+    );
+    return sale;
   }
 
   /** Corrects a till sale: the old invoice is deleted and the corrected one rung up in its place. */

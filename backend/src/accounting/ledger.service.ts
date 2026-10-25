@@ -22,6 +22,7 @@ export type SystemAccount =
   | 'VAT_OUTPUT'
   | 'CUSTOMER_ADVANCES'
   | 'ACCRUED_EXPENSES'
+  | 'GIFT_CARDS'
   | 'CAPITAL'
   | 'RETAINED_EARNINGS'
   | 'OPENING_BALANCE'

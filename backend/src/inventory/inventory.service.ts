@@ -228,6 +228,71 @@ export class InventoryService {
     return { increaseValue, decreaseValue, journalEntryId };
   }
 
+  /**
+   * Damaged goods written off with photos: the pieces leave stock at average cost and the
+   * value goes to inventory adjustments (عجز/تالف), like a DAMAGE adjustment.
+   */
+  async writeOffDamage(dto: { warehouseId?: string; items: { variantId: string; quantity: number }[]; note?: string; photoUrls?: string[] }, userId: string) {
+    assertUniqueVariants(dto.items);
+    const warehouse = dto.warehouseId
+      ? await this.assertWarehouse(dto.warehouseId).then(() => dto.warehouseId!)
+      : (await this.prisma.warehouse.findFirst({ where: { isDefault: true }, select: { id: true } }))?.id;
+    if (!warehouse) throw new BadRequestException('No default warehouse');
+    const id = await this.prisma.$transaction(async (tx) => {
+      const sourceId = randomUUID();
+      const number = await this.sequences.next(tx, 'DMG');
+      const result = await this.applyAdjustment(tx, {
+        warehouseId: warehouse,
+        increases: [],
+        decreases: dto.items,
+        sourceType: 'STOCK_ADJUSTMENT',
+        sourceId,
+        description: `Damaged goods ${number}${dto.note ? `: ${dto.note}` : ''}`,
+        note: [number, 'DAMAGE', dto.note].filter(Boolean).join(' · '),
+        counterAccount: 'INVENTORY_ADJUSTMENT',
+        userId,
+      });
+      const variants = await tx.productVariant.findMany({
+        where: { id: { in: dto.items.map((i) => i.variantId) } },
+        select: { id: true, sku: true, size: true, color: true, product: { select: { nameAr: true } } },
+      });
+      const damage = await tx.stockDamage.create({
+        data: {
+          id: sourceId,
+          number,
+          warehouseId: warehouse,
+          items: dto.items.map((i) => {
+            const v = variants.find((x) => x.id === i.variantId);
+            return { variantId: i.variantId, quantity: i.quantity, sku: v?.sku ?? '', name: v?.product.nameAr ?? '', size: v?.size ?? null, color: v?.color ?? null };
+          }),
+          totalValue: result.decreaseValue,
+          note: dto.note,
+          photoUrls: dto.photoUrls ?? [],
+          journalEntryId: result.journalEntryId,
+          createdById: userId,
+        },
+      });
+      await this.audit.log({ userId, action: 'CREATE', entityType: 'StockDamage', entityId: damage.id, after: dto }, tx);
+      return damage.id;
+    });
+    return this.prisma.stockDamage.findUniqueOrThrow({ where: { id } });
+  }
+
+  async listDamages(q: { skip: number; pageSize: number; page: number; from?: string; to?: string }) {
+    const where = {
+      createdAt: { gte: q.from ? new Date(q.from) : undefined, lt: q.to ? new Date(q.to) : undefined },
+    };
+    const [rows, total, value] = await Promise.all([
+      this.prisma.stockDamage.findMany({ where, orderBy: { createdAt: 'desc' }, skip: q.skip, take: q.pageSize }),
+      this.prisma.stockDamage.count({ where }),
+      this.prisma.stockDamage.aggregate({ where, _sum: { totalValue: true } }),
+    ]);
+    const users = new Map(
+      (await this.prisma.user.findMany({ where: { id: { in: rows.map((r) => r.createdById).filter((x): x is string => !!x) } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]),
+    );
+    return { ...paginated(rows.map((r) => ({ ...r, createdBy: r.createdById ? users.get(r.createdById) ?? null : null })), total, q), totalValue: value._sum.totalValue ?? 0 };
+  }
+
   /** Moves stock between warehouses at average cost; value is unchanged so no journal entry. */
   async transfer(dto: StockTransferDto, userId: string) {
     if (dto.fromWarehouseId === dto.toWarehouseId) throw new BadRequestException('Choose two different warehouses');

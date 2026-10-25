@@ -1,3 +1,6 @@
+import { AdminGiftCardsController, AdminLayawaysController, StoreGiftCardsController } from './layaway-giftcard.controller';
+import { GiftCardsService } from './gift-cards.service';
+import { LayawayService } from './layaway.service';
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
 import {
@@ -50,7 +53,10 @@ import { StoreSettingsService } from './store-settings.service';
     AdminCourierSettlementsController,
     AdminPosController,
     StoreStockAlertsController,
+    AdminLayawaysController,
+    AdminGiftCardsController,
+    StoreGiftCardsController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService],
 })
 export class SalesModule {}

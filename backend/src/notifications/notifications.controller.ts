@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { AuthPrincipal, CurrentUser, CustomerOnly, StaffOnly } from '../common/decorators/auth.decorators';
+import { IsBoolean, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { AuthPrincipal, CurrentUser, CustomerOnly, RequirePermissions, StaffOnly } from '../common/decorators/auth.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { NotificationsService } from './notifications.service';
+import { OwnerAlertsService } from './owner-alerts.service';
 
 export class RegisterDeviceDto {
   @ApiProperty({ description: 'Firebase Cloud Messaging registration token' })
@@ -105,5 +106,51 @@ export class StaffAlertsController {
   alerts(@CurrentUser() u: AuthPrincipal, @Query('since') since?: string) {
     const at = since ? new Date(since) : undefined;
     return this.notifications.staffAlerts(u, at && !Number.isNaN(at.getTime()) ? at : undefined);
+  }
+}
+
+export class OwnerAlertSettingsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  voids?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Alert when a drawer is short by more than this (SAR); null = off' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  shortageAbove?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  priceChanges?: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  smsPhone?: string | null;
+}
+
+@ApiTags('Admin · Owner alerts')
+@RequirePermissions('settings.manage')
+@Controller('admin/owner-alerts')
+export class OwnerAlertsController {
+  constructor(private readonly alerts: OwnerAlertsService) {}
+
+  @Get()
+  list(@Query('take') take?: string) {
+    return this.alerts.list(take ? Number(take) : 50);
+  }
+
+  @Get('settings')
+  settings() {
+    return this.alerts.settings();
+  }
+
+  @Put('settings')
+  setSettings(@Body() dto: OwnerAlertSettingsDto) {
+    return this.alerts.setSettings(dto);
   }
 }

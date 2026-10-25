@@ -242,6 +242,55 @@ export class ReportsService {
       ORDER BY 4 DESC, 5 DESC
       LIMIT ${limit}`;
 
+    // The same sales, ranked by profit instead of pieces.
+    const profitable = await this.prisma.$queryRaw<
+      { id: string; name: string; sku: number | null; units: number; revenue: string; cost: string; on_hand: number; image: string | null }[]
+    >`
+      WITH sold AS (
+        SELECT o.id,
+               (COALESCE((SELECT MIN(h.created_at) FROM order_status_history h WHERE h.order_id = o.id AND h.to_status = 'SHIPPED'), o.placed_at)
+                 AT TIME ZONE 'UTC' AT TIME ZONE ${this.tz})::date AS day
+        FROM orders o WHERE o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')
+      )
+      SELECT p.id::text, MAX(p.name_ar) AS name, MAX(p.sku_number) AS sku,
+             SUM(i.quantity - i.returned_qty)::int AS units,
+             COALESCE(SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)), 0)::text AS revenue,
+             COALESCE(SUM(i.unit_cost * (i.quantity - i.returned_qty)), 0)::text AS cost,
+             COALESCE((SELECT SUM(sl.on_hand) FROM stock_levels sl JOIN product_variants pv ON pv.id = sl.variant_id WHERE pv.product_id = p.id), 0)::int AS on_hand,
+             (SELECT pi.url FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.sort_order LIMIT 1) AS image
+      FROM sold s
+      JOIN order_items i ON i.order_id = s.id
+      JOIN product_variants v ON v.id = i.variant_id
+      JOIN products p ON p.id = v.product_id
+      WHERE s.day BETWEEN ${from}::date AND ${to}::date
+      GROUP BY p.id
+      HAVING SUM(i.quantity - i.returned_qty) > 0
+      ORDER BY COALESCE(SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)), 0)
+             - COALESCE(SUM(i.unit_cost * (i.quantity - i.returned_qty)), 0) DESC
+      LIMIT ${limit}`;
+
+    // Per category: pieces, revenue, cost and profit.
+    const categories = await this.prisma.$queryRaw<{ id: string; name: string; units: number; revenue: string; cost: string; products: number }[]>`
+      WITH sold AS (
+        SELECT o.id,
+               (COALESCE((SELECT MIN(h.created_at) FROM order_status_history h WHERE h.order_id = o.id AND h.to_status = 'SHIPPED'), o.placed_at)
+                 AT TIME ZONE 'UTC' AT TIME ZONE ${this.tz})::date AS day
+        FROM orders o WHERE o.status IN ('SHIPPED', 'DELIVERED', 'COMPLETED')
+      )
+      SELECT c.id::text, MAX(c.name_ar) AS name,
+             SUM(i.quantity - i.returned_qty)::int AS units,
+             COALESCE(SUM((i.line_total - i.tax_amount) * (i.quantity - i.returned_qty) / NULLIF(i.quantity, 0)), 0)::text AS revenue,
+             COALESCE(SUM(i.unit_cost * (i.quantity - i.returned_qty)), 0)::text AS cost,
+             COUNT(DISTINCT p.id)::int AS products
+      FROM sold s
+      JOIN order_items i ON i.order_id = s.id
+      JOIN product_variants v ON v.id = i.variant_id
+      JOIN products p ON p.id = v.product_id
+      JOIN categories c ON c.id = p.category_id
+      WHERE s.day BETWEEN ${from}::date AND ${to}::date
+      GROUP BY c.id
+      HAVING SUM(i.quantity - i.returned_qty) > 0`;
+
     const dead = await this.prisma.$queryRaw<
       { id: string; name: string; sku: number | null; on_hand: number; stock_value: string; last_sold: Date | null; image: string | null }[]
     >`
@@ -262,28 +311,50 @@ export class ReportsService {
       ORDER BY 5 DESC
       LIMIT ${limit}`;
 
+    const productRow = (r: (typeof top)[number]) => {
+      const revenue = money(r.revenue);
+      const cost = money(r.cost);
+      const profit = revenue.sub(cost);
+      return {
+        productId: r.id,
+        nameAr: r.name,
+        skuNumber: r.sku,
+        imageUrl: r.image,
+        units: r.units,
+        revenue,
+        cost,
+        grossProfit: profit,
+        /** Profit as % of revenue. */
+        margin: revenue.isZero() ? dec(0) : profit.div(revenue).mul(100).toDecimalPlaces(1),
+        onHand: r.on_hand,
+      };
+    };
+    const categoryRows = categories.map((c) => {
+      const revenue = money(c.revenue);
+      const cost = money(c.cost);
+      const profit = revenue.sub(cost);
+      return {
+        categoryId: c.id,
+        nameAr: c.name,
+        units: c.units,
+        products: c.products,
+        revenue,
+        cost,
+        grossProfit: profit,
+        margin: revenue.isZero() ? dec(0) : profit.div(revenue).mul(100).toDecimalPlaces(1),
+      };
+    });
     return {
       from,
       to,
       deadDays,
-      topSellers: top.map((r) => {
-        const revenue = money(r.revenue);
-        const cost = money(r.cost);
-        const profit = revenue.sub(cost);
-        return {
-          productId: r.id,
-          nameAr: r.name,
-          skuNumber: r.sku,
-          imageUrl: r.image,
-          units: r.units,
-          revenue,
-          cost,
-          grossProfit: profit,
-          /** Profit as % of revenue. */
-          margin: revenue.isZero() ? dec(0) : profit.div(revenue).mul(100).toDecimalPlaces(1),
-          onHand: r.on_hand,
-        };
-      }),
+      topSellers: top.map(productRow),
+      /** Products that made the most profit. */
+      topProfit: profitable.map(productRow),
+      /** Categories by pieces sold… */
+      topCategories: [...categoryRows].sort((a, b) => b.units - a.units || b.revenue.cmp(a.revenue)),
+      /** …and by profit. */
+      profitableCategories: [...categoryRows].sort((a, b) => b.grossProfit.cmp(a.grossProfit)),
       deadStock: dead.map((r) => ({
         productId: r.id,
         nameAr: r.name,

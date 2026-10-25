@@ -29,6 +29,7 @@ services:
         value: "1"
       # Card payments stay off until Paymob keys are added in the dashboard
       # (PAYMENT_GATEWAY=paymob + PAYMOB_* , see docs/DEPLOY.md). Push: FCM_SERVICE_ACCOUNT.
+      # Shopping assistant (Gemini): add GEMINI_API_KEY from aistudio.google.com.
       - key: PAYMENT_GATEWAY
         value: none
 

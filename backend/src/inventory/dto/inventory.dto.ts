@@ -1,8 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
+  IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsInt,
   IsOptional,
@@ -205,4 +208,46 @@ export class StockCountsQueryDto extends PaginationQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   posted?: boolean;
+}
+
+export class DamageItemDto {
+  @ApiProperty()
+  @IsUUID()
+  variantId: string;
+
+  @ApiProperty({ minimum: 1 })
+  @IsInt()
+  @Min(1)
+  quantity: number;
+}
+
+export class StockDamageDto {
+  @ApiPropertyOptional({ description: 'The default warehouse when left out' })
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiProperty({ type: [DamageItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => DamageItemDto)
+  @ArrayMinSize(1)
+  items: DamageItemDto[];
+
+  @ApiPropertyOptional({ description: 'What happened' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Photos (URLs from admin/files or admin/files/private)' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(6)
+  @IsString({ each: true })
+  photoUrls?: string[];
+}
+
+export class DamagesQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional() @IsOptional() @IsDateString() from?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() to?: string;
 }

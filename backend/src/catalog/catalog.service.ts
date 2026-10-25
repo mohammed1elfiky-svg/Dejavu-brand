@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { OwnerAlertsService } from '../notifications/owner-alerts.service';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma, ProductStatus, ProductVisibility } from '../generated/prisma/client';
 import { AdjustmentReason } from '../inventory/dto/inventory.dto';
 import { AuditService } from '../common/audit.service';
@@ -6,6 +7,7 @@ import { formatAmount } from '../common/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { paginated } from '../common/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
+import { dec } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { activePromotions, Buyer, buyerPrice, promotedPrice } from './promotions';
 import {
@@ -49,6 +51,9 @@ const storeProductSelect = {
   wholesalePrice: true,
   bagSize: true,
   heelHeightCm: true,
+  videoUrl: true,
+  instagramUrl: true,
+  createdAt: true,
   isFeatured: true,
   ratingAvg: true,
   ratingCount: true,
@@ -72,6 +77,11 @@ const storeProductSelect = {
 } satisfies Prisma.ProductSelect;
 
 type StoreProductRow = Prisma.ProductGetPayload<{ select: typeof storeProductSelect }>;
+
+/** Products this new count as "new arrivals". */
+const NEW_DAYS = 14;
+/** At or below this many pieces left the app says how many remain. */
+const FEW_LEFT = 3;
 
 /** Shopper view of a product: running promotion applied, original price shown struck through. */
 const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow, promos: Awaited<ReturnType<typeof activePromotions>>, buyer?: Buyer | null) => {
@@ -97,6 +107,13 @@ const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow
     /** Shown as "سعر التاجر" in the app. */
     merchantPrice: merchant,
     promotion: promo ? { name: promo.name, percent: promo.percent, endsAt: promo.endsAt } : null,
+    /** Added in the last [NEW_DAYS] days: shown under "وصل حديثاً". */
+    isNew: Date.now() - p.createdAt.getTime() < NEW_DAYS * 24 * 3600_000,
+    /** Pieces left in all sizes, when only a few are (for "باقي قطعتان فقط"). */
+    fewLeft: (() => {
+      const left = shaped.reduce((n, v) => n + Math.max(0, v.availableQty), 0);
+      return left > 0 && left <= FEW_LEFT ? left : null;
+    })(),
     inStock: shaped.some((v) => v.inStock),
     variants: shaped,
   };
@@ -109,6 +126,7 @@ export class CatalogService {
     private readonly audit: AuditService,
     private readonly inventory: InventoryService,
     private readonly notifications: NotificationsService,
+    private readonly ownerAlerts: OwnerAlertsService,
   ) {}
 
   // --------------------------------------------------------------- brands ---
@@ -324,7 +342,16 @@ export class CatalogService {
       }
     });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Product', entityId: id, after: dto });
+    if (dto.basePrice !== undefined && !dec(dto.basePrice).eq(before.basePrice)) {
+      void this.priceAlert(userId, `${before.nameAr}: ${formatAmount(before.basePrice)} ← ${formatAmount(dto.basePrice)}`, { productId: id });
+    }
     return this.withAnnouncement(await this.getProduct(id), notifyCustomers);
+  }
+
+  /** Tells the owner a selling price was changed, and by whom. */
+  async priceAlert(userId: string, what: string, data: Record<string, string>) {
+    const who = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    await this.ownerAlerts.raise('PRICE', 'تعديل سعر 🏷️', `${who?.name ?? 'موظف'} غيّر السعر — ${what}`, data);
   }
 
   /**
@@ -374,6 +401,11 @@ export class CatalogService {
     if (!before) throw new NotFoundException('Variant not found');
     const variant = await this.prisma.productVariant.update({ where: { id: variantId }, data: variantData(dto) });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'ProductVariant', entityId: variantId, before, after: variant });
+    const was = before.price === null ? null : dec(before.price);
+    const now = variant.price === null ? null : dec(variant.price);
+    if (dto.price !== undefined && (was === null ? now !== null : now === null || !was.eq(now))) {
+      void this.priceAlert(userId, `${variant.sku}: ${was ? formatAmount(was) : 'سعر المنتج'} ← ${now ? formatAmount(now) : 'سعر المنتج'}`, { productId: variant.productId });
+    }
     return variant;
   }
 
@@ -441,7 +473,24 @@ export class CatalogService {
     return this.prisma.customer.findUnique({ where: { id: customerId }, select: { isMerchant: true, merchantDiscount: true } });
   }
 
-  async storeProducts(q: StoreProductsQueryDto, customerId?: string) {
+  private gateCache?: { at: number; on: boolean };
+
+  /** When the owner requires sign-in to browse, only signed-in customers see the catalog. */
+  async storeGate(customerId?: string) {
+    if (customerId) return;
+    if (!this.gateCache || Date.now() - this.gateCache.at > 15_000) {
+      const row = await this.prisma.setting.findUnique({ where: { key: 'store.app' } });
+      this.gateCache = { at: Date.now(), on: !!(row?.value as { requireLogin?: boolean } | undefined)?.requireLogin };
+    }
+    if (this.gateCache.on) throw new UnauthorizedException('سجّل الدخول لتصفح المتجر');
+  }
+
+  /** Forget the cached sign-in rule (after the owner changes it). */
+  resetGate() {
+    this.gateCache = undefined;
+  }
+
+  async storeProducts(q: StoreProductsQueryDto, customerId?: string, deviceId?: string) {
     const buyer = await this.buyer(customerId);
     let categoryIds: string[] | undefined;
     if (q.category) {
@@ -466,11 +515,79 @@ export class CatalogService {
       this.prisma.product.count({ where }),
     ]);
     const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
+    // What shoppers look for (first page only, so paging is not counted twice).
+    const term = q.q?.trim().toLowerCase();
+    if (term && term.length >= 2 && !q.skip) {
+      await this.prisma.searchLog
+        .create({ data: { query: term.slice(0, 100), results: total, deviceId: (deviceId ?? 'unknown').slice(0, 100), customerId: customerId ?? null } })
+        .catch(() => undefined);
+    }
     return paginated(
       rows.map((r) => presentStoreProduct(r, promos, buyer)),
       total,
       q,
     );
+  }
+
+  /** Shopper view of these products (active and visible to this buyer), in the order given. */
+  async storeProductsByIds(ids: string[], customerId?: string) {
+    if (!ids.length) return [];
+    const buyer = await this.buyer(customerId);
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: ids }, status: ProductStatus.ACTIVE, visibility: { in: storeVisibility(buyer) }, category: { isActive: true } },
+      select: storeProductSelect,
+    });
+    const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
+    const byId = new Map(rows.map((r) => [r.id, presentStoreProduct(r, promos, buyer)]));
+    return ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
+  }
+
+  /**
+   * "يناسبه أيضاً": in-stock products of the same category (then the same brand) near the
+   * price of [slug], best rated first; plus what people who bought it also bought.
+   */
+  async relatedProducts(slug: string, customerId?: string, limit = 10) {
+    const p = await this.prisma.product.findFirst({ where: { slug, status: ProductStatus.ACTIVE }, select: { id: true, categoryId: true, brandId: true, basePrice: true } });
+    if (!p) throw new NotFoundException('Product not found');
+    const alsoBought = await this.boughtWith([p.id], limit);
+    const price = dec(p.basePrice);
+    const similar = await this.prisma.product.findMany({
+      where: {
+        id: { notIn: [p.id, ...alsoBought] },
+        status: ProductStatus.ACTIVE,
+        category: { isActive: true },
+        OR: [{ categoryId: p.categoryId }, ...(p.brandId ? [{ brandId: p.brandId }] : [])],
+        basePrice: { gte: price.mul(0.5), lte: price.mul(1.6) },
+        variants: { some: { isActive: true, stockLevels: { some: { onHand: { gt: 0 } } } } },
+      },
+      orderBy: [{ ratingAvg: 'desc' }, { createdAt: 'desc' }],
+      take: limit * 2,
+      select: { id: true, categoryId: true },
+    });
+    // Same category first.
+    similar.sort((a, b) => Number(b.categoryId === p.categoryId) - Number(a.categoryId === p.categoryId));
+    const similarIds = similar.map((s) => s.id);
+    return {
+      similar: await this.storeProductsByIds(similarIds.slice(0, limit), customerId),
+      alsoBought: await this.storeProductsByIds(alsoBought, customerId),
+    };
+  }
+
+  /** Products most often in the same orders as [productIds], most frequent first. */
+  async boughtWith(productIds: string[], limit = 10): Promise<string[]> {
+    if (!productIds.length) return [];
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT v2.product_id::text AS id
+      FROM order_items a
+      JOIN product_variants v1 ON v1.id = a.variant_id AND v1.product_id = ANY(${productIds}::uuid[])
+      JOIN order_items b ON b.order_id = a.order_id AND b.id <> a.id
+      JOIN product_variants v2 ON v2.id = b.variant_id AND NOT (v2.product_id = ANY(${productIds}::uuid[]))
+      JOIN products pr ON pr.id = v2.product_id AND pr.status = 'ACTIVE'
+      JOIN orders o ON o.id = a.order_id AND o.status <> 'CANCELLED'
+      GROUP BY v2.product_id
+      ORDER BY COUNT(DISTINCT a.order_id) DESC, MAX(o.placed_at) DESC
+      LIMIT ${limit}`;
+    return rows.map((r) => r.id);
   }
 
   async storeProduct(slug: string, customerId?: string) {

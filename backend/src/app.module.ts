@@ -1,3 +1,7 @@
+import { ExcelModule } from './excel/excel.module';
+import { MarketingModule } from './marketing/marketing.module';
+import { ChatModule } from './chat/chat.module';
+import { StorefrontModule } from './storefront/storefront.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
@@ -46,6 +50,10 @@ import { UsersModule } from './users/users.module';
     SystemModule,
     HomeModule,
     SmsModule,
+    StorefrontModule,
+    ChatModule,
+    MarketingModule,
+    ExcelModule,
   ],
   controllers: [HealthController],
   providers: [

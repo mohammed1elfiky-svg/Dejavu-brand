@@ -3,6 +3,7 @@
 package com.dejavu.admin.ui.wallet
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +30,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.AlertDialog
@@ -54,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +81,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.admin.ui.ChipFilter
+import com.dejavu.admin.ui.ConfirmDialog
 import com.dejavu.admin.ui.InfoCard
 import com.dejavu.admin.ui.TextDialog
 import com.dejavu.admin.ui.adminViewModel
@@ -635,6 +640,17 @@ class BankAccountsViewModel(
 
     fun setActive(a: StoreBankAccount, active: Boolean) = save(a, a.toRequest().copy(isActive = active)) {}
 
+    /** Deletes the account; one already used by top-ups is hidden from the app instead. */
+    fun delete(a: StoreBankAccount) = act {
+        repo.deleteBankAccount(a.id).orSay()?.let { res ->
+            say(
+                if (res.hidden) "الحساب مستخدم في طلبات شحن سابقة، فتم إخفاؤه من التطبيق بدل حذفه"
+                else "تم حذف الحساب ${a.bankName}",
+            )
+            repo.bankAccounts().getOrNull()?.let { list -> _state.value = Load.Ready(list) }
+        }
+    }
+
     private fun act(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
@@ -669,6 +685,7 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
     val canEdit = session.can(Perm.SETTINGS_MANAGE)
     var editing by remember { mutableStateOf<StoreBankAccount?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<StoreBankAccount?>(null) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -707,7 +724,15 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
                 ) {
                     if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     items(list, key = { it.id }) { a ->
-                        BankAccountCard(a, canEdit, busy, currencyImages, onEdit = { editing = a }, onActive = { vm.setActive(a, it) })
+                        BankAccountCard(
+                            a,
+                            canEdit,
+                            busy,
+                            currencyImages,
+                            onEdit = { editing = a },
+                            onActive = { vm.setActive(a, it) },
+                            onDelete = { deleting = a },
+                        )
                     }
                 }
             }
@@ -720,9 +745,19 @@ fun BankAccountsScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
         }
     }
     editing?.let { a ->
-        BankAccountDialog(a, currencies, currencyImages, busy, uploading, vm::uploadPicture, onDismiss = { editing = null }) { req ->
-            vm.save(a, req) { editing = null }
+        key(a.id) {
+            BankAccountDialog(a, currencies, currencyImages, busy, uploading, vm::uploadPicture, onDismiss = { editing = null }) { req ->
+                vm.save(a, req) { editing = null }
+            }
         }
+    }
+    deleting?.let { a ->
+        ConfirmDialog(
+            "حذف الحساب",
+            "حذف حساب ${a.bankName} (${a.accountNumber})؟ إن كان مستخدماً في طلبات شحن سابقة فسيُخفى من التطبيق بدل حذفه.",
+            "حذف",
+            onDismiss = { deleting = null },
+        ) { vm.delete(a) }
     }
 }
 
@@ -734,6 +769,7 @@ private fun BankAccountCard(
     currencyImages: Map<String, String?>,
     onEdit: () -> Unit,
     onActive: (Boolean) -> Unit,
+    onDelete: () -> Unit,
 ) {
     val cur = a.currency.fresh
     GlassCard(Modifier.fillMaxWidth(), onClick = if (canEdit) onEdit else null) {
@@ -771,6 +807,24 @@ private fun BankAccountCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(if (a.isActive) "يظهر للعملاء" else "مخفي عن العملاء", Modifier.weight(1f))
             Switch(checked = a.isActive, onCheckedChange = onActive, enabled = canEdit && !busy)
+        }
+        if (canEdit) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("تعديل", Modifier.padding(start = 6.dp))
+                }
+                OutlinedButton(
+                    onClick = onDelete,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("حذف", Modifier.padding(start = 6.dp))
+                }
+            }
         }
     }
 }

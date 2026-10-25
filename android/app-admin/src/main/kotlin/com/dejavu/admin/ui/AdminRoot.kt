@@ -90,6 +90,8 @@ import com.dejavu.admin.ui.pos.ShiftScreen
 import com.dejavu.admin.ui.system.AuditScreen
 import com.dejavu.admin.ui.system.BackupScreen
 import com.dejavu.admin.ui.system.DailySummaryScreen
+import com.dejavu.admin.ui.store.ReviewsScreen
+import com.dejavu.admin.ui.store.StoreSetupScreen
 import com.dejavu.admin.ui.finance.DebtorsScreen
 import com.dejavu.admin.ui.inventory.StockCountsScreen
 import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
@@ -181,6 +183,8 @@ object R {
     const val BACKUP = "backup"
     const val STOCK_COUNTS = "stock-counts"
     const val DAILY_SUMMARY = "daily-summary"
+    const val STORE_SETUP = "store-setup"
+    const val REVIEWS = "reviews"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -366,6 +370,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.BACKUP) { BackupScreen(back) }
             composable(R.STOCK_COUNTS) { StockCountsScreen(session, back) }
             composable(R.DAILY_SUMMARY) { DailySummaryScreen(back) }
+            composable(R.STORE_SETUP) { StoreSetupScreen(back) }
+            composable(R.REVIEWS) { ReviewsScreen(back) }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })

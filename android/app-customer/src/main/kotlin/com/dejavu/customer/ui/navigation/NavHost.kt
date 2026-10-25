@@ -60,6 +60,7 @@ import com.dejavu.customer.ui.home.HomeScreen
 import com.dejavu.customer.ui.notifications.NotificationsScreen
 import com.dejavu.customer.ui.orders.OrderDetailScreen
 import com.dejavu.customer.ui.orders.OrdersScreen
+import com.dejavu.customer.ui.product.AllReviewsScreen
 import com.dejavu.customer.ui.product.ProductScreen
 import com.dejavu.customer.ui.wallet.TopUpScreen
 import com.dejavu.customer.ui.wallet.WalletScreen
@@ -83,12 +84,14 @@ object Routes {
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
+    const val PRODUCT_REVIEWS = "product/{slug}/reviews"
     const val ORDER = "order/{number}?placed={placed}"
     const val ADDRESS_FORM = "address?id={id}"
 
     fun products(title: String, category: String? = null, query: String? = null, featured: Boolean = false, brand: String? = null) =
         "products?title=${enc(title)}&category=${enc(category)}&q=${enc(query)}&featured=$featured&brand=${enc(brand)}"
     fun product(slug: String) = "product/${enc(slug)}"
+    fun productReviews(slug: String) = "product/${enc(slug)}/reviews"
     fun order(number: String, placed: Boolean = false) = "order/${enc(number)}?placed=$placed"
     fun addressForm(id: String? = null) = "address?id=${enc(id)}"
 
@@ -208,13 +211,18 @@ fun DejavuNavHost() {
                 )
             }
             composable(Routes.PRODUCT) { entry ->
+                val slug = entry.arguments?.getString("slug").orEmpty()
                 ProductScreen(
-                    slug = entry.arguments?.getString("slug").orEmpty(),
+                    slug = slug,
                     onBack = { nav.popBackStack() },
                     openCart = { nav.switchTab(Routes.CART) },
                     requireLogin = { nav.navigate(Routes.LOGIN) },
-                    openBrand = { name, slug -> nav.navigate(Routes.products(name, brand = slug)) },
+                    openBrand = { name, brand -> nav.navigate(Routes.products(name, brand = brand)) },
+                    openReviews = { nav.navigate(Routes.productReviews(slug)) },
                 )
+            }
+            composable(Routes.PRODUCT_REVIEWS) { entry ->
+                AllReviewsScreen(slug = entry.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() })
             }
             composable(Routes.CART) {
                 CartScreen(

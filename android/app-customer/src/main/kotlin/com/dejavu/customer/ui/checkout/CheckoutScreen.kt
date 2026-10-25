@@ -79,6 +79,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 
@@ -108,8 +109,10 @@ class CheckoutViewModel(
     private val _placed = MutableSharedFlow<Pair<String, String?>>(extraBufferCapacity = 1)
     val placed = _placed.asSharedFlow()
 
+    private var methodsJob: Job? = null
+    private var methodsFor: String? = null
+
     init {
-        viewModelScope.launch { _state.value = _state.value.copy(methods = orders.paymentMethods()) }
         // Fresh rate before invoicing, so the total shown is the one the order gets.
         viewModelScope.launch { currencies.refresh() }
     }
@@ -127,13 +130,27 @@ class CheckoutViewModel(
             val current = _state.value.addressId?.takeIf { id -> list.any { it.id == id } }
             val chosen = current ?: (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.id
             _state.value = _state.value.copy(addresses = list, addressId = chosen)
+            loadMethods(list.firstOrNull { it.id == chosen }?.governorate)
             chosen?.let { cartRepo.refresh(it).orSay() }
         }
     }
 
     fun chooseAddress(id: String) {
         _state.value = _state.value.copy(addressId = id)
+        loadMethods(_state.value.addresses?.firstOrNull { it.id == id }?.governorate)
         viewModelScope.launch { cartRepo.refresh(id).orSay() }
+    }
+
+    /** The methods the store accepts for [governorate] (cash on delivery may be off there). */
+    private fun loadMethods(governorate: String?) {
+        if (methodsJob != null && governorate == methodsFor) return
+        methodsFor = governorate
+        methodsJob?.cancel()
+        methodsJob = viewModelScope.launch {
+            val methods = orders.paymentMethods(governorate).filter { it != PaymentMethod.INSTAPAY }
+            val s = _state.value
+            _state.value = s.copy(methods = methods, method = if (s.method in methods) s.method else methods.firstOrNull() ?: s.method)
+        }
     }
 
     fun chooseMethod(m: PaymentMethod) {
@@ -224,7 +241,7 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                     }
                     Button(
                         onClick = vm::place,
-                        enabled = !state.placing && state.addressId != null && cart?.canCheckout == true &&
+                        enabled = !state.placing && state.addressId != null && cart?.canCheckout == true && state.method in state.methods &&
                             !(state.method == PaymentMethod.CUSTOMER_ACCOUNT && walletShort),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
@@ -344,7 +361,13 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Liquid.Gold.copy(alpha = 0.25f))
                         SummaryRow("المجموع", Money.format(c.totals.subtotal))
                         if (!Money.isZero(c.totals.discountTotal)) SummaryRow("الخصم", "- ${Money.format(c.totals.discountTotal)}", valueColor = Success)
-                        SummaryRow("الشحن", if (c.shipping == null) "—" else Money.format(c.totals.shippingFee))
+                        if (c.shipping != null && !Money.isZero(c.totals.shippingFee)) SummaryRow("الشحن", Money.format(c.totals.shippingFee))
+                        Text(
+                            "رسوم الشحن تُدفع للمندوب عند الاستلام",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                         c.shippingProblem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error) }
                     }
                 }

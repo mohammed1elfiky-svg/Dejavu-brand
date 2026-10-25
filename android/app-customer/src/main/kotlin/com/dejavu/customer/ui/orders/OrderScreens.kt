@@ -281,7 +281,7 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
                     GlassCard(Modifier.fillMaxWidth()) {
                         SummaryRow("المجموع", order.format(order.subtotal))
                         if (!Money.isZero(order.discountTotal)) SummaryRow("الخصم" + (order.coupon?.let { " (${it.code})" } ?: ""), "- ${order.format(order.discountTotal)}", valueColor = Success)
-                        SummaryRow("الشحن", order.format(order.shippingFee))
+                        if (!Money.isZero(order.shippingFee)) SummaryRow("الشحن", order.format(order.shippingFee))
                         HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Liquid.Gold.copy(alpha = 0.25f))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("الإجمالي", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))

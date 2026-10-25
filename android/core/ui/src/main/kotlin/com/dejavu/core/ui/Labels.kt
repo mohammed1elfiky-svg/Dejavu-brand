@@ -34,7 +34,7 @@ val PaymentMethod.label: String
     get() = when (this) {
         PaymentMethod.CASH_ON_DELIVERY -> "الدفع عند الاستلام"
         PaymentMethod.CARD -> "بطاقة بنكية"
-        PaymentMethod.WALLET -> "محفظة إلكترونية"
+        PaymentMethod.WALLET -> "المحافظ الإلكترونية"
         PaymentMethod.INSTAPAY -> "إنستاباي"
         PaymentMethod.BANK_TRANSFER -> "تحويل بنكي"
         PaymentMethod.CASH -> "نقداً"

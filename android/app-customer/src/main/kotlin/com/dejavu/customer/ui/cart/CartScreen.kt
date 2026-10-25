@@ -195,9 +195,14 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
                     val t = cart.totals
                     SummaryRow("المجموع", Money.format(t.subtotal))
                     if (!Money.isZero(t.discountTotal)) SummaryRow("الخصم", "- ${Money.format(t.discountTotal)}", valueColor = Success)
-                    SummaryRow(
-                        "الشحن" + (cart.shipping?.let { " (${it.governorate}، ${it.estimatedDays} أيام)" } ?: ""),
-                        if (cart.shipping == null) "يُحدد عند إتمام الطلب" else Money.format(t.shippingFee),
+                    if (cart.shipping != null && !Money.isZero(t.shippingFee)) {
+                        SummaryRow("الشحن (${cart.shipping?.governorate}، ${cart.shipping?.estimatedDays} أيام)", Money.format(t.shippingFee))
+                    }
+                    Text(
+                        "رسوم الشحن تُدفع للمندوب عند الاستلام",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                     cart.shippingProblem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 }

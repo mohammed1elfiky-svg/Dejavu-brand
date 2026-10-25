@@ -217,14 +217,17 @@ fun ProductScreen(
     openCart: () -> Unit,
     requireLogin: () -> Unit,
     openBrand: (name: String, slug: String) -> Unit = { _, _ -> },
+    openReviews: () -> Unit = {},
 ) {
     val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session) }
+    val reviewsVm = appViewModel(key = "product-reviews:$slug") { ReviewsViewModel(slug, it.catalog, it.session) }
     val state by vm.product.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
     val watched by vm.watched.collectAsStateWithLifecycle()
     val watching by vm.watching.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
+    CollectMessages(reviewsVm, snackbar)
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             when (event) {
@@ -291,6 +294,7 @@ fun ProductScreen(
                             p.brand?.let { b -> BrandChip(b, onClick = { openBrand(b.name, b.slug) }) }
                             if (p.merchantPrice) Tag("سعر التاجر", Gold)
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
+                            if (p.ratingCount > 0) RatingSummary(p.ratingAvg, p.ratingCount)
                             Promotion(p)
                         }
                     }
@@ -354,6 +358,7 @@ fun ProductScreen(
                             specs.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         }
                     }
+                    ReviewsSection(reviewsVm, openAll = openReviews)
                     Spacer(Modifier.height(8.dp))
                 }
             }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -374,7 +375,7 @@ class AddressesViewModel(private val repo: AddressRepository) : BaseViewModel() 
 
 fun Address.toRequest() = AddressRequest(
     recipient = recipient, phone = phone, governorate = governorate, city = city, street = street,
-    label = label, district = district, building = building, floor = floor, apartment = apartment, landmark = landmark,
+    label = label, district = district, landmark = landmark,
 )
 
 @Composable
@@ -448,9 +449,6 @@ data class AddressForm(
     val city: String = "",
     val district: String = "",
     val street: String = "",
-    val building: String = "",
-    val floor: String = "",
-    val apartment: String = "",
     val landmark: String = "",
     val isDefault: Boolean = false,
     val showErrors: Boolean = false,
@@ -466,8 +464,7 @@ data class AddressForm(
 
     fun toRequest() = AddressRequest(
         recipient = recipient.trim(), phone = phone.filterNot { it.isWhitespace() }, governorate = governorate, city = city.trim(), street = street.trim(),
-        label = label.trim().ifBlank { null }, district = district.trim().ifBlank { null }, building = building.trim().ifBlank { null },
-        floor = floor.trim().ifBlank { null }, apartment = apartment.trim().ifBlank { null }, landmark = landmark.trim().ifBlank { null },
+        label = label.trim().ifBlank { null }, district = district.trim().ifBlank { null }, landmark = landmark.trim().ifBlank { null },
         isDefault = isDefault.takeIf { it },
     )
 }
@@ -483,13 +480,13 @@ class AddressFormViewModel(private val id: String?, private val repo: AddressRep
     val saved = _saved.asSharedFlow()
 
     init {
-        viewModelScope.launch { catalog.shippingZones().orSay()?.let { _zones.value = it } }
+        viewModelScope.launch { catalog.shippingZones().orSay()?.let { list -> _zones.value = list.filter { it.isActive } } }
         if (id != null) {
             viewModelScope.launch {
                 repo.list().orSay()?.firstOrNull { it.id == id }?.let { a ->
                     _form.value = AddressForm(
                         a.label.orEmpty(), a.recipient, a.phone, a.governorate, a.city, a.district.orEmpty(), a.street,
-                        a.building.orEmpty(), a.floor.orEmpty(), a.apartment.orEmpty(), a.landmark.orEmpty(), a.isDefault,
+                        a.landmark.orEmpty(), a.isDefault,
                     )
                 }
             }
@@ -558,12 +555,7 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
                     }
                     Field("المدينة / المنطقة", form.city, err("city"), placeholder = "مثال: صنعاء، عدن") { v -> vm.update { copy(city = v) } }
                     Field("الحي (اختياري)", form.district) { v -> vm.update { copy(district = v) } }
-                    Field("الشارع ورقم العقار", form.street, err("street")) { v -> vm.update { copy(street = v) } }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Field("المبنى", form.building, modifier = Modifier.weight(1f)) { v -> vm.update { copy(building = v) } }
-                        Field("الدور", form.floor, modifier = Modifier.weight(1f)) { v -> vm.update { copy(floor = v) } }
-                        Field("الشقة", form.apartment, modifier = Modifier.weight(1f)) { v -> vm.update { copy(apartment = v) } }
-                    }
+                    Field("الشارع", form.street, err("street")) { v -> vm.update { copy(street = v) } }
                     Field("علامة مميزة (اختياري)", form.landmark) { v -> vm.update { copy(landmark = v) } }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
@@ -580,30 +572,64 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
     }
 
     if (pickGovernorate) {
-        AlertDialog(
-            onDismissRequest = { pickGovernorate = false },
-            title = { Text("المحافظة") },
-            text = {
+        GovernoratePicker(
+            zones = zones,
+            selected = form.governorate,
+            onPick = { g ->
+                vm.update { copy(governorate = g) }
+                pickGovernorate = false
+            },
+            onDismiss = { pickGovernorate = false },
+        )
+    }
+}
+
+/** Searchable list of the governorates we deliver to (active shipping zones). */
+@Composable
+fun GovernoratePicker(zones: List<ShippingZone>, selected: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val shown = remember(zones, query) {
+        val q = query.trim()
+        if (q.isEmpty()) zones else zones.filter { it.governorate.contains(q, ignoreCase = true) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("المحافظة") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (zones.isEmpty()) {
                     Text("لا توجد مناطق توصيل متاحة حالياً")
                 } else {
-                    LazyColumn {
-                        items(zones, key = { it.governorate }) { z ->
-                            ListItem(
-                                headlineContent = { Text(z.governorate) },
-                                supportingContent = { Text("الشحن ${Money.format(z.fee)} · ${z.estimatedDays} أيام") },
-                                modifier = Modifier.clickable {
-                                    vm.update { copy(governorate = z.governorate) }
-                                    pickGovernorate = false
-                                },
-                            )
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("ابحث عن المحافظة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (shown.isEmpty()) {
+                        Text("لا توجد نتائج", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                            items(shown, key = { it.governorate }) { z ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            z.governorate,
+                                            color = if (z.governorate == selected) Liquid.GoldDeep else androidx.compose.ui.graphics.Color.Unspecified,
+                                            fontWeight = if (z.governorate == selected) FontWeight.Bold else null,
+                                        )
+                                    },
+                                    modifier = Modifier.clickable { onPick(z.governorate) },
+                                )
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = { pickGovernorate = false }) { Text("إغلاق") } },
-        )
-    }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
+    )
 }
 
 @Composable

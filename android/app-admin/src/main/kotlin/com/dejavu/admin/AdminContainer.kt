@@ -5,6 +5,7 @@ import com.dejavu.core.admin.AdminApi
 import com.dejavu.core.admin.AdminOrderRepository
 import com.dejavu.core.admin.AdminReturnRepository
 import com.dejavu.core.admin.DashboardRepository
+import com.dejavu.core.admin.HomeBadges
 import com.dejavu.core.admin.ExpenseRepository
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.InventoryRepository
@@ -67,6 +68,18 @@ class AdminContainer(private val context: Context) {
     val coupons = CouponRepository(api)
     val system = SystemRepository(api)
     val storeSetup = StoreSetupRepository(api)
+
+    /** Theme, text size, digits, home cards, recent items of this device. */
+    val uiPrefs = com.dejavu.admin.ui.UiPrefs(context)
+
+    private val _badges = MutableStateFlow<HomeBadges?>(null)
+
+    /** Counters for the home screen, the "more" page and the bottom bar; refreshed while signed in. */
+    val badges = _badges.asStateFlow()
+
+    suspend fun refreshBadges() {
+        if (session.state.value is StaffSession.LoggedIn) dashboard.badges().onSuccess { _badges.value = it }
+    }
 
     /** Receipt and barcode-label printers of this device. */
     val printers = PrinterStore(context)
@@ -134,7 +147,13 @@ class AdminContainer(private val context: Context) {
         }
         appScope.launch {
             session.state.distinctUntilChangedBy { it is StaffSession.LoggedIn }.collect {
-                if (it is StaffSession.LoggedIn) registerPush()
+                if (it is StaffSession.LoggedIn) registerPush() else _badges.value = null
+            }
+        }
+        appScope.launch {
+            while (true) {
+                refreshBadges()
+                delay(60_000)
             }
         }
     }

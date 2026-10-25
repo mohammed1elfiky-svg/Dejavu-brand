@@ -22,22 +22,22 @@ import com.dejavu.core.ui.theme.GlassCard as LiquidGlassCard
 /** The admin app's names for the shared liquid-glass palette. */
 object Lux {
     val Gold = Liquid.Gold
-    val GoldDeep = Liquid.GoldDeep
-    val GoldLight = Liquid.GoldPale
-    val Champagne = Color(0xFFFBF6E4)
-    val Pearl = Liquid.Pearl
-    val Ink = Liquid.Ink
-    val InkSoft = Liquid.InkSoft
+    val GoldDeep get() = Liquid.GoldDeep
+    val GoldLight get() = Liquid.GoldPale
+    val Champagne get() = if (com.dejavu.core.ui.theme.LiquidMode.dark) Color(0xFF2E2819) else Color(0xFFFBF6E4)
+    val Pearl get() = Liquid.Pearl
+    val Ink get() = Liquid.Ink
+    val InkSoft get() = Liquid.InkSoft
     val Hairline = Liquid.Gold.copy(alpha = 0.2f)
 
-    val GoldBrush = Liquid.GoldBrush
-    val GlassBrush = Liquid.GlassFill
-    val GlassEdge = Liquid.GlassEdge
+    val GoldBrush get() = Liquid.GoldBrush
+    val GlassBrush get() = Liquid.GlassFill
+    val GlassEdge get() = Liquid.GlassEdge
 }
 
 /** Same design system as the customer app. */
 @Composable
-fun LuxTheme(content: @Composable () -> Unit) = DejavuTheme(content)
+fun LuxTheme(fontScale: Float = 1f, content: @Composable () -> Unit) = DejavuTheme(fontScale, content)
 
 @Composable
 fun LuxBackdrop(content: @Composable BoxScope.() -> Unit) = LiquidBackdrop(content)

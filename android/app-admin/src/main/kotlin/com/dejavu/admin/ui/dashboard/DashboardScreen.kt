@@ -31,6 +31,7 @@ import com.dejavu.admin.ui.adminContainer
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.Perm
+import com.dejavu.core.admin.StaffSession
 import com.dejavu.core.model.Currency
 import com.dejavu.core.ui.CollectMessages
 import com.dejavu.core.ui.CurrencyArt
@@ -113,7 +114,15 @@ private fun dashRateOf(v: String): BigDecimal? = v.trim().toBigDecimalOrNull()?.
 private fun dashPlainRate(rate: String?): String = rate?.toBigDecimalOrNull()?.stripTrailingZeros()?.toPlainString() ?: "—"
 
 @Composable
-fun DashboardScreen(openOrders: () -> Unit, openReturns: () -> Unit, openStock: () -> Unit, openSettlements: () -> Unit) {
+fun DashboardScreen(
+    session: StaffSession.LoggedIn,
+    navigate: (String) -> Unit,
+    switchTab: (String) -> Unit,
+    openOrders: () -> Unit,
+    openReturns: () -> Unit,
+    openStock: () -> Unit,
+    openSettlements: () -> Unit,
+) {
     val vm = adminViewModel { DashboardViewModel(it.dashboard, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val pictures by vm.pictures.collectAsStateWithLifecycle()

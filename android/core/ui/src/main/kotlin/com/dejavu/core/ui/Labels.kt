@@ -1,5 +1,6 @@
 package com.dejavu.core.ui
 
+import com.dejavu.core.model.Numerals
 import com.dejavu.core.model.OrderStatus
 import com.dejavu.core.model.PaymentMethod
 import com.dejavu.core.model.PaymentStatus
@@ -55,6 +56,6 @@ private val dateFormat = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("ar")
 private val dateTimeFormat = DateTimeFormatter.ofPattern("d MMMM، h:mm a", Locale("ar"))
 
 /** "2026-10-21T00:22:54.000Z" → "21 أكتوبر 2026" */
-fun formatDate(iso: String?): String = iso?.let { runCatching { dateFormat.format(Instant.parse(it).atZone(cairo)) }.getOrNull() } ?: ""
+fun formatDate(iso: String?): String = iso?.let { runCatching { Numerals.of(dateFormat.format(Instant.parse(it).atZone(cairo))) }.getOrNull() } ?: ""
 
-fun formatDateTime(iso: String?): String = iso?.let { runCatching { dateTimeFormat.format(Instant.parse(it).atZone(cairo)) }.getOrNull() } ?: ""
+fun formatDateTime(iso: String?): String = iso?.let { runCatching { Numerals.of(dateTimeFormat.format(Instant.parse(it).atZone(cairo))) }.getOrNull() } ?: ""

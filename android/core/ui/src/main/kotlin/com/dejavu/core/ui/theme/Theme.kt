@@ -55,6 +55,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -84,26 +90,47 @@ import androidx.navigation.NavBackStackEntry
  * press micro-interactions and soft slide transitions.
  */
 
-/** White & gold luxury palette. */
+/**
+ * Light or dark look of the whole app. Every [Liquid] color reads it, so changing it
+ * repaints the screens (set by the app from the user's choice before [DejavuTheme]).
+ */
+object LiquidMode {
+    var dark by mutableStateOf(false)
+}
+
+/** White & gold luxury palette (deep ink & gold in dark mode). */
 object Liquid {
-    val Pearl = Color(0xFFF8F9FA)
-    val Mist = Color(0xFFF1F3F5)
+    val Pearl get() = if (LiquidMode.dark) Color(0xFF15130F) else Color(0xFFF8F9FA)
+    val Mist get() = if (LiquidMode.dark) Color(0xFF1E1B16) else Color(0xFFF1F3F5)
     val Gold = Color(0xFFD4AF37)
     val GoldSoft = Color(0xFFC5A059)
-    val GoldPale = Color(0xFFF3E5AB)
-    val GoldDeep = Color(0xFFAA771C)
-    val Ink = Color(0xFF1A1A1A)
-    val InkSoft = Color(0xFF6C757D)
-    val Success = Color(0xFF2E7D32)
-    val Danger = Color(0xFFC62828)
+    val GoldPale get() = if (LiquidMode.dark) Color(0xFF5C4A1E) else Color(0xFFF3E5AB)
+    val GoldDeep get() = if (LiquidMode.dark) Color(0xFFE0BE5A) else Color(0xFFAA771C)
+    val Ink get() = if (LiquidMode.dark) Color(0xFFF2EEE6) else Color(0xFF1A1A1A)
+    val InkSoft get() = if (LiquidMode.dark) Color(0xFFADA79B) else Color(0xFF6C757D)
+    val Success get() = if (LiquidMode.dark) Color(0xFF66BB6A) else Color(0xFF2E7D32)
+    val Danger get() = if (LiquidMode.dark) Color(0xFFEF5350) else Color(0xFFC62828)
+
+    /** The glass tint: white in light mode, a warm charcoal in dark mode. */
+    val Frost get() = if (LiquidMode.dark) Color(0xFF2B2720) else Color.White
+
+    private val goldLight = Brush.linearGradient(listOf(Color(0xFFF3E5AB), Gold, Color(0xFFAA771C)))
+    private val goldDark = Brush.linearGradient(listOf(Color(0xFFE6CC72), Gold, Color(0xFF8C6216)))
+    private val goldLightH = Brush.horizontalGradient(listOf(Color(0xFFF3E5AB), Gold, Color(0xFFAA771C)))
+    private val goldDarkH = Brush.horizontalGradient(listOf(Color(0xFFE6CC72), Gold, Color(0xFF8C6216)))
 
     /** Liquid gold for primary buttons, active items and highlight cards. */
-    val GoldBrush = Brush.linearGradient(listOf(GoldPale, Gold, GoldDeep))
-    val GoldBrushH = Brush.horizontalGradient(listOf(GoldPale, Gold, GoldDeep))
+    val GoldBrush get() = if (LiquidMode.dark) goldDark else goldLight
+    val GoldBrushH get() = if (LiquidMode.dark) goldDarkH else goldLightH
+
+    private val fillLight = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.65f)))
+    private val fillDark = Brush.verticalGradient(listOf(Color(0xFF2B2720).copy(alpha = 0.92f), Color(0xFF221F19).copy(alpha = 0.85f)))
+    private val edgeLight = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.8f), Gold.copy(alpha = 0.30f), Color.White.copy(alpha = 0.2f)))
+    private val edgeDark = Brush.linearGradient(listOf(Gold.copy(alpha = 0.35f), Gold.copy(alpha = 0.12f), Color.White.copy(alpha = 0.06f)))
 
     /** Frosted glass fill and its glowing edge. */
-    val GlassFill = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.65f)))
-    val GlassEdge = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.8f), Gold.copy(alpha = 0.30f), Color.White.copy(alpha = 0.2f)))
+    val GlassFill get() = if (LiquidMode.dark) fillDark else fillLight
+    val GlassEdge get() = if (LiquidMode.dark) edgeDark else edgeLight
 
     val CardShape = RoundedCornerShape(22.dp)
     val ButtonShape = RoundedCornerShape(18.dp)
@@ -111,14 +138,14 @@ object Liquid {
 }
 
 // Names kept for screens written against the first palette.
-val Aubergine = Liquid.Ink
+val Aubergine get() = Liquid.Ink
 val Gold = Liquid.Gold
-val Cream = Liquid.Pearl
-val Sand = Liquid.Mist
-val Success = Liquid.Success
+val Cream get() = Liquid.Pearl
+val Sand get() = Liquid.Mist
+val Success get() = Liquid.Success
 val Warning = Color(0xFFB26A00)
 
-private val LiquidColors = lightColorScheme(
+private fun liquidLight() = lightColorScheme(
     primary = Liquid.GoldDeep,
     onPrimary = Color.White,
     primaryContainer = Liquid.GoldPale,
@@ -146,7 +173,33 @@ private val LiquidColors = lightColorScheme(
     error = Liquid.Danger,
 )
 
-private val LiquidType = Typography().run {
+private fun liquidDark() = darkColorScheme(
+    primary = Liquid.GoldDeep,
+    onPrimary = Color(0xFF1A1407),
+    primaryContainer = Liquid.GoldPale,
+    onPrimaryContainer = Liquid.Ink,
+    secondary = Liquid.Gold,
+    onSecondary = Color(0xFF1A1407),
+    secondaryContainer = Liquid.GoldPale.copy(alpha = 0.6f),
+    onSecondaryContainer = Liquid.Ink,
+    tertiary = Liquid.GoldSoft,
+    background = Color.Transparent,
+    onBackground = Liquid.Ink,
+    surface = Liquid.Frost.copy(alpha = 0.85f),
+    onSurface = Liquid.Ink,
+    surfaceVariant = Liquid.GoldPale.copy(alpha = 0.35f),
+    onSurfaceVariant = Liquid.InkSoft,
+    surfaceContainerLowest = Liquid.Frost.copy(alpha = 0.7f),
+    surfaceContainerLow = Liquid.Frost.copy(alpha = 0.78f),
+    surfaceContainer = Liquid.Frost.copy(alpha = 0.85f),
+    surfaceContainerHigh = Color(0xFA2B2720),
+    surfaceContainerHighest = Color(0xFF332E26),
+    outline = Liquid.Gold.copy(alpha = 0.4f),
+    outlineVariant = Liquid.Gold.copy(alpha = 0.2f),
+    error = Liquid.Danger,
+)
+
+private fun liquidType() = Typography().run {
     copy(
         headlineSmall = headlineSmall.copy(fontWeight = FontWeight.Bold, color = Liquid.Ink),
         titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold),
@@ -158,12 +211,17 @@ private val LiquidType = Typography().run {
 
 val PriceStyle = TextStyle(fontWeight = FontWeight.Bold, fontSize = 16.sp)
 
-/** The app theme: liquid-glass colors, rounded shapes and the glowing pearl backdrop. */
+/**
+ * The app theme: liquid-glass colors (light or dark, see [LiquidMode]), rounded shapes and the
+ * glowing pearl backdrop. [fontScale] enlarges or shrinks all text on top of the system setting.
+ */
 @Composable
-fun DejavuTheme(content: @Composable () -> Unit) {
+fun DejavuTheme(fontScale: Float = 1f, content: @Composable () -> Unit) {
+    val dark = LiquidMode.dark
+    val density = LocalDensity.current
     MaterialTheme(
-        colorScheme = LiquidColors,
-        typography = LiquidType,
+        colorScheme = remember(dark) { if (dark) liquidDark() else liquidLight() },
+        typography = remember(dark) { liquidType() },
         shapes = Shapes(
             extraSmall = RoundedCornerShape(10.dp),
             small = RoundedCornerShape(14.dp),
@@ -171,7 +229,11 @@ fun DejavuTheme(content: @Composable () -> Unit) {
             large = RoundedCornerShape(22.dp),
             extraLarge = RoundedCornerShape(28.dp),
         ),
-    ) { LiquidBackdrop { content() } }
+    ) {
+        CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * fontScale)) {
+            LiquidBackdrop { content() }
+        }
+    }
 }
 
 /** Pearl-to-mist gradient with slow liquid-gold glows: the depth behind the glass. */
@@ -181,7 +243,7 @@ fun LiquidBackdrop(content: @Composable BoxScope.() -> Unit) {
         Canvas(Modifier.fillMaxSize()) {
             fun glow(center: Offset, radius: Float, color: Color) =
                 drawCircle(Brush.radialGradient(listOf(color, Color.Transparent), center = center, radius = radius), radius, center)
-            glow(Offset(size.width * 0.92f, size.height * 0.06f), size.minDimension * 0.8f, Liquid.GoldPale.copy(alpha = 0.55f))
+            glow(Offset(size.width * 0.92f, size.height * 0.06f), size.minDimension * 0.8f, Liquid.GoldPale.copy(alpha = if (LiquidMode.dark) 0.35f else 0.55f))
             glow(Offset(size.width * 0.04f, size.height * 0.5f), size.minDimension * 0.7f, Liquid.Gold.copy(alpha = 0.12f))
             glow(Offset(size.width * 0.75f, size.height * 1.0f), size.minDimension * 0.75f, Liquid.GoldPale.copy(alpha = 0.4f))
         }
@@ -247,7 +309,7 @@ fun LiquidGoldButton(
             .liquidClickable(enabled = enabled, onClick = onClick)
             .shadow(if (enabled) 14.dp else 0.dp, Liquid.ButtonShape, ambientColor = Liquid.Gold, spotColor = Liquid.GoldDeep)
             .clip(Liquid.ButtonShape)
-            .background(if (enabled) Liquid.GoldBrushH else Brush.horizontalGradient(listOf(Liquid.Mist, Color(0xFFE2E4E7))))
+            .background(if (enabled) Liquid.GoldBrushH else Brush.horizontalGradient(listOf(Liquid.Mist, Liquid.Mist.copy(alpha = 0.8f))))
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.55f)), Liquid.ButtonShape)
             .padding(horizontal = 18.dp),
         contentAlignment = Alignment.Center,
@@ -276,7 +338,7 @@ fun GlassButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
             .heightIn(min = 48.dp)
             .liquidClickable(enabled = enabled, onClick = onClick)
             .clip(Liquid.ButtonShape)
-            .background(Color.White.copy(alpha = 0.55f))
+            .background(Liquid.Frost.copy(alpha = 0.55f))
             .border(BorderStroke(1.dp, Liquid.Gold.copy(alpha = if (enabled) 0.6f else 0.2f)), Liquid.ButtonShape)
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
@@ -327,7 +389,7 @@ fun Button(
             .pressScale(source)
             .shadow(if (enabled) 12.dp else 0.dp, shape, ambientColor = Liquid.Gold, spotColor = Liquid.GoldDeep)
             .clip(shape)
-            .background(if (enabled) Liquid.GoldBrushH else Brush.horizontalGradient(listOf(Liquid.Mist, Color(0xFFE2E4E7))))
+            .background(if (enabled) Liquid.GoldBrushH else Brush.horizontalGradient(listOf(Liquid.Mist, Liquid.Mist.copy(alpha = 0.8f))))
     }
     androidx.compose.material3.Button(
         onClick = onClick,
@@ -371,7 +433,7 @@ fun OutlinedButton(
         modifier = modifier.pressScale(source),
         enabled = enabled,
         shape = shape,
-        colors = colors ?: ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(alpha = 0.55f), contentColor = Liquid.GoldDeep),
+        colors = colors ?: ButtonDefaults.outlinedButtonColors(containerColor = Liquid.Frost.copy(alpha = 0.55f), contentColor = Liquid.GoldDeep),
         elevation = elevation,
         border = border ?: BorderStroke(1.dp, Liquid.Gold.copy(alpha = if (enabled) 0.6f else 0.2f)),
         contentPadding = contentPadding,
@@ -383,10 +445,10 @@ fun OutlinedButton(
 /** Glass input colors: concave translucent fill, gold glow on focus. */
 @Composable
 fun glassFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = Color.White.copy(alpha = 0.62f),
-    unfocusedContainerColor = Color.White.copy(alpha = 0.50f),
-    disabledContainerColor = Color.White.copy(alpha = 0.35f),
-    errorContainerColor = Color.White.copy(alpha = 0.55f),
+    focusedContainerColor = Liquid.Frost.copy(alpha = 0.62f),
+    unfocusedContainerColor = Liquid.Frost.copy(alpha = 0.50f),
+    disabledContainerColor = Liquid.Frost.copy(alpha = 0.35f),
+    errorContainerColor = Liquid.Frost.copy(alpha = 0.55f),
     focusedBorderColor = Liquid.Gold,
     unfocusedBorderColor = Liquid.Gold.copy(alpha = 0.28f),
     focusedLabelColor = Liquid.GoldDeep,

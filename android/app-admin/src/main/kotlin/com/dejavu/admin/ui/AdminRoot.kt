@@ -4,6 +4,7 @@ package com.dejavu.admin.ui
 
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.clickable
 import com.dejavu.core.ui.storage.SavedLogin
 import androidx.compose.ui.text.input.VisualTransformation
@@ -92,6 +93,9 @@ import com.dejavu.admin.ui.system.BackupScreen
 import com.dejavu.admin.ui.system.DailySummaryScreen
 import com.dejavu.admin.ui.store.ReviewsScreen
 import com.dejavu.admin.ui.store.StoreSetupScreen
+import com.dejavu.admin.ui.search.SearchScreen
+import com.dejavu.admin.ui.more.AppearanceScreen
+import com.dejavu.admin.ui.more.OnboardingTour
 import com.dejavu.admin.ui.finance.DebtorsScreen
 import com.dejavu.admin.ui.inventory.StockCountsScreen
 import com.dejavu.admin.ui.purchasing.ImportReceiveScreen
@@ -185,6 +189,8 @@ object R {
     const val DAILY_SUMMARY = "daily-summary"
     const val STORE_SETUP = "store-setup"
     const val REVIEWS = "reviews"
+    const val SEARCH = "search"
+    const val APPEARANCE = "appearance"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -242,15 +248,29 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
     }
     // Alerts arrive by Firebase push or, without it, by polling; both need the permission.
     AskNotificationPermission()
+    val badges by container.badges.collectAsStateWithLifecycle()
+    // Counters change as staff work: refresh them on every screen change too.
+    LaunchedEffect(route) { container.refreshBadges() }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (visibleTabs.any { it.route == route }) {
-                FloatingGlassBar {
-                    visibleTabs.forEach { tab ->
-                        GlassNavItem(selected = route == tab.route, onClick = { nav.switchTab(tab.route) }, icon = tab.icon, label = tab.label)
+            val onTab = visibleTabs.any { it.route == route }
+            Column {
+                ConnectionBar(aboveSystemBar = !onTab)
+                if (onTab) {
+                    FloatingGlassBar {
+                        visibleTabs.forEach { tab ->
+                            val badge = when (tab.route) {
+                                R.ORDERS -> badges?.newOrders ?: 0
+                                R.STOCK -> 0
+                                R.MORE -> (badges?.topUps ?: 0) + (badges?.reviews ?: 0)
+                                else -> 0
+                            }
+                            GlassNavItem(selected = route == tab.route, onClick = { nav.switchTab(tab.route) }, icon = tab.icon, label = tab.label, badge = badge)
+                        }
                     }
                 }
             }
@@ -267,6 +287,9 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
         ) {
             composable(R.DASHBOARD) {
                 DashboardScreen(
+                    session,
+                    navigate = { nav.navigate(it) },
+                    switchTab = { nav.switchTab(it) },
                     openOrders = { nav.switchTab(R.ORDERS) },
                     openReturns = { nav.navigate(R.RETURNS) },
                     openStock = { nav.switchTab(R.STOCK) },
@@ -372,6 +395,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.DAILY_SUMMARY) { DailySummaryScreen(back) }
             composable(R.STORE_SETUP) { StoreSetupScreen(back) }
             composable(R.REVIEWS) { ReviewsScreen(back) }
+            composable(R.SEARCH) { SearchScreen(session, back, navigate = { nav.navigate(it) }) }
+            composable(R.APPEARANCE) { AppearanceScreen(back) }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })
@@ -386,6 +411,9 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.STAFF) { StaffScreen(back, open = { open(R.STAFF_EDIT, it) }) }
             composable(R.STAFF_EDIT) { e -> StaffEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
         }
+    }
+    // First sign-in on this device: a short tour of what this employee can do.
+    OnboardingTour(session)
     }
 }
 

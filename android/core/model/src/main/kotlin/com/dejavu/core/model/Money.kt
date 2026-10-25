@@ -67,7 +67,7 @@ object Money {
     @Volatile
     var display: Display = Display.BASE
 
-    fun parse(amount: String?): BigDecimal = amount?.toBigDecimalOrNull() ?: BigDecimal.ZERO
+    fun parse(amount: String?): BigDecimal = amount?.let { Numerals.latin(it).toBigDecimalOrNull() } ?: BigDecimal.ZERO
 
     /**
      * A SAR amount in [currency] at [rate]. Same rule as the server: YER is rounded
@@ -102,7 +102,7 @@ object Money {
     fun plain(amount: BigDecimal, currency: Currency): String {
         val scaled = amount.setScale(currency.decimals, RoundingMode.HALF_UP)
         val pattern = if (scaled.stripTrailingZeros().scale() <= 0) "#,##0" else "#,##0.00"
-        return "${DecimalFormat(pattern, DecimalFormatSymbols(Locale.US)).format(scaled)} ${currency.symbol}"
+        return Numerals.of("${DecimalFormat(pattern, DecimalFormatSymbols(Locale.US)).format(scaled)} ${currency.symbol}")
     }
 
     fun isZero(amount: String?): Boolean = parse(amount).signum() == 0

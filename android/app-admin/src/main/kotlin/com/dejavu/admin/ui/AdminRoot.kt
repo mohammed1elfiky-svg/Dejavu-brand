@@ -200,7 +200,8 @@ object R {
 private data class Tab(val route: String, val label: String, val icon: ImageVector, val permission: String?)
 
 private val tabs = listOf(
-    Tab(R.DASHBOARD, "الرئيسية", Icons.Filled.Home, Perm.DASHBOARD),
+    // Everyone gets a home (its cards follow the role); till-only staff are filtered below.
+    Tab(R.DASHBOARD, "الرئيسية", Icons.Filled.Home, null),
     Tab(R.POS, "الكاشير", Icons.Filled.AddCircle, Perm.POS_SELL),
     Tab(R.ORDERS, "الطلبات", Icons.AutoMirrored.Filled.List, Perm.ORDERS_READ),
     Tab(R.STOCK, "المخزون", Icons.Filled.ShoppingCart, Perm.STOCK_READ),

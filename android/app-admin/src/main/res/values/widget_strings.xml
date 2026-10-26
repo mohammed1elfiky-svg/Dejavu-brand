@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_sales_label">مبيعات اليوم</string>
+    <string name="widget_sales_title">مبيعات اليوم</string>
+    <string name="widget_sales_description">مبيعات اليوم وطلبات التطبيق الجديدة</string>
+</resources>

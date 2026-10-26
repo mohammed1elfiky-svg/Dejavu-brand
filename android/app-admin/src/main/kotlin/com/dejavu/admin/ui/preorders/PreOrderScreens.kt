@@ -172,7 +172,7 @@ class PreOrdersViewModel(private val repo: OffersRepository) : BaseViewModel() {
         }
     }
 
-    fun create(v: IncomingVariant, customer: ChosenCustomer, quantity: Int, note: String) = act {
+    internal fun create(v: IncomingVariant, customer: ChosenCustomer, quantity: Int, note: String) = act {
         repo.createPreOrder(CreatePreOrderRequest(customer.id, v.variantId, quantity, note.trim().ifBlank { null })).orSay()?.let { p ->
             say("تم تسجيل الحجز ${p.number} لـ ${customer.name}")
             loadList()

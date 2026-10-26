@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -19,6 +21,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import com.dejavu.customer.ui.ads.AdBanner
+import com.dejavu.customer.ui.ads.AdPlacement
+import com.dejavu.customer.ui.catalog.RecentSearches
+import com.dejavu.customer.ui.catalog.SearchSuggestions
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -107,6 +120,15 @@ fun HomeScreen(
     val loggedIn by container.session.state.collectAsStateWithLifecycle()
     val unread by container.notifications.unread.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
+    var searchFocused by remember { mutableStateOf(false) }
+    val config by container.extras.config.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val search = { text: String ->
+        if (text.isNotBlank()) {
+            RecentSearches.add(context, text)
+            openProducts("نتائج \"${text.trim()}\"", null, text.trim(), false)
+        }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -114,6 +136,7 @@ fun HomeScreen(
             GlassTopBar(
                 title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall, color = Liquid.GoldDeep) },
                 actions = {
+                    IconButton(onClick = openWishlist) { Icon(Icons.Filled.FavoriteBorder, contentDescription = "المفضلة") }
                     if (loggedIn is SessionState.LoggedIn) {
                         IconButton(onClick = openNotifications) {
                             BadgedBox(badge = { if (unread > 0) Badge { Text(if (unread > 99) "99+" else "$unread") } }) {
@@ -123,6 +146,13 @@ fun HomeScreen(
                     }
                 },
             )
+        },
+        floatingActionButton = {
+            if (config.chat.enabled) {
+                FloatingActionButton(onClick = openChat, containerColor = Liquid.Gold, contentColor = Color.White) {
+                    Icon(Icons.Filled.Face, contentDescription = "اسأل المساعد")
+                }
+            }
         },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { data ->
@@ -135,9 +165,12 @@ fun HomeScreen(
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) openProducts("نتائج \"$query\"", null, query, false) }),
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        keyboardActions = KeyboardActions(onSearch = { search(query) }),
+                        modifier = Modifier.fillMaxWidth().padding(16.dp).onFocusChanged { searchFocused = it.isFocused },
                     )
+                }
+                if (searchFocused && query.isBlank()) {
+                    item { SearchSuggestions(onPick = { picked -> search(picked) }, modifier = Modifier.padding(horizontal = 16.dp)) }
                 }
                 item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -158,8 +191,10 @@ fun HomeScreen(
                     item { SectionTitle("مختارات Dejavu", "عرض الكل") { openProducts("مختارات Dejavu", null, null, true) } }
                     item { ProductRow(data.featured, openProduct) }
                 }
+                item { AdBanner(AdPlacement.HOME, Modifier.padding(vertical = 8.dp)) }
                 item { SectionTitle("وصل حديثاً", "عرض الكل") { openProducts("وصل حديثاً", null, null, false) } }
                 item { ProductRow(data.newest, openProduct) }
+                item { Spacer(Modifier.height(72.dp)) }
             }
         }
     }

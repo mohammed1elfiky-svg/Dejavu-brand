@@ -7,7 +7,22 @@ import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.core.ui.theme.glass
 import com.dejavu.customer.ui.components.GlassRow
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.customer.ui.appContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -193,7 +208,13 @@ fun ProductListScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(initialQuery.orEmpty()) }
     var sortMenu by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val grid = rememberLazyGridState()
+    val runSearch = { text: String ->
+        RecentSearches.add(context, text)
+        vm.search(text)
+    }
 
     // Load the next page when the last items scroll into view.
     val nearEnd by remember { derivedStateOf { (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= grid.layoutInfo.totalItemsCount - 4 } }
@@ -230,9 +251,17 @@ fun ProductListScreen(
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { vm.search(query) }),
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardActions = KeyboardActions(onSearch = { runSearch(query) }),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { searchFocused = it.isFocused },
                 )
+            }
+            if (searchFocused && query.isBlank()) {
+                item(span = { GridItemSpan(2) }) {
+                    SearchSuggestions(onPick = { picked ->
+                        query = picked
+                        runSearch(picked)
+                    })
+                }
             }
             items(state.items, key = { it.id }) { p -> ProductCard(p, onClick = { openProduct(p.slug) }) }
             item(span = { GridItemSpan(2) }) {
@@ -252,4 +281,88 @@ private fun sortLabel(sort: ProductSort) = when (sort) {
     ProductSort.NEWEST -> "الأحدث"
     ProductSort.PRICE_ASC -> "السعر: من الأقل"
     ProductSort.PRICE_DESC -> "السعر: من الأعلى"
+}
+
+// ------------------------------------------------------------------ search ---
+
+/** The last searches on this phone (newest first, at most 10). */
+object RecentSearches {
+    private const val PREFS = "recent_searches"
+    private const val KEY = "items"
+    private const val MAX = 10
+
+    fun load(context: Context): List<String> =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+            ?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+
+    fun add(context: Context, query: String) {
+        val q = query.trim().replace('\n', ' ')
+        if (q.isEmpty()) return
+        val list = (listOf(q) + load(context).filterNot { it.equals(q, ignoreCase = true) }).take(MAX)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, list.joinToString("\n")).apply()
+    }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
+    }
+}
+
+/** What the store's shoppers search for most; fetched once per app run. */
+private var popularSearchesCache: List<String>? = null
+
+/** Shown while the search box is empty: "عمليات البحث الأخيرة" and "الأكثر بحثاً". */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SearchSuggestions(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val extras = appContainer().extras
+    val recent = remember { mutableStateListOf<String>().apply { addAll(RecentSearches.load(context)) } }
+    var popular by remember { mutableStateOf(popularSearchesCache.orEmpty()) }
+    LaunchedEffect(Unit) {
+        if (popularSearchesCache == null) {
+            extras.popularSearches().onSuccess {
+                popularSearchesCache = it
+                popular = it
+            }
+        }
+    }
+    if (recent.isEmpty() && popular.isEmpty()) return
+    GlassCard(modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
+        Column {
+            if (recent.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("عمليات البحث الأخيرة", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        RecentSearches.clear(context)
+                        recent.clear()
+                    }) { Text("مسح", color = Liquid.InkSoft) }
+                }
+                SuggestionChips(recent, onPick)
+            }
+            if (popular.isNotEmpty()) {
+                Text(
+                    "الأكثر بحثاً",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Liquid.GoldDeep,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = if (recent.isNotEmpty()) 10.dp else 0.dp, bottom = 4.dp),
+                )
+                SuggestionChips(popular, onPick)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SuggestionChips(words: List<String>, onPick: (String) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        words.forEach { word ->
+            SuggestionChip(
+                onClick = { onPick(word) },
+                label = { Text(word, maxLines = 1) },
+                colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Color.White.copy(alpha = 0.55f), labelColor = Liquid.Ink),
+            )
+        }
+    }
 }

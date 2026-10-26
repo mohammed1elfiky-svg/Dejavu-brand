@@ -2,7 +2,36 @@
 
 package com.dejavu.customer.ui.product
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.dejavu.core.data.StoreExtrasRepository
+import com.dejavu.core.model.Money
+import com.dejavu.core.model.RelatedProducts
+import com.dejavu.core.network.normalizeBaseUrl
+import com.dejavu.core.ui.theme.OutlinedButton
+import com.dejavu.customer.Analytics
+import com.dejavu.customer.ui.ads.AdBanner
+import com.dejavu.customer.ui.ads.AdPlacement
+import com.dejavu.customer.ui.ads.Ads
+import com.dejavu.customer.ui.appContainer
+import com.dejavu.customer.ui.components.ProductStrip
+import com.dejavu.customer.ui.components.PromoCountdown
+import com.dejavu.customer.ui.components.fewLeftText
+import com.dejavu.customer.ui.components.rememberWishlistToggle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -94,7 +123,15 @@ class ProductViewModel(
     private val catalog: CatalogRepository,
     private val cart: CartRepository,
     private val session: SessionRepository,
+    private val extras: StoreExtrasRepository,
 ) : BaseViewModel() {
+    /** "يناسبه أيضاً" and "اشترت العميلات أيضاً". */
+    private val _related = MutableStateFlow(RelatedProducts())
+    val related = _related.asStateFlow()
+
+    /** The full-screen ad counter runs once per opening of this page. */
+    var adCounted = false
+
     private val _product = MutableStateFlow<Load<StoreProduct>>(Load.Loading)
     val product = _product.asStateFlow()
     private val _selection = MutableStateFlow(Selection())
@@ -166,6 +203,7 @@ class ProductViewModel(
                 // Preselect the first available option so the price shown matches a real variant.
                 val first = p.variants.firstOrNull { it.inStock } ?: p.variants.firstOrNull()
                 _selection.value = Selection(color = first?.color, size = first?.size)
+                extras.related(slug).onSuccess { _related.value = it }
             }
         }
     }
@@ -221,12 +259,18 @@ fun ProductScreen(
     openProduct: (String) -> Unit = {},
     openChat: () -> Unit = {},
 ) {
-    val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session) }
+    val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session, it.extras) }
     val reviewsVm = appViewModel(key = "product-reviews:$slug") { ReviewsViewModel(slug, it.catalog, it.session) }
     val state by vm.product.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
     val watched by vm.watched.collectAsStateWithLifecycle()
     val watching by vm.watching.collectAsStateWithLifecycle()
+    val related by vm.related.collectAsStateWithLifecycle()
+    val container = appContainer()
+    val config by container.extras.config.collectAsStateWithLifecycle()
+    val wishlistIds by container.extras.wishlistIds.collectAsStateWithLifecycle()
+    val toggleWishlist = rememberWishlistToggle(onLoginRequired = requireLogin)
+    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     CollectMessages(reviewsVm, snackbar)
@@ -240,9 +284,42 @@ fun ProductScreen(
         }
     }
 
+    // Time on the page (for the owner's report) and the full-screen ad counter, once loaded.
+    val loadedId = (state as? Load.Ready)?.value?.id
+    if (loadedId != null) {
+        DisposableEffect(loadedId) {
+            Analytics.productOpened(loadedId)
+            onDispose { Analytics.productClosed(loadedId) }
+        }
+        LaunchedEffect(loadedId) {
+            if (!vm.adCounted) {
+                vm.adCounted = true
+                context.findActivity()?.let { Ads.onProductOpened(it, container.extras.config.value.ads) }
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar((state as? Load.Ready)?.value?.nameAr ?: "", onBack) },
+        topBar = {
+            val loaded = (state as? Load.Ready)?.value
+            BackTopBar(loaded?.nameAr ?: "", onBack) {
+                if (loaded != null) {
+                    IconButton(onClick = {
+                        val price = vm.selectedVariant()?.price ?: loaded.basePrice
+                        shareProduct(context, loaded, price, container.settings.baseUrl)
+                    }) { Icon(Icons.Filled.Share, contentDescription = "مشاركة") }
+                    val saved = loaded.id in wishlistIds
+                    IconButton(onClick = { toggleWishlist(loaded) }) {
+                        Icon(
+                            if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = if (saved) "إزالة من المفضلة" else "أضف إلى المفضلة",
+                            tint = if (saved) Liquid.Danger else Liquid.GoldDeep,
+                        )
+                    }
+                }
+            }
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             val p = (state as? Load.Ready)?.value
@@ -287,7 +364,7 @@ fun ProductScreen(
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             val variant = vm.selectedVariant()
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-                Gallery(p, selection.color)
+                Gallery(p, selection.color, container.settings.baseUrl)
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -298,6 +375,15 @@ fun ProductScreen(
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                             if (p.ratingCount > 0) RatingSummary(p.ratingAvg, p.ratingCount)
                             Promotion(p)
+                            if (p.inStock) PromoCountdown(p.promotion?.endsAt)
+                            fewLeftText(p.fewLeft)?.let { Tag(it, Liquid.Danger) }
+                            if (config.chat.enabled) {
+                                OutlinedButton(onClick = openChat) {
+                                    Icon(Icons.Filled.Face, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("اسأل المساعد")
+                                }
+                            }
                         }
                     }
 
@@ -361,30 +447,38 @@ fun ProductScreen(
                         }
                     }
                     ReviewsSection(reviewsVm, openAll = openReviews)
-                    Spacer(Modifier.height(8.dp))
                 }
+                ProductStrip("يناسبه أيضاً", related.similar, openProduct)
+                ProductStrip("اشترت العميلات أيضاً", related.alsoBought, openProduct)
+                AdBanner(AdPlacement.PRODUCT, Modifier.padding(vertical = 8.dp))
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
 }
 
-/** Photos of the chosen [color] first; a new color starts again from its first photo. */
+/** Photos of the chosen [color] first (then the video); a new color starts again from its first photo. */
 @Composable
-private fun Gallery(p: StoreProduct, color: String?) {
-    key(color) { ColorGallery(p, color) }
+private fun Gallery(p: StoreProduct, color: String?, baseUrl: String) {
+    key(color) { ColorGallery(p, color, baseUrl) }
 }
 
 @Composable
-private fun ColorGallery(p: StoreProduct, color: String?) {
-    val images = remember(p, color) { p.imagesFor(color) }.ifEmpty { listOf(null) }
-    val pager = rememberPagerState { images.size }
+private fun ColorGallery(p: StoreProduct, color: String?, baseUrl: String) {
+    val media = remember(p, color, baseUrl) { productMedia(p, color, baseUrl) }
+    val pager = rememberPagerState { media.size }
+    var viewerAt by remember { mutableStateOf<Int?>(null) }
     Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).glass(Liquid.CardShape, elevation = 14.dp)) {
         HorizontalPager(pager, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 5f)) { page ->
-            ProductImage(images[page]?.url, Modifier.fillMaxSize(), contentDescription = p.nameAr)
+            val open = Modifier.fillMaxSize().clickable { viewerAt = page }
+            when (val item = media[page]) {
+                is MediaItem.Image -> ProductImage(item.url, open, contentDescription = p.nameAr)
+                is MediaItem.Video -> VideoPoster(item.poster, open)
+            }
         }
-        if (images.size > 1) {
+        if (media.size > 1) {
             Row(Modifier.align(Alignment.BottomCenter).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                repeat(images.size) { i ->
+                repeat(media.size) { i ->
                     Box(
                         Modifier.size(8.dp).clip(CircleShape)
                             .background(if (i == pager.currentPage) Liquid.Gold else Color.White.copy(alpha = 0.7f)),
@@ -393,6 +487,24 @@ private fun ColorGallery(p: StoreProduct, color: String?) {
             }
         }
     }
+    viewerAt?.let { start -> MediaViewer(media, start, onDismiss = { viewerAt = null }) }
+}
+
+/** Shares the product as text: name, price and the link to its page on the server. */
+private fun shareProduct(context: Context, p: StoreProduct, price: String, baseUrl: String) {
+    val link = normalizeBaseUrl(baseUrl) + "share/p/" + Uri.encode(p.slug)
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, p.nameAr)
+        putExtra(Intent.EXTRA_TEXT, "${p.nameAr}\n${Money.format(price)}\n$link")
+    }
+    runCatching { context.startActivity(Intent.createChooser(send, "مشاركة المنتج")) }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /** Running promotion: badge, its name and when it ends. */
@@ -425,7 +537,7 @@ private fun Availability(variant: StoreVariant?) {
     val (text, color) = when {
         variant == null -> "اختر اللون والمقاس" to MaterialTheme.colorScheme.onSurfaceVariant
         !variant.inStock -> "نفدت الكمية" to MaterialTheme.colorScheme.error
-        variant.availableQty <= 3 -> "متبقي ${variant.availableQty} فقط" to Warning
+        variant.availableQty <= 3 -> com.dejavu.core.model.Numerals.of("باقي ${variant.availableQty}") to Warning
         else -> "متوفر" to Success
     }
     Text(text, color = color, style = MaterialTheme.typography.labelLarge)

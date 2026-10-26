@@ -61,6 +61,9 @@ import com.dejavu.core.data.CartRepository
 import com.dejavu.core.data.ServerMessages
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
+import com.dejavu.core.data.StoreExtrasRepository
+import com.dejavu.core.model.StoreProduct
+import com.dejavu.customer.ui.components.ProductStrip
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.CartItem
 import com.dejavu.core.model.Money
@@ -81,8 +84,17 @@ class CartViewModel(
     private val cartRepo: CartRepository,
     private val addresses: AddressRepository,
     val session: SessionRepository,
+    private val extras: StoreExtrasRepository,
 ) : BaseViewModel() {
     val cart = cartRepo.cart
+
+    /** "قد يعجبك أيضاً" under the cart. */
+    private val _suggestions = MutableStateFlow<List<StoreProduct>>(emptyList())
+    val suggestions = _suggestions.asStateFlow()
+
+    fun loadSuggestions() {
+        viewModelScope.launch { extras.cartSuggestions().onSuccess { _suggestions.value = it } }
+    }
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
     private var addressId: String? = null
@@ -116,13 +128,17 @@ class CartViewModel(
 
 @Composable
 fun CartScreen(openProduct: (String) -> Unit, checkout: () -> Unit, login: () -> Unit, shop: () -> Unit) {
-    val vm = appViewModel { CartViewModel(it.cart, it.addresses, it.session) }
+    val vm = appViewModel { CartViewModel(it.cart, it.addresses, it.session, it.extras) }
     val session by vm.session.state.collectAsStateWithLifecycle()
     val cart by vm.cart.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
+    val suggestions by vm.suggestions.collectAsStateWithLifecycle()
     LaunchedEffect(session is SessionState.LoggedIn) { if (session is SessionState.LoggedIn) vm.refresh() }
+    // Suggestions follow what is in the cart.
+    val itemKey = cart?.items?.map { it.variantId }?.sorted()
+    LaunchedEffect(session is SessionState.LoggedIn, itemKey) { if (session is SessionState.LoggedIn && !itemKey.isNullOrEmpty()) vm.loadSuggestions() }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -149,13 +165,13 @@ fun CartScreen(openProduct: (String) -> Unit, checkout: () -> Unit, login: () ->
             c == null -> LoadingBox(Modifier.padding(padding))
             c.items.isEmpty() ->
                 EmptyState(Icons.Filled.ShoppingCart, "السلة فارغة", "تصفّح أحدث التشكيلات وأضف ما يعجبك", "تسوّق الآن", shop, Modifier.padding(padding))
-            else -> CartContent(c, busy, vm, openProduct, Modifier.padding(padding))
+            else -> CartContent(c, busy, vm, suggestions, openProduct, Modifier.padding(padding))
         }
     }
 }
 
 @Composable
-private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduct: (String) -> Unit, modifier: Modifier) {
+private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, suggestions: List<StoreProduct>, openProduct: (String) -> Unit, modifier: Modifier) {
     var coupon by rememberSaveable { mutableStateOf("") }
     LazyColumn(modifier, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Liquid.Gold, trackColor = Liquid.GoldPale) }
@@ -207,6 +223,11 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, openProduc
                     cart.shippingProblem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 }
             }
+        }
+        val inCart = cart.items.map { it.slug }.toSet()
+        val others = suggestions.filter { it.slug !in inCart }
+        if (others.isNotEmpty()) {
+            item(key = "suggestions") { ProductStrip("قد يعجبك أيضاً", others, openProduct) }
         }
     }
 }

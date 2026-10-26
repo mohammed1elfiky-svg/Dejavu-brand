@@ -21,6 +21,8 @@ export interface PricingInput {
   coupon?: PricingCoupon | null;
   shippingFee: DecimalLike;
   pricesIncludeTax: boolean;
+  /** Quantity-offer discounts per line (same order as [lines]), taken before the coupon. */
+  lineDiscounts?: DecimalLike[];
 }
 
 export interface PricedLine extends PricingLine {
@@ -46,36 +48,45 @@ export interface PricingResult {
  * both the cart preview and checkout.
  *
  * - subtotal       = Σ unitPrice × qty (shelf prices)
- * - discountTotal  = coupon discount, allocated to lines pro-rata (remainder on the last line)
+ * - offers         = [PricingInput.lineDiscounts] (e.g. "قطعة + قطعة مجاناً") on their own lines
+ * - discountTotal  = offers + coupon discount; the coupon is worked out on what is left after the
+ *                    offers and allocated to lines pro-rata (remainder on the last line)
  * - tax per line   = on (gross − discount); extracted when prices include tax, added otherwise
  * - grandTotal     = Σ lineTotal + shipping
  */
 export function priceOrder(input: PricingInput): PricingResult {
   const gross = input.lines.map((l) => money(dec(l.unitPrice).mul(l.quantity)));
   const subtotal = sum(gross);
+  const offers = input.lines.map((_, i) => Decimal.min(money(input.lineDiscounts?.[i] ?? 0), gross[i]));
+  const afterOffers = gross.map((g, i) => g.sub(offers[i]));
+  const couponBase = sum(afterOffers);
   let shippingFee = money(input.shippingFee);
-  let discountTotal = ZERO;
+  let couponTotal = ZERO;
 
   const c = input.coupon;
   if (c?.type === CouponType.FREE_SHIPPING) {
     shippingFee = ZERO;
   } else if (c?.type === CouponType.PERCENTAGE) {
-    discountTotal = money(subtotal.mul(dec(c.value)).div(100));
+    couponTotal = money(couponBase.mul(dec(c.value)).div(100));
   } else if (c?.type === CouponType.FIXED_AMOUNT) {
-    discountTotal = money(c.value);
+    couponTotal = money(c.value);
   }
-  if (c?.maxDiscount != null && discountTotal.greaterThan(dec(c.maxDiscount))) discountTotal = money(c.maxDiscount);
-  if (discountTotal.greaterThan(subtotal)) discountTotal = subtotal;
+  if (c?.maxDiscount != null && couponTotal.greaterThan(dec(c.maxDiscount))) couponTotal = money(c.maxDiscount);
+  if (couponTotal.greaterThan(couponBase)) couponTotal = couponBase;
+  const discountTotal = couponTotal.add(sum(offers));
 
   let allocated = ZERO;
+  // The rounding remainder of the coupon goes on the last line that still has something to pay.
+  const lastPaying = afterOffers.reduce((last, a, i) => (a.gt(0) ? i : last), input.lines.length - 1);
   const lines = input.lines.map((l, i): PricedLine => {
-    const isLast = i === input.lines.length - 1;
-    const discount = subtotal.isZero()
+    const isLast = i === lastPaying;
+    const share = couponBase.isZero() || (!isLast && afterOffers[i].isZero())
       ? ZERO
       : isLast
-        ? discountTotal.sub(allocated)
-        : money(discountTotal.mul(gross[i]).div(subtotal));
-    allocated = allocated.add(discount);
+        ? couponTotal.sub(allocated)
+        : money(couponTotal.mul(afterOffers[i]).div(couponBase));
+    allocated = allocated.add(share);
+    const discount = share.add(offers[i]);
 
     const rate = dec(l.taxRate);
     const base = gross[i].sub(discount);

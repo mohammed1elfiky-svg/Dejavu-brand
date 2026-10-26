@@ -35,6 +35,19 @@ export class PosTenderDto {
   bankBoxId?: string;
 }
 
+export class PosQuoteDto {
+  @ApiProperty({ type: [PosItemDto] })
+  @ValidateNested({ each: true })
+  @Type(() => PosItemDto)
+  @ArrayMaxSize(200)
+  items: PosItemDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+}
+
 export class PosSaleDto {
   @ApiProperty({ type: [PosItemDto] })
   @ValidateNested({ each: true })
@@ -104,6 +117,11 @@ export class PosSaleDto {
   @IsOptional()
   @IsDateString()
   soldAt?: string;
+
+  @ApiPropertyOptional({ description: 'false: no quantity offers (a sale rung up offline, where the offer was not shown)', default: true })
+  @IsOptional()
+  @IsBoolean()
+  applyDeals?: boolean;
 
   @ApiPropertyOptional({ example: 'YER', description: 'Currency the change is given in; the invoice currency by default' })
   @IsOptional()

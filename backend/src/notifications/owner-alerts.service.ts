@@ -3,7 +3,7 @@ import { SmsService } from '../sms/sms.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 
-export type OwnerAlertKind = 'VOID' | 'SHORTAGE' | 'PRICE';
+export type OwnerAlertKind = 'VOID' | 'SHORTAGE' | 'PRICE' | 'WEEKLY';
 
 export interface OwnerAlertSettings {
   /** A till invoice was deleted. */
@@ -55,8 +55,8 @@ export class OwnerAlertsService {
       if (kind === 'PRICE' && !s.priceChanges) return;
       if (kind === 'SHORTAGE' && (s.shortageAbove === null || (opts.shortage ?? 0) <= s.shortageAbove)) return;
       await this.prisma.ownerAlert.create({ data: { kind, title, body, data } });
-      await this.notifications.notifyStaff(OWNER_PERMISSION, { type: 'SYSTEM', title, body, data: { ...data, ownerAlert: kind } });
-      if (s.smsPhone) await this.sms.enqueue(s.smsPhone, `Dejavu: ${title}\n${body}`, 'OTHER');
+      await this.notifications.notifyStaff(OWNER_PERMISSION, { type: 'SYSTEM', title, body: body.length > 300 ? `${body.slice(0, 297)}…` : body, data: { ...data, ownerAlert: kind } });
+      if (s.smsPhone && kind !== 'WEEKLY') await this.sms.enqueue(s.smsPhone, `Dejavu: ${title}\n${body}`, 'OTHER');
     } catch (e) {
       this.log.warn(`Owner alert failed: ${(e as Error).message}`);
     }

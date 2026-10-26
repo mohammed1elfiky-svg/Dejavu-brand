@@ -23,6 +23,8 @@ export interface GeminiRequest {
   system: string;
   contents: GeminiContent[];
   tools: GeminiTool[];
+  /** Ask for a JSON answer. */
+  json?: boolean;
 }
 
 /** Calls Google's Gemini API (generateContent). The key stays on the server. */
@@ -44,7 +46,7 @@ export class GeminiClient {
         system_instruction: { parts: [{ text: req.system }] },
         contents: req.contents,
         tools: req.tools.length ? [{ function_declarations: req.tools }] : undefined,
-        generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
+        generationConfig: { temperature: req.json ? 0.3 : 0.4, maxOutputTokens: 2048, ...(req.json ? { responseMimeType: 'application/json' } : {}) },
       }),
       signal: AbortSignal.timeout(45_000),
     });
@@ -55,5 +57,15 @@ export class GeminiClient {
     }
     const json = (await res.json()) as { candidates?: { content?: { parts?: GeminiPart[] } }[] };
     return json.candidates?.[0]?.content?.parts ?? [];
+  }
+
+  /** One answer as plain text (no tools). */
+  async text(model: string, system: string, parts: GeminiPart[], json = false): Promise<string> {
+    const out = await this.generate({ model, system, contents: [{ role: 'user', parts }], tools: [], json });
+    return out
+      .filter((p): p is { text: string } => 'text' in p)
+      .map((p) => p.text)
+      .join('')
+      .trim();
   }
 }

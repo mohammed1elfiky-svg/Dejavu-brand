@@ -1,3 +1,5 @@
+import { activeDeals } from './deals.db';
+import { AppliedDeal, applyDeals } from './deals';
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Coupon, ProductStatus } from '../generated/prisma/client';
 import { dec } from '../common/utils/money';
@@ -68,6 +70,8 @@ export interface Quote {
   couponProblem?: string;
   shipping: { governorate: string; fee: string; estimatedDays: number } | null;
   shippingProblem?: string;
+  /** Quantity offers that applied ("قطعة + قطعة مجاناً"). */
+  deals: AppliedDeal[];
   problems: string[];
 }
 
@@ -180,20 +184,28 @@ export class CartService {
       taxRate: item.variant.product.taxRate?.isActive ? item.variant.product.taxRate.rate : 0,
     }));
 
+    // Quantity offers (not for merchants, who already pay wholesale prices).
+    const deals = buyer?.isMerchant ? [] : await activeDeals(tx, items.map((i) => i.variant.product.id), 'online');
+    const offers = applyDeals(
+      items.map((item, i) => ({ productId: item.variant.product.id, quantity: item.quantity, unitPrice: pricingLines[i].unitPrice })),
+      deals,
+    );
+    const lineDiscounts = offers.lineDiscounts;
+
     // Coupon
     const couponCode = cart?.couponCode ?? null;
     let coupon: Coupon | null = null;
     let couponProblem: string | undefined;
     if (couponCode) {
-      const subtotal = priceOrder({ lines: pricingLines, shippingFee: 0, pricesIncludeTax }).subtotal;
+      const subtotal = priceOrder({ lines: pricingLines, lineDiscounts, shippingFee: 0, pricesIncludeTax }).subtotal;
       const check = await this.checkCoupon(tx, couponCode, customerId, subtotal.toString());
       if (typeof check === 'string') couponProblem = check;
       else coupon = check;
     }
     if (couponProblem) problems.push(couponProblem);
 
-    const pricing = priceOrder({ lines: pricingLines, coupon, shippingFee: shipping?.fee ?? 0, pricesIncludeTax });
-    return { lines, pricing, coupon, couponCode, couponProblem, shipping, shippingProblem, problems };
+    const pricing = priceOrder({ lines: pricingLines, lineDiscounts, coupon, shippingFee: shipping?.fee ?? 0, pricesIncludeTax });
+    return { lines, pricing, coupon, couponCode, couponProblem, shipping, shippingProblem, problems, deals: offers.applied };
   }
 
   /** Returns the coupon when it can be applied, otherwise a reason. */
@@ -224,6 +236,7 @@ export class CartService {
       })),
       couponCode: q.couponCode,
       couponProblem: q.couponProblem ?? null,
+      deals: q.deals,
       shipping: q.shipping,
       shippingProblem: q.shippingProblem ?? null,
       totals: {

@@ -1,3 +1,5 @@
+import { activeDeals } from './deals.db';
+import { applyDeals } from './deals';
 import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
@@ -160,6 +162,37 @@ export class PosService {
     return this.receipt(orderId);
   }
 
+  /**
+   * The offers a basket gets at the till ("قطعة + قطعة مجاناً", sets), so the cashier sees the
+   * discount before taking the money. SAR amounts; the sale itself applies the same offers.
+   */
+  async quote(dto: { items: { variantId: string; quantity: number }[]; customerId?: string }) {
+    const quantities = new Map<string, number>();
+    for (const i of dto.items) quantities.set(i.variantId, (quantities.get(i.variantId) ?? 0) + i.quantity);
+    const variants = await this.prisma.productVariant.findMany({
+      where: { id: { in: [...quantities.keys()] } },
+      select: { id: true, price: true, product: { select: { id: true, basePrice: true, wholesalePrice: true } } },
+    });
+    const buyer = dto.customerId ? await this.prisma.customer.findUnique({ where: { id: dto.customerId }, select: { isMerchant: true, merchantDiscount: true } }) : null;
+    const promos = await activePromotions(this.prisma, variants.map((v) => v.product.id));
+    const lines = variants.map((v) => ({
+      variantId: v.id,
+      productId: v.product.id,
+      quantity: quantities.get(v.id)!,
+      unitPrice: buyerPrice(v.price ?? v.product.basePrice, v.product.wholesalePrice, promos.get(v.product.id), buyer),
+    }));
+    const offers = buyer?.isMerchant ? null : applyDeals(lines, await activeDeals(this.prisma, lines.map((l) => l.productId), 'pos'));
+    const subtotal = money(sum(lines.map((l) => dec(l.unitPrice).mul(l.quantity))));
+    const dealDiscount = offers?.total ?? ZERO;
+    return {
+      subtotal,
+      dealDiscount,
+      total: money(subtotal.sub(dealDiscount)),
+      deals: offers?.applied ?? [],
+      lines: lines.map((l, i) => ({ variantId: l.variantId, unitPrice: money(l.unitPrice), quantity: l.quantity, discount: offers?.lineDiscounts[i] ?? ZERO })),
+    };
+  }
+
   /** Rings up a sale inside the caller's transaction; returns the new order's id. */
   async sellIn(tx: Tx, dto: PosSaleDto & { fromAccountMax?: Decimal }, cashierId: string): Promise<string> {
     {
@@ -193,7 +226,16 @@ export class PosService {
       }));
       const pricesIncludeTax = await getSetting(tx, 'tax.pricesIncludeTax', true);
       const discount = this.discountOf(dto, invoiceCurrency.code, rate);
-      const pricing = priceOrder({ lines: basket, coupon: discount, shippingFee: 0, pricesIncludeTax });
+      // Quantity offers ("قطعة + قطعة مجاناً"); not for merchants, nor for sales rung up offline
+      // without them (the device could not see the offer, so the customer paid the full price).
+      const offers =
+        buyer?.isMerchant || dto.applyDeals === false
+          ? null
+          : applyDeals(
+              basket.map((b) => ({ productId: variants.find((v) => v.id === b.variantId)!.product.id, quantity: b.quantity, unitPrice: b.unitPrice })),
+              await activeDeals(tx, variants.map((v) => v.product.id), 'pos'),
+            );
+      const pricing = priceOrder({ lines: basket, lineDiscounts: offers?.lineDiscounts, coupon: discount, shippingFee: 0, pricesIncludeTax });
       const total = pricing.grandTotal;
 
       // ---- the money handed over (first any credit the customer holds, e.g. from a return) ----
@@ -261,7 +303,7 @@ export class PosService {
           taxTotal: pricing.taxTotal,
           grandTotal: total,
           amountPaid: total,
-          internalNote: dto.note,
+          internalNote: [dto.note, ...(offers?.applied ?? []).map((a) => `عرض: ${a.name}`)].filter(Boolean).join(' — ') || null,
           placedAt,
           clientRef: dto.clientRef,
           confirmedAt: now,

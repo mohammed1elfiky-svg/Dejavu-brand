@@ -1,3 +1,6 @@
+import { Incoming, incomingFor } from '../sales/preorders.db';
+import { activeDeals } from '../sales/deals.db';
+import { ActiveDeal, dealLabel } from '../sales/deals';
 import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma, ProductStatus, ProductVisibility } from '../generated/prisma/client';
@@ -84,7 +87,13 @@ const NEW_DAYS = 14;
 const FEW_LEFT = 3;
 
 /** Shopper view of a product: running promotion applied, original price shown struck through. */
-const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow, promos: Awaited<ReturnType<typeof activePromotions>>, buyer?: Buyer | null) => {
+const presentStoreProduct = (
+  { variants, wholesalePrice, ...p }: StoreProductRow,
+  promos: Awaited<ReturnType<typeof activePromotions>>,
+  buyer?: Buyer | null,
+  deals: ActiveDeal[] = [],
+  incoming: Map<string, Incoming> = new Map(),
+) => {
   const promo = promos.get(p.id);
   const merchant = !!buyer?.isMerchant;
   const shaped = variants.map(({ stockLevels, price, ...v }) => {
@@ -97,6 +106,9 @@ const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow
       compareAtPrice: promo || (merchant && paid.lt(shelf)) ? shelf : null,
       availableQty: available,
       inStock: available > 0,
+      /** Pieces on their way that can still be pre-ordered ("احجز من الشحنة القادمة"). */
+      incomingQty: incoming.get(v.id)?.open ?? 0,
+      expectedDate: incoming.get(v.id)?.expectedDate ?? null,
     };
   });
   const base = buyerPrice(p.basePrice, wholesalePrice, promo, buyer);
@@ -107,6 +119,10 @@ const presentStoreProduct = ({ variants, wholesalePrice, ...p }: StoreProductRow
     /** Shown as "سعر التاجر" in the app. */
     merchantPrice: merchant,
     promotion: promo ? { name: promo.name, percent: promo.percent, endsAt: promo.endsAt } : null,
+    /** Quantity offers on this product ("قطعة + قطعة مجاناً", sets); not for merchants. */
+    deals: buyer?.isMerchant
+      ? []
+      : deals.filter((d) => d.productIds.includes(p.id)).map((d) => ({ id: d.id, name: d.name, type: d.type, label: dealLabel(d), buyQty: d.buyQty, freeQty: d.freeQty, bundlePrice: d.bundlePrice, productIds: d.productIds })),
     /** Added in the last [NEW_DAYS] days: shown under "وصل حديثاً". */
     isNew: Date.now() - p.createdAt.getTime() < NEW_DAYS * 24 * 3600_000,
     /** Pieces left in all sizes, when only a few are (for "باقي قطعتان فقط"). */
@@ -522,8 +538,10 @@ export class CatalogService {
         .create({ data: { query: term.slice(0, 100), results: total, deviceId: (deviceId ?? 'unknown').slice(0, 100), customerId: customerId ?? null } })
         .catch(() => undefined);
     }
+    const deals = await activeDeals(this.prisma, rows.map((r) => r.id), 'online');
+    const incoming = await incomingFor(this.prisma, rows.flatMap((r) => r.variants.map((v) => v.id)));
     return paginated(
-      rows.map((r) => presentStoreProduct(r, promos, buyer)),
+      rows.map((r) => presentStoreProduct(r, promos, buyer, deals, incoming)),
       total,
       q,
     );
@@ -538,7 +556,9 @@ export class CatalogService {
       select: storeProductSelect,
     });
     const promos = await activePromotions(this.prisma, rows.map((r) => r.id));
-    const byId = new Map(rows.map((r) => [r.id, presentStoreProduct(r, promos, buyer)]));
+    const deals = await activeDeals(this.prisma, rows.map((r) => r.id), 'online');
+    const incoming = await incomingFor(this.prisma, rows.flatMap((r) => r.variants.map((v) => v.id)));
+    const byId = new Map(rows.map((r) => [r.id, presentStoreProduct(r, promos, buyer, deals, incoming)]));
     return ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
   }
 
@@ -597,7 +617,13 @@ export class CatalogService {
       select: storeProductSelect,
     });
     if (!row) throw new NotFoundException('Product not found');
-    return presentStoreProduct(row, await activePromotions(this.prisma, [row.id]), buyer);
+    return presentStoreProduct(
+      row,
+      await activePromotions(this.prisma, [row.id]),
+      buyer,
+      await activeDeals(this.prisma, [row.id], 'online'),
+      await incomingFor(this.prisma, row.variants.map((v) => v.id)),
+    );
   }
 }
 

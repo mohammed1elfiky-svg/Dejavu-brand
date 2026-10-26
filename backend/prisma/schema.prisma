@@ -398,6 +398,7 @@ model Customer {
   topUps         WalletTopUp[]
   chatMessages   ChatMessage[]
   layaways       Layaway[]
+  preOrders      PreOrder[]
 
   @@index([name])
   @@map("customers")
@@ -554,6 +555,7 @@ model Product {
   wishlist   WishlistItem[]
   promotions PromotionProduct[]
   views      ProductView[]
+  deals      DealProduct[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -589,6 +591,7 @@ model ProductVariant {
   stockMovements     StockMovement[]
   cartItems          CartItem[]
   stockAlerts        StockAlert[]
+  preOrders          PreOrder[]
   orderItems         OrderItem[]
   purchaseOrderItems PurchaseOrderItem[]
   stockCountItems    StockCountItem[]
@@ -1486,6 +1489,7 @@ model Currency {
   topUps         WalletTopUp[]
   chatMessages   ChatMessage[]
   layaways       Layaway[]
+  preOrders      PreOrder[]
   bankAccounts   StoreBankAccount[]
 
   @@map("currencies")
@@ -2086,4 +2090,83 @@ model OwnerAlert {
 
   @@index([createdAt])
   @@map("owner_alerts")
+}
+
+// ---------------------------------------------------------------- deals ---
+
+enum DealType {
+  /// Buy [buyQty] pieces, get [freeQty] free (the cheapest of the group).
+  BUY_X_GET_Y
+  /// One piece of each product in the set for [bundlePrice].
+  BUNDLE
+}
+
+/// Quantity offers on chosen products: "قطعة وقطعة مجاناً", "قطعتين والثالثة مجاناً", or a set (طقم) at one price.
+model Deal {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  type        DealType
+  buyQty      Int       @default(1) @map("buy_qty")
+  freeQty     Int       @default(1) @map("free_qty")
+  bundlePrice Decimal?  @map("bundle_price") @db.Decimal(14, 2)
+  startsAt    DateTime  @default(now()) @map("starts_at")
+  endsAt      DateTime? @map("ends_at")
+  isActive    Boolean   @default(true) @map("is_active")
+  /// Where the offer applies.
+  atPos       Boolean   @default(true) @map("at_pos")
+  online      Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  products DealProduct[]
+
+  @@map("deals")
+}
+
+model DealProduct {
+  dealId    String @map("deal_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+
+  deal    Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, productId])
+  @@index([productId])
+  @@map("deal_products")
+}
+
+// ------------------------------------------------------------ pre-orders ---
+
+enum PreOrderStatus {
+  /// Waiting for the shipment.
+  WAITING
+  /// The pieces arrived and the customer was told.
+  NOTIFIED
+  /// Turned into a layaway (pieces put aside) or sold.
+  CONVERTED
+  CANCELLED
+}
+
+/// A customer's claim on pieces still on their way (an open purchase / import order).
+model PreOrder {
+  id         String         @id @default(uuid()) @db.Uuid
+  number     String         @unique
+  customerId String         @map("customer_id") @db.Uuid
+  variantId  String         @map("variant_id") @db.Uuid
+  quantity   Int
+  status     PreOrderStatus @default(WAITING)
+  note       String?
+  layawayId  String?        @map("layaway_id") @db.Uuid
+  createdAt  DateTime       @default(now()) @map("created_at")
+  notifiedAt DateTime?      @map("notified_at")
+  closedAt   DateTime?      @map("closed_at")
+
+  customer     Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  currency     Currency?      @relation(fields: [currencyCode], references: [code])
+  currencyCode String?
+
+  @@index([status, variantId])
+  @@index([customerId])
+  @@map("pre_orders")
 }

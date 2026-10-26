@@ -1,3 +1,7 @@
+import { AdminPreOrdersController, StorePreOrdersController } from './preorders.controller';
+import { PreOrdersService } from './preorders.service';
+import { AdminDealsController } from './deals.controller';
+import { DealsService } from './deals.service';
 import { AdminGiftCardsController, AdminLayawaysController, StoreGiftCardsController } from './layaway-giftcard.controller';
 import { GiftCardsService } from './gift-cards.service';
 import { LayawayService } from './layaway.service';
@@ -56,7 +60,10 @@ import { StoreSettingsService } from './store-settings.service';
     AdminLayawaysController,
     AdminGiftCardsController,
     StoreGiftCardsController,
+    AdminDealsController,
+    StorePreOrdersController,
+    AdminPreOrdersController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService],
+  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService, DealsService, PreOrdersService],
 })
 export class SalesModule {}

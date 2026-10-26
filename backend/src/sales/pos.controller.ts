@@ -14,6 +14,7 @@ import {
   PosFreeReturnDto,
   PosLookupQueryDto,
   PosProductsQueryDto,
+  PosQuoteDto,
   PosReturnDto,
   PosSaleDto,
   PosSalesQueryDto,
@@ -54,6 +55,14 @@ export class AdminPosController {
   @Put('product-order')
   arrange(@Body() dto: PosArrangeDto, @CurrentUser() u: AuthPrincipal) {
     return this.pos.arrange(dto.productIds, u.id);
+  }
+
+  /** The quantity offers a basket gets (shown before payment). */
+  @RequirePermissions('pos.sell')
+  @Post('quote')
+  @HttpCode(HttpStatus.OK)
+  quote(@Body() dto: PosQuoteDto) {
+    return this.pos.quote(dto);
   }
 
   /** Rings up a sale: cash (any mix of currencies, with change) or credit to the customer's account. */

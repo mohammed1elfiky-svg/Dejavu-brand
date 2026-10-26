@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -52,6 +54,7 @@ import com.dejavu.core.admin.ChatConversation
 import com.dejavu.core.admin.ChatLine
 import com.dejavu.core.admin.ChatSettings
 import com.dejavu.core.admin.ChatSettingsRequest
+import com.dejavu.core.admin.ChatTestResult
 import com.dejavu.core.admin.CustomerAppRepository
 import com.dejavu.core.ui.BackTopBar
 import com.dejavu.core.ui.BaseViewModel
@@ -68,7 +71,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-private const val DEFAULT_MODEL = "gemini-2.5-flash"
+private const val DEFAULT_MODEL = "gemini-flash-latest"
 private val MODEL_NAME = Regex("^[a-z0-9.-]{3,60}$")
 
 class AssistantViewModel(private val repo: CustomerAppRepository) : BaseViewModel() {
@@ -87,6 +90,23 @@ class AssistantViewModel(private val repo: CustomerAppRepository) : BaseViewMode
 
     val refresher = Refresher()
     private var started = false
+
+    private val _testing = MutableStateFlow(false)
+    val testing = _testing.asStateFlow()
+
+    /** What the last "اختبار الاتصال" found (null until it is run). */
+    private val _test = MutableStateFlow<ChatTestResult?>(null)
+    val test = _test.asStateFlow()
+
+    fun testConnection() {
+        if (_testing.value) return
+        _testing.value = true
+        _test.value = null
+        viewModelScope.launch {
+            repo.testChat().orSay()?.let { _test.value = it }
+            _testing.value = false
+        }
+    }
 
     fun start() {
         if (started) return
@@ -147,6 +167,8 @@ internal fun AssistantContent(onBack: () -> Unit, openCustomer: (String) -> Unit
     val settings by vm.settings.collectAsStateWithLifecycle()
     val convos by vm.convos.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
+    val testing by vm.testing.collectAsStateWithLifecycle()
+    val testResult by vm.test.collectAsStateWithLifecycle()
     val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val open by vm.open.collectAsStateWithLifecycle()
     val lines by vm.lines.collectAsStateWithLifecycle()
@@ -180,6 +202,7 @@ internal fun AssistantContent(onBack: () -> Unit, openCustomer: (String) -> Unit
                             item(key = "not-configured") { NotConfiguredCard() }
                         }
                         item(key = "settings") { AssistantSettingsCard(s.value, saving, vm::save) }
+                        item(key = "test") { ConnectionTestCard(testing, testResult, vm::testConnection) }
                     }
                 }
                 item(key = "convos-head") {
@@ -240,6 +263,30 @@ private fun NotConfiguredCard() {
                 color = Warning,
                 modifier = Modifier.weight(1f),
             )
+        }
+    }
+}
+
+/** Tries Gemini with a tiny question and says in Arabic what is wrong when it fails. */
+@Composable
+private fun ConnectionTestCard(testing: Boolean, result: ChatTestResult?, onTest: () -> Unit) {
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text("اختبار الاتصال بـ Gemini", style = MaterialTheme.typography.titleMedium)
+        Text("يتأكد أن المفتاح والنموذج يعملان، وإن فشل يوضح السبب.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        OutlinedButton(onClick = onTest, enabled = !testing, modifier = Modifier.padding(top = 8.dp)) {
+            if (testing) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(end = 8.dp).height(16.dp).width(16.dp))
+            Text(if (testing) "جارٍ الاختبار…" else "اختبار الاتصال")
+        }
+        if (result != null) {
+            if (result.ok) {
+                Text("✅ يعمل — النموذج ${result.model}", color = com.dejavu.core.ui.theme.Success, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+            } else {
+                Text("❌ لا يعمل", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Text(result.error.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                if (result.available.isNotEmpty()) {
+                    Text("النماذج المتاحة لمفتاحك: ${result.available.joinToString("، ")}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
         }
     }
 }

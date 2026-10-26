@@ -343,7 +343,7 @@ data class ChatSettings(
     val whatsapp: String = "",
     val dailyLimit: Int = 30,
     val imageLimit: Int = 10,
-    val model: String = "gemini-2.5-flash",
+    val model: String = "gemini-flash-latest",
     /** Whether GEMINI_API_KEY is set on the server (read only). */
     val configured: Boolean = false,
 )
@@ -455,3 +455,14 @@ fun durationLabel(seconds: Long): String = when {
     seconds >= 60 -> "${seconds / 60} د"
     else -> "$seconds ث"
 }
+
+/** POST admin/chat/test: whether the Gemini key and model work, and why not. */
+@Serializable
+data class ChatTestResult(
+    val ok: Boolean,
+    val model: String = "",
+    val answer: String? = null,
+    val error: String? = null,
+    val status: Int? = null,
+    val available: List<String> = emptyList(),
+)

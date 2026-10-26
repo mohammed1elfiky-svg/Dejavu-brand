@@ -30,7 +30,7 @@ const DEFAULTS: ChatSettings = {
   whatsapp: '',
   dailyLimit: 30,
   imageLimit: 10,
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
 };
 
 /** Fixed rules on top of the owner's instructions. */
@@ -282,6 +282,27 @@ export class ChatService {
   }
 
   // ---------------------------------------------------------------- admin ---
+
+  /** Asks Gemini a tiny question and says what happened (key wrong, model refused, quota…). */
+  async testConnection() {
+    const s = await this.settings();
+    if (!this.gemini.configured) return { ok: false, model: s.model, error: 'مفتاح Gemini غير مضاف في الخادم (GEMINI_API_KEY)' };
+    try {
+      const answer = await this.gemini.text(s.model, 'أجب بكلمة واحدة.', [{ text: 'قل: جاهز' }]);
+      return { ok: true, model: s.model, answer };
+    } catch (e) {
+      const status = (e as { status?: number }).status ?? 0;
+      const hint =
+        status === 400 || status === 403
+          ? 'المفتاح غير صحيح أو غير مفعّل لهذه الخدمة. أنشئ مفتاحاً جديداً من aistudio.google.com'
+          : status === 429
+            ? 'تجاوزت الحد المجاني من جوجل. انتظر قليلاً أو فعّل الدفع في Google AI Studio'
+            : status === 404
+              ? 'اسم النموذج غير متاح لهذا المفتاح'
+              : 'تعذّر الاتصال بجوجل';
+      return { ok: false, model: s.model, status, error: `${hint} — ${(e as Error).message}`, available: (await this.gemini.models().catch(() => [])).slice(0, 15) };
+    }
+  }
 
   /** Customers who chatted, newest first. */
   async conversations(take = 50) {

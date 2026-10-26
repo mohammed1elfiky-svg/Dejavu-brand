@@ -71,6 +71,13 @@ export class AdminChatController {
     return this.chat.setSettings(dto);
   }
 
+  /** Tests the Gemini key and model; says what is wrong when it fails. */
+  @Post('test')
+  @HttpCode(HttpStatus.OK)
+  test() {
+    return this.chat.testConnection();
+  }
+
   @Get('conversations')
   conversations(@Query('take') take?: string) {
     return this.chat.conversations(take ? Number(take) : 50);

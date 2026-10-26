@@ -316,6 +316,7 @@ interface AdminApi {
 
     @GET("admin/chat/settings") suspend fun chatSettings(): ChatSettings
     @PUT("admin/chat/settings") suspend fun setChatSettings(@Body body: ChatSettingsRequest): ChatSettings
+    @POST("admin/chat/test") suspend fun testChat(): ChatTestResult
     @GET("admin/chat/conversations") suspend fun chatConversations(@Query("take") take: Int = 50): List<ChatConversation>
     @GET("admin/chat/conversations/{customerId}") suspend fun chatConversation(@Path("customerId") customerId: String): List<ChatLine>
 

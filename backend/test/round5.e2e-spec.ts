@@ -336,7 +336,11 @@ describe('Round 5 (e2e)', () => {
     await http.post('/store/chat', { text: '4' }, c.token).expect(429);
     const convs = (await http.get('/admin/chat/conversations', admin).expect(200)).body;
     expect(convs.find((x: { customer: { id: string } }) => x.customer.id === c.customerId)).toMatchObject({ messages: 6, images: 1 });
+    // The connection test says what happened.
     spy.mockRestore();
+    const failing = jest.spyOn(gemini, 'generate').mockRejectedValue(Object.assign(new Error('API key not valid'), { status: 400 }));
+    expect((await http.post('/admin/chat/test', {}, admin).expect(200)).body).toMatchObject({ ok: false, status: 400 });
+    failing.mockRestore();
     await http.put('/admin/chat/settings', { enabled: false }, admin).expect(200);
   });
 });

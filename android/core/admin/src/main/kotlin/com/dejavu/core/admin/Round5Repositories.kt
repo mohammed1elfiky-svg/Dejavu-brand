@@ -58,6 +58,7 @@ class CustomerAppRepository(private val api: AdminApi) {
 
     suspend fun chatSettings() = apiCall { api.chatSettings() }
     suspend fun setChatSettings(s: ChatSettingsRequest) = apiCall { api.setChatSettings(s) }
+    suspend fun testChat() = apiCall { api.testChat() }
     suspend fun conversations() = apiCall { api.chatConversations() }
     suspend fun conversation(customerId: String) = apiCall { api.chatConversation(customerId) }
 

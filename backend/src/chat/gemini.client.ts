@@ -60,7 +60,7 @@ export class GeminiClient {
         tools: req.tools.length ? [{ function_declarations: req.tools }] : undefined,
         generationConfig: { temperature: req.json ? 0.3 : 0.4, maxOutputTokens: 2048, ...(req.json ? { responseMimeType: 'application/json' } : {}) },
       }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(30_000),
     });
   }
 
@@ -89,7 +89,28 @@ export class GeminiClient {
     const key = process.env.GEMINI_API_KEY;
     if (!key) throw new GeminiError('GEMINI_API_KEY is not set', 0);
     const model = this.resolved.get(req.model) ?? req.model;
-    let res = await this.call(model, req, key);
+    let res: Response;
+    try {
+      res = await this.call(model, req, key);
+    } catch (e) {
+      // Too slow (or unreachable): try the lighter "latest" models before giving up.
+      const spare = ['gemini-flash-latest', 'gemini-flash-lite-latest'].find((m) => m !== model);
+      if (!spare) throw new GeminiError((e as Error).message, 0);
+      this.log.warn(`Model ${model} did not answer (${(e as Error).message}); trying ${spare}`);
+      try {
+        res = await this.call(spare, req, key);
+        this.resolved.set(req.model, spare);
+      } catch (e2) {
+        const last = ['gemini-flash-lite-latest', 'gemini-flash-latest'].find((m) => m !== model && m !== spare);
+        if (!last) throw new GeminiError((e2 as Error).message, 0);
+        try {
+          res = await this.call(last, req, key);
+          this.resolved.set(req.model, last);
+        } catch (e3) {
+          throw new GeminiError((e3 as Error).message, 0);
+        }
+      }
+    }
     // The model name is not (or no longer) available to this key: use one that is.
     if (!res.ok && (res.status === 404 || res.status === 400)) {
       const alt = this.pick(await this.models().catch(() => []));

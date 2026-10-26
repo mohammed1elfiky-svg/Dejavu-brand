@@ -87,7 +87,10 @@ export class ChatService {
 
   async settings(): Promise<ChatSettings> {
     const row = await this.prisma.setting.findUnique({ where: { key: KEY } });
-    return { ...DEFAULTS, ...((row?.value ?? {}) as Partial<ChatSettings>) };
+    const saved = { ...DEFAULTS, ...((row?.value ?? {}) as Partial<ChatSettings>) };
+    // The old default was slow (and is being retired): the owner never chose it on purpose.
+    if (saved.model === 'gemini-2.5-flash') saved.model = DEFAULTS.model;
+    return saved;
   }
 
   async setSettings(dto: Partial<ChatSettings>) {

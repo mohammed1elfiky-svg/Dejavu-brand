@@ -98,6 +98,8 @@ fun HomeScreen(
     openProducts: (title: String, category: String?, query: String?, featured: Boolean) -> Unit,
     openNotifications: () -> Unit,
     openBrand: (name: String, slug: String) -> Unit,
+    openChat: () -> Unit = {},
+    openWishlist: () -> Unit = {},
 ) {
     val vm = appViewModel { HomeViewModel(it.catalog) }
     val state by vm.state.collectAsStateWithLifecycle()

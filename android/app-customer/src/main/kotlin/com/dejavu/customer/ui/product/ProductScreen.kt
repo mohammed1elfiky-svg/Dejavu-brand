@@ -218,6 +218,8 @@ fun ProductScreen(
     requireLogin: () -> Unit,
     openBrand: (name: String, slug: String) -> Unit = { _, _ -> },
     openReviews: () -> Unit = {},
+    openProduct: (String) -> Unit = {},
+    openChat: () -> Unit = {},
 ) {
     val vm = appViewModel(key = "product:$slug") { ProductViewModel(slug, it.catalog, it.cart, it.session) }
     val reviewsVm = appViewModel(key = "product-reviews:$slug") { ReviewsViewModel(slug, it.catalog, it.session) }

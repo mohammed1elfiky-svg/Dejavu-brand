@@ -64,6 +64,9 @@ import com.dejavu.customer.ui.product.AllReviewsScreen
 import com.dejavu.customer.ui.product.ProductScreen
 import com.dejavu.customer.ui.wallet.TopUpScreen
 import com.dejavu.customer.ui.wallet.WalletScreen
+import com.dejavu.customer.ui.wishlist.WishlistScreen
+import com.dejavu.customer.ui.chat.ChatScreen
+import com.dejavu.customer.ui.about.AboutScreen
 
 /** Route patterns and builders. Values are URL-encoded. */
 object Routes {
@@ -81,6 +84,9 @@ object Routes {
     const val WALLET = "wallet"
     const val TOP_UP = "wallet/top-up"
     const val STOCK_ALERTS = "stock-alerts"
+    const val CHAT = "chat"
+    const val ABOUT = "about"
+    const val WISHLIST = "wishlist"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
@@ -184,6 +190,8 @@ fun DejavuNavHost() {
                     openProducts = { title, category, query, featured -> nav.navigate(Routes.products(title, category, query, featured)) },
                     openNotifications = { nav.navigate(Routes.NOTIFICATIONS) },
                     openBrand = { name, slug -> nav.navigate(Routes.products(name, brand = slug)) },
+                    openChat = { nav.navigate(Routes.CHAT) },
+                    openWishlist = { nav.navigate(Routes.WISHLIST) },
                 )
             }
             composable(Routes.CATEGORIES) {
@@ -219,6 +227,8 @@ fun DejavuNavHost() {
                     requireLogin = { nav.navigate(Routes.LOGIN) },
                     openBrand = { name, brand -> nav.navigate(Routes.products(name, brand = brand)) },
                     openReviews = { nav.navigate(Routes.productReviews(slug)) },
+                    openProduct = { nav.navigate(Routes.product(it)) },
+                    openChat = { nav.navigate(Routes.CHAT) },
                 )
             }
             composable(Routes.PRODUCT_REVIEWS) { entry ->
@@ -264,8 +274,18 @@ fun DejavuNavHost() {
                     wallet = { nav.navigate(Routes.WALLET) },
                     server = { nav.navigate(Routes.SERVER) },
                     stockAlerts = { nav.navigate(Routes.STOCK_ALERTS) },
+                    wishlist = { nav.navigate(Routes.WISHLIST) },
+                    about = { nav.navigate(Routes.ABOUT) },
+                    chat = { nav.navigate(Routes.CHAT) },
                 )
             }
+            composable(Routes.WISHLIST) {
+                WishlistScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
+            }
+            composable(Routes.CHAT) {
+                ChatScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
+            }
+            composable(Routes.ABOUT) { AboutScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.STOCK_ALERTS) {
                 StockAlertsScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) })
             }

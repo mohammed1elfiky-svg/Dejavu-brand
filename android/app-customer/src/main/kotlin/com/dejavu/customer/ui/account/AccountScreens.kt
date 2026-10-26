@@ -125,6 +125,9 @@ fun AccountScreen(
     wallet: () -> Unit,
     server: () -> Unit,
     stockAlerts: () -> Unit = {},
+    wishlist: () -> Unit = {},
+    about: () -> Unit = {},
+    chat: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()

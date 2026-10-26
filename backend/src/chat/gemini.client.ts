@@ -50,7 +50,7 @@ export class GeminiClient {
     return !!process.env.GEMINI_API_KEY;
   }
 
-  private async call(model: string, req: GeminiRequest, key: string) {
+  private async call(model: string, req: GeminiRequest, key: string, timeoutMs = 30_000) {
     return fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
@@ -60,7 +60,7 @@ export class GeminiClient {
         tools: req.tools.length ? [{ function_declarations: req.tools }] : undefined,
         generationConfig: { temperature: req.json ? 0.3 : 0.4, maxOutputTokens: 2048, ...(req.json ? { responseMimeType: 'application/json' } : {}) },
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -88,39 +88,25 @@ export class GeminiClient {
   async generate(req: GeminiRequest): Promise<GeminiPart[]> {
     const key = process.env.GEMINI_API_KEY;
     if (!key) throw new GeminiError('GEMINI_API_KEY is not set', 0);
-    const model = this.resolved.get(req.model) ?? req.model;
-    let res: Response;
-    try {
-      res = await this.call(model, req, key);
-    } catch (e) {
-      // Too slow (or unreachable): try the lighter "latest" models before giving up.
-      const spare = ['gemini-flash-latest', 'gemini-flash-lite-latest'].find((m) => m !== model);
-      if (!spare) throw new GeminiError((e as Error).message, 0);
-      this.log.warn(`Model ${model} did not answer (${(e as Error).message}); trying ${spare}`);
+    const first = this.resolved.get(req.model) ?? req.model;
+    // When one model is busy (503), slow, or unknown to this key, walk down the list of others.
+    const queue = [first, 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter((m, i, all) => all.indexOf(m) === i);
+    let last: GeminiError = new GeminiError('Gemini did not answer', 0);
+    let listed = false;
+    for (let i = 0; i < queue.length; i++) {
+      const model = queue[i];
+      let res: Response;
       try {
-        res = await this.call(spare, req, key);
-        this.resolved.set(req.model, spare);
-      } catch (e2) {
-        const last = ['gemini-flash-lite-latest', 'gemini-flash-latest'].find((m) => m !== model && m !== spare);
-        if (!last) throw new GeminiError((e2 as Error).message, 0);
-        try {
-          res = await this.call(last, req, key);
-          this.resolved.set(req.model, last);
-        } catch (e3) {
-          throw new GeminiError((e3 as Error).message, 0);
-        }
+        res = await this.call(model, req, key, i === 0 ? 30_000 : 15_000);
+      } catch (e) {
+        last = new GeminiError((e as Error).message, 0);
+        this.log.warn(`Model ${model} did not answer (${last.message}); trying the next one`);
+        continue;
       }
-    }
-    // The model name is not (or no longer) available to this key: use one that is.
-    if (!res.ok && (res.status === 404 || res.status === 400)) {
-      const alt = this.pick(await this.models().catch(() => []));
-      if (alt && alt !== model) {
-        this.log.warn(`Model ${model} refused (${res.status}); using ${alt}`);
-        this.resolved.set(req.model, alt);
-        res = await this.call(alt, req, key);
+      if (res.ok) {
+        const json = (await res.json()) as { candidates?: { content?: { parts?: GeminiPart[] } }[] };
+        return json.candidates?.[0]?.content?.parts ?? [];
       }
-    }
-    if (!res.ok) {
       const body = await res.text().catch(() => '');
       let reason = body.slice(0, 300);
       try {
@@ -128,11 +114,21 @@ export class GeminiClient {
       } catch {
         /* keep the raw text */
       }
-      this.log.warn(`Gemini ${res.status}: ${reason}`);
-      throw new GeminiError(reason || `Gemini answered ${res.status}`, res.status);
+      this.log.warn(`Gemini ${res.status} on ${model}: ${reason}`);
+      last = new GeminiError(reason || `Gemini answered ${res.status}`, res.status);
+      if (res.status === 404 || res.status === 400) {
+        // Not available to this key: ask which models are, and try the best one next.
+        if (!listed) {
+          listed = true;
+          const alt = this.pick(await this.models().catch(() => []));
+          if (alt && !queue.includes(alt)) queue.splice(i + 1, 0, alt);
+        }
+        continue;
+      }
+      if (![429, 500, 502, 503, 504].includes(res.status)) break; // e.g. a bad key: others will fail the same way
+      if (res.status === 503 && i === 0) await new Promise((r) => setTimeout(r, 1500));
     }
-    const json = (await res.json()) as { candidates?: { content?: { parts?: GeminiPart[] } }[] };
-    return json.candidates?.[0]?.content?.parts ?? [];
+    throw last;
   }
 
   /** One answer as plain text (no tools). */

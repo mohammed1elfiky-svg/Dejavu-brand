@@ -116,7 +116,29 @@ data class StoreVariant(
     val compareAtPrice: String? = null,
     val availableQty: Int,
     val inStock: Boolean,
+    /** Pieces on their way that can still be pre-ordered ("احجز من الشحنة القادمة"). */
+    val incomingQty: Int = 0,
+    /** Expected arrival of the shipment (ISO date), when known. */
+    val expectedDate: String? = null,
 )
+
+/** A quantity offer on a product: "قطعة + قطعة مجاناً", "اشترِ 2 واحصل على قطعة مجاناً", a set. */
+@Serializable
+data class ProductDeal(
+    val id: String,
+    val name: String,
+    /** BUY_X_GET_Y or BUNDLE. */
+    val type: String,
+    val label: String,
+    val buyQty: Int = 1,
+    val freeQty: Int = 1,
+    val bundlePrice: String? = null,
+    val productIds: List<String> = emptyList(),
+)
+
+/** An offer that applied in the cart. */
+@Serializable
+data class AppliedDeal(val dealId: String, val name: String, val times: Int = 1, val discount: String)
 
 @Serializable
 data class PromotionTag(val name: String, val percent: String, val endsAt: String? = null)
@@ -154,6 +176,8 @@ data class StoreProduct(
     val isNew: Boolean = false,
     /** Pieces left in all sizes when only a few are (1-3), for "باقي قطعتان فقط". */
     val fewLeft: Int? = null,
+    /** Quantity offers on this product. */
+    val deals: List<ProductDeal> = emptyList(),
 ) {
     /** Photos to show for [color]: the ones tagged with it first, then the general ones. */
     fun imagesFor(color: String?): List<ProductImage> {
@@ -298,6 +322,8 @@ data class Cart(
     val totals: Totals,
     val canCheckout: Boolean,
     val problems: List<String> = emptyList(),
+    /** Quantity offers that applied (their discount is in totals.discountTotal). */
+    val deals: List<AppliedDeal> = emptyList(),
 ) {
     val itemCount: Int get() = items.sumOf { it.quantity }
 }
@@ -726,3 +752,30 @@ data class GiftCardRedeemRequest(val code: String)
 
 @Serializable
 data class GiftCardRedeemed(val code: String, val currency: String, val amount: String)
+
+
+/** GET store/pre-orders: pieces claimed from a shipment on its way. */
+@Serializable
+data class PreOrder(
+    val id: String,
+    val number: String,
+    /** WAITING, NOTIFIED (arrived), CONVERTED (put aside / sold) or CANCELLED. */
+    val status: String,
+    val quantity: Int,
+    val note: String? = null,
+    val createdAt: String,
+    val notifiedAt: String? = null,
+    val variantId: String,
+    val sku: String = "",
+    val size: String? = null,
+    val color: String? = null,
+    val productId: String,
+    val name: String,
+    val slug: String,
+    val imageUrl: String? = null,
+    val inStock: Int = 0,
+    val expectedDate: String? = null,
+)
+
+@Serializable
+data class PreOrderRequest(val variantId: String, val quantity: Int, val note: String? = null)

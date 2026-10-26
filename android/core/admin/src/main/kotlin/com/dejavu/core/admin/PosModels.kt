@@ -102,6 +102,8 @@ data class PosSaleRequest(
     val clientRef: String? = null,
     /** When it was rung up (ISO-8601), for sales sent later from the offline queue. */
     val soldAt: String? = null,
+    /** false for sales rung up offline, where the quantity offers could not be shown. */
+    val applyDeals: Boolean? = null,
 )
 
 @Serializable

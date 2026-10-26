@@ -272,6 +272,15 @@ interface DejavuApi {
     @POST("store/analytics")
     suspend fun analytics(@Body body: com.dejavu.core.model.AnalyticsBatch): Response<Unit>
 
+    @GET("store/pre-orders")
+    suspend fun preOrders(): List<com.dejavu.core.model.PreOrder>
+
+    @POST("store/pre-orders")
+    suspend fun preOrder(@Body body: com.dejavu.core.model.PreOrderRequest): com.dejavu.core.model.PreOrder
+
+    @DELETE("store/pre-orders/{id}")
+    suspend fun cancelPreOrder(@Path("id") id: String): com.dejavu.core.model.PreOrder
+
     @POST("store/me/gift-cards/redeem")
     suspend fun redeemGiftCard(@Body body: com.dejavu.core.model.GiftCardRedeemRequest): com.dejavu.core.model.GiftCardRedeemed
 }

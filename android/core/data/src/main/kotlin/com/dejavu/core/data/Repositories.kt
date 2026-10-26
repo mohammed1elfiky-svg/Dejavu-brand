@@ -439,4 +439,9 @@ class StoreExtrasRepository(private val api: DejavuApi) {
     suspend fun sendAnalytics(batch: com.dejavu.core.model.AnalyticsBatch) = apiCall { api.analytics(batch).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
 
     suspend fun redeemGiftCard(code: String) = apiCall { api.redeemGiftCard(com.dejavu.core.model.GiftCardRedeemRequest(code.trim())) }
+
+    /** Pre-orders on pieces still on their way ("احجز من الشحنة القادمة"). */
+    suspend fun preOrders() = apiCall { api.preOrders() }
+    suspend fun preOrder(variantId: String, quantity: Int) = apiCall { api.preOrder(com.dejavu.core.model.PreOrderRequest(variantId, quantity)) }
+    suspend fun cancelPreOrder(id: String) = apiCall { api.cancelPreOrder(id) }
 }

@@ -72,6 +72,7 @@ import com.dejavu.customer.ui.wallet.WalletScreen
 import com.dejavu.customer.ui.wishlist.WishlistScreen
 import com.dejavu.customer.ui.chat.ChatScreen
 import com.dejavu.customer.ui.about.AboutScreen
+import com.dejavu.customer.ui.preorders.PreOrdersScreen
 
 /** Route patterns and builders. Values are URL-encoded. */
 object Routes {
@@ -92,6 +93,7 @@ object Routes {
     const val CHAT = "chat"
     const val ABOUT = "about"
     const val WISHLIST = "wishlist"
+    const val PRE_ORDERS = "pre-orders"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
@@ -339,6 +341,7 @@ fun DejavuNavHost() {
             composable(Routes.CHAT) {
                 ChatScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
             }
+            composable(Routes.PRE_ORDERS) { PreOrdersScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }) }
             composable(Routes.ABOUT) { AboutScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.STOCK_ALERTS) {
                 StockAlertsScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) })

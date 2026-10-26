@@ -104,6 +104,10 @@ import com.dejavu.admin.ui.pricing.OffersScreen
 import com.dejavu.admin.ui.system.OwnerAlertsScreen
 import com.dejavu.admin.ui.excel.ExcelScreen
 import com.dejavu.admin.ui.customerapp.AssistantScreen
+import com.dejavu.admin.ui.deals.DealEditScreen
+import com.dejavu.admin.ui.deals.DealsScreen
+import com.dejavu.admin.ui.preorders.PreOrdersScreen
+import com.dejavu.admin.ui.ai.WeeklySummaryScreen
 import com.dejavu.admin.ui.customerapp.BehaviorScreen
 import com.dejavu.admin.ui.customerapp.CampaignsScreen
 import com.dejavu.admin.ui.customerapp.CustomerAppSettingsScreen
@@ -217,6 +221,11 @@ object R {
     const val ASSISTANT = "assistant"
     const val CAMPAIGNS = "campaigns"
     const val BEHAVIOR = "behavior"
+    const val DEALS = "deals"
+    /** id "new" for a new offer. */
+    const val DEAL = "deal/{id}"
+    const val PRE_ORDERS = "pre-orders"
+    const val WEEKLY = "weekly-summary"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -448,6 +457,10 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.CUSTOMER_APP) { CustomerAppSettingsScreen(back) }
             composable(R.ASSISTANT) { AssistantScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
             composable(R.CAMPAIGNS) { CampaignsScreen(back) }
+            composable(R.DEALS) { DealsScreen(back, open = { open(R.DEAL, it) }) }
+            composable(R.DEAL) { e -> DealEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
+            composable(R.PRE_ORDERS) { PreOrdersScreen(session, back, openLayaway = { open(R.LAYAWAY, it) }) }
+            composable(R.WEEKLY) { WeeklySummaryScreen(back) }
             composable(R.BEHAVIOR) { BehaviorScreen(back, openCustomer = { open(R.CUSTOMER, it) }, openProduct = { open(R.PRODUCT, it) }) }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {

@@ -321,4 +321,21 @@ interface AdminApi {
 
     @GET("admin/reports/behavior") suspend fun behavior(@Query("from") from: String? = null, @Query("to") to: String? = null): BehaviorReport
     @GET("admin/customers/{id}/usage") suspend fun customerUsage(@Path("id") id: String): CustomerUsage
+
+    // ---- round 6 ----
+    @GET("admin/deals") suspend fun deals(@Query("active") active: Boolean? = null): List<Deal>
+    @POST("admin/deals") suspend fun createDeal(@Body body: DealRequest): Deal
+    @PATCH("admin/deals/{id}") suspend fun updateDeal(@Path("id") id: String, @Body body: DealRequest): Deal
+    @DELETE("admin/deals/{id}") suspend fun deleteDeal(@Path("id") id: String): retrofit2.Response<Unit>
+    @POST("admin/pos/quote") suspend fun posQuote(@Body body: PosQuoteRequest): PosQuote
+
+    @GET("admin/pre-orders") suspend fun preOrders(@Query("status") status: String? = null, @Query("productId") productId: String? = null): List<AdminPreOrder>
+    @GET("admin/pre-orders/incoming") suspend fun incoming(): List<IncomingVariant>
+    @POST("admin/pre-orders") suspend fun createPreOrder(@Body body: CreatePreOrderRequest): AdminPreOrder
+    @POST("admin/pre-orders/{id}/cancel") suspend fun cancelPreOrder(@Path("id") id: String): AdminPreOrder
+    @POST("admin/pre-orders/{id}/convert") suspend fun convertPreOrder(@Path("id") id: String): PreOrderConverted
+
+    @POST("admin/ai/product-draft") suspend fun productDraft(@Body body: ProductDraftRequest): ProductDraft
+    @POST("admin/ai/marketing-text") suspend fun marketingText(@Body body: MarketingTextRequest): MarketingTexts
+    @GET("admin/ai/weekly-summary") suspend fun weeklySummary(@Query("refresh") refresh: Boolean = false): WeeklySummary
 }

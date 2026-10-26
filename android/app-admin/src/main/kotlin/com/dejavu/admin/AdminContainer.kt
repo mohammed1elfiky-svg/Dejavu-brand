@@ -71,6 +71,7 @@ class AdminContainer(private val context: Context) {
     val management = com.dejavu.core.admin.ManagementRepository(api)
     val salesExtras = com.dejavu.core.admin.SalesExtrasRepository(api)
     val customerApp = com.dejavu.core.admin.CustomerAppRepository(api)
+    val offers = com.dejavu.core.admin.OffersRepository(api)
 
     /** Theme, text size, digits, home cards, recent items of this device. */
     val uiPrefs = com.dejavu.admin.ui.UiPrefs(context)

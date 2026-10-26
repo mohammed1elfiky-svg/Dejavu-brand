@@ -68,3 +68,24 @@ class CustomerAppRepository(private val api: AdminApi) {
     suspend fun behavior(from: String? = null, to: String? = null) = apiCall { api.behavior(from, to) }
     suspend fun customerUsage(customerId: String) = apiCall { api.customerUsage(customerId) }
 }
+
+/** Quantity offers, pre-orders and the AI helpers (round 6). */
+class OffersRepository(private val api: AdminApi) {
+    suspend fun deals(activeOnly: Boolean = false) = apiCall { api.deals(if (activeOnly) true else null) }
+    suspend fun createDeal(request: DealRequest) = apiCall { api.createDeal(request) }
+    suspend fun updateDeal(id: String, request: DealRequest) = apiCall { api.updateDeal(id, request) }
+    suspend fun deleteDeal(id: String) = apiCall { api.deleteDeal(id).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+
+    /** The offers a till basket gets, before payment. */
+    suspend fun posQuote(items: List<PosItem>, customerId: String?) = apiCall { api.posQuote(PosQuoteRequest(items, customerId)) }
+
+    suspend fun preOrders(status: String? = null, productId: String? = null) = apiCall { api.preOrders(status, productId) }
+    suspend fun incoming() = apiCall { api.incoming() }
+    suspend fun createPreOrder(request: CreatePreOrderRequest) = apiCall { api.createPreOrder(request) }
+    suspend fun cancelPreOrder(id: String) = apiCall { api.cancelPreOrder(id) }
+    suspend fun convertPreOrder(id: String) = apiCall { api.convertPreOrder(id) }
+
+    suspend fun productDraft(imageFileId: String) = apiCall { api.productDraft(ProductDraftRequest(imageFileId)) }
+    suspend fun marketingText(idea: String, channel: String) = apiCall { api.marketingText(MarketingTextRequest(idea.trim(), channel)) }
+    suspend fun weeklySummary(refresh: Boolean = false) = apiCall { api.weeklySummary(refresh) }
+}

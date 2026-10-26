@@ -11,6 +11,7 @@ import com.dejavu.core.data.NotificationRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
+import com.dejavu.core.data.StoreExtrasRepository
 import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.model.Currency
 import com.dejavu.core.network.ApiClient
@@ -43,11 +44,17 @@ class AppContainer(private val context: Context) {
     val savedLogin = CredentialsStore(context, "customer")
     private lateinit var sessionRef: SessionRepository
 
+    /** A random id for this phone (no personal data): links app usage before and after sign-in. */
+    val deviceId: String = context.getSharedPreferences("device", Context.MODE_PRIVATE).let { prefs ->
+        prefs.getString("id", null) ?: java.util.UUID.randomUUID().toString().also { prefs.edit { putString("id", it) } }
+    }
+
     private val apiAndClient = ApiClient.create(
         baseUrl = { settings.baseUrl },
         tokens = tokens,
         onSessionExpired = { sessionRef.onSessionExpired() },
         debugLogging = BuildConfig.DEBUG,
+        configure = { addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("X-Device-Id", deviceId).build()) } },
     )
     private val api = apiAndClient.first
 
@@ -108,6 +115,9 @@ class AppContainer(private val context: Context) {
         }
     }
     val wallet = WalletRepository(api)
+
+    /** App settings from the owner, wish list, suggestions, assistant, gift cards, analytics. */
+    val extras = StoreExtrasRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -192,6 +202,8 @@ class AppContainer(private val context: Context) {
         }
         appScope.launch { session.restore() }
         appScope.launch { currencies.refresh() }
+        // The owner's app settings (sign-in rule, ads, assistant).
+        appScope.launch { extras.refreshConfig() }
         // A signed-in shopper who never chose a currency sees their region's rial.
         appScope.launch {
             session.state.collect { state ->
@@ -205,9 +217,11 @@ class AppContainer(private val context: Context) {
                     cart.refresh()
                     notifications.refreshUnread()
                     registerPush()
+                    extras.refreshWishlistIds()
                 } else {
                     cart.clear()
                     notifications.clear()
+                    extras.clearWishlist()
                 }
             }
         }

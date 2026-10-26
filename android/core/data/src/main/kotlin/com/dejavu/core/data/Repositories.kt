@@ -380,3 +380,63 @@ class NotificationRepository(private val api: DejavuApi) {
         _unread.value = 0
     }
 }
+
+
+/**
+ * Round-5 extras of the shop: the owner's app settings and "about" page, the wish list
+ * (kept in memory for the hearts), suggestions, popular searches, the assistant, gift cards
+ * and usage analytics.
+ */
+class StoreExtrasRepository(private val api: DejavuApi) {
+    private val _config = kotlinx.coroutines.flow.MutableStateFlow(com.dejavu.core.model.StoreConfig())
+
+    /** Sign-in rule, ads and assistant; refreshed at start. */
+    val config: kotlinx.coroutines.flow.StateFlow<com.dejavu.core.model.StoreConfig> = _config
+
+    suspend fun refreshConfig() = apiCall { api.storeConfig() }.onSuccess { _config.value = it }
+
+    suspend fun about() = apiCall { api.storeAbout() }
+
+    suspend fun popularSearches() = apiCall { api.popularSearches() }
+
+    suspend fun related(slug: String) = apiCall { api.related(slug) }
+
+    suspend fun cartSuggestions() = apiCall { api.cartSuggestions() }
+
+    private val _wishlist = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+
+    /** Ids of the products in the wish list (for the heart buttons). */
+    val wishlistIds: kotlinx.coroutines.flow.StateFlow<Set<String>> = _wishlist
+
+    suspend fun refreshWishlistIds() = apiCall { api.wishlistIds() }.onSuccess { _wishlist.value = it.toSet() }
+
+    suspend fun wishlist() = apiCall { api.wishlist() }.onSuccess { list -> _wishlist.value = list.map { it.id }.toSet() }
+
+    /** Adds or removes [productId]; returns whether it is now in the wish list. */
+    suspend fun toggleWishlist(productId: String): Result<Boolean> {
+        val adding = productId !in _wishlist.value
+        return apiCall { if (adding) api.addToWishlist(productId) else api.removeFromWishlist(productId) }
+            .onSuccess { _wishlist.value = it.toSet() }
+            .map { productId in it }
+    }
+
+    fun clearWishlist() {
+        _wishlist.value = emptySet()
+    }
+
+    suspend fun chat() = apiCall { api.chat() }
+
+    suspend fun sendChat(text: String?, imageFileId: String?) = apiCall { api.sendChat(com.dejavu.core.model.ChatSendRequest(text?.takeIf { it.isNotBlank() }, imageFileId)) }
+
+    suspend fun clearChat() = apiCall { api.clearChat().let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+
+    /** A photo for the assistant (private to the customer). */
+    suspend fun uploadPhoto(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        val body = bytes.toRequestBody(mimeType.toMediaType())
+        api.uploadFile(okhttp3.MultipartBody.Part.createFormData("file", "photo.jpg", body))
+    }
+
+    suspend fun sendAnalytics(batch: com.dejavu.core.model.AnalyticsBatch) = apiCall { api.analytics(batch).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+
+    suspend fun redeemGiftCard(code: String) = apiCall { api.redeemGiftCard(com.dejavu.core.model.GiftCardRedeemRequest(code.trim())) }
+}

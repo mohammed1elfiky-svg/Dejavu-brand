@@ -230,4 +230,48 @@ interface DejavuApi {
 
     @HTTP(method = "DELETE", path = "store/devices", hasBody = true)
     suspend fun unregisterDevice(@Body body: DeviceToken): Response<Unit>
+
+    // ---- round 5: app settings, wish list, suggestions, assistant, analytics ----
+
+    @GET("store/config")
+    suspend fun storeConfig(): com.dejavu.core.model.StoreConfig
+
+    @GET("store/about")
+    suspend fun storeAbout(): com.dejavu.core.model.StoreAbout
+
+    @GET("store/search/popular")
+    suspend fun popularSearches(): List<String>
+
+    @GET("store/products/{slug}/related")
+    suspend fun related(@Path("slug") slug: String): com.dejavu.core.model.RelatedProducts
+
+    @GET("store/wishlist")
+    suspend fun wishlist(): List<StoreProduct>
+
+    @GET("store/wishlist/ids")
+    suspend fun wishlistIds(): List<String>
+
+    @POST("store/wishlist/{productId}")
+    suspend fun addToWishlist(@Path("productId") productId: String): List<String>
+
+    @DELETE("store/wishlist/{productId}")
+    suspend fun removeFromWishlist(@Path("productId") productId: String): List<String>
+
+    @GET("store/cart/suggestions")
+    suspend fun cartSuggestions(): List<StoreProduct>
+
+    @GET("store/chat")
+    suspend fun chat(): com.dejavu.core.model.ChatHistory
+
+    @POST("store/chat")
+    suspend fun sendChat(@Body body: com.dejavu.core.model.ChatSendRequest): com.dejavu.core.model.ChatMessage
+
+    @DELETE("store/chat")
+    suspend fun clearChat(): Response<Unit>
+
+    @POST("store/analytics")
+    suspend fun analytics(@Body body: com.dejavu.core.model.AnalyticsBatch): Response<Unit>
+
+    @POST("store/me/gift-cards/redeem")
+    suspend fun redeemGiftCard(@Body body: com.dejavu.core.model.GiftCardRedeemRequest): com.dejavu.core.model.GiftCardRedeemed
 }

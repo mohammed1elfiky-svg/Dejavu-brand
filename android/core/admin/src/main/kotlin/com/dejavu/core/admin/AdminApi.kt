@@ -275,4 +275,50 @@ interface AdminApi {
     @Multipart @POST("admin/files/private") suspend fun uploadPrivate(@Part file: MultipartBody.Part): UploadedFile
     /** A private file (deposit slip), read with the staff token. */
     @GET("admin/files/{id}") suspend fun file(@Path("id") id: String): ResponseBody
+
+    // ---- round 5 ----
+    @GET("admin/owner-alerts") suspend fun ownerAlerts(@Query("take") take: Int = 50): List<OwnerAlert>
+    @GET("admin/owner-alerts/settings") suspend fun ownerAlertSettings(): OwnerAlertSettings
+    @PUT("admin/owner-alerts/settings") suspend fun setOwnerAlertSettings(@Body body: OwnerAlertSettings): OwnerAlertSettings
+
+    @POST("admin/pricing/bulk") suspend fun bulkPrice(@Body body: BulkPriceRequest): BulkPriceResult
+    @GET("admin/pricing/on-offer") suspend fun onOffer(): List<OfferProduct>
+
+    @GET("admin/layaways") suspend fun layaways(@Query("status") status: String? = null, @Query("customerId") customerId: String? = null, @Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 50): com.dejavu.core.model.Page<Layaway>
+    @GET("admin/layaways/{id}") suspend fun layaway(@Path("id") id: String): Layaway
+    @POST("admin/layaways") suspend fun createLayaway(@Body body: CreateLayawayRequest): Layaway
+    @POST("admin/layaways/{id}/payments") suspend fun payLayaway(@Path("id") id: String, @Body body: LayawayDeposit): Layaway
+    @POST("admin/layaways/{id}/complete") suspend fun completeLayaway(@Path("id") id: String, @Body body: CompleteLayawayRequest): LayawayCompleted
+    @POST("admin/layaways/{id}/cancel") suspend fun cancelLayaway(@Path("id") id: String, @Body body: CancelRequest): Layaway
+
+    @GET("admin/gift-cards") suspend fun giftCards(@Query("status") status: String? = null, @Query("q") q: String? = null, @Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 50): GiftCardPage
+    @GET("admin/gift-cards/check/{code}") suspend fun checkGiftCard(@Path("code") code: String): GiftCardCheck
+    @POST("admin/gift-cards") suspend fun issueGiftCard(@Body body: IssueGiftCardRequest): GiftCard
+    @POST("admin/gift-cards/redeem") suspend fun redeemGiftCard(@Body body: RedeemGiftCardRequest): GiftCard
+    @POST("admin/gift-cards/{id}/cancel") suspend fun cancelGiftCard(@Path("id") id: String): GiftCard
+
+    @POST("admin/inventory/damages") suspend fun writeOffDamage(@Body body: StockDamageRequest): StockDamage
+    @GET("admin/inventory/damages") suspend fun damages(@Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 30, @Query("from") from: String? = null, @Query("to") to: String? = null): StockDamagePage
+
+    @POST("admin/campaigns/preview") suspend fun campaignPreview(@Body body: CampaignPreviewRequest): CampaignPreview
+    @POST("admin/campaigns") suspend fun sendCampaign(@Body body: CampaignRequest): Campaign
+    @GET("admin/campaigns") suspend fun campaigns(@Query("take") take: Int = 50): List<Campaign>
+
+    /** [kind]: products, stock, customers, sales, debtors, product-sales. */
+    @retrofit2.http.Streaming @GET("admin/export/{kind}") suspend fun export(@Path("kind") kind: String, @Query("from") from: String? = null, @Query("to") to: String? = null): ResponseBody
+    @retrofit2.http.Streaming @GET("admin/import/products/template") suspend fun importTemplate(): ResponseBody
+    @Multipart @POST("admin/import/products") suspend fun importProducts(@Part file: MultipartBody.Part, @Part("dryRun") dryRun: okhttp3.RequestBody): ProductImportResult
+
+    @GET("admin/store-app") suspend fun storeApp(): StoreAppSettings
+    @PUT("admin/store-app") suspend fun setStoreApp(@Body body: StoreAppSettings): StoreAppSettings
+    @GET("admin/store-about") suspend fun storeAbout(): StoreAboutSettings
+    @PUT("admin/store-about") suspend fun setStoreAbout(@Body body: StoreAboutSettings): StoreAboutSettings
+
+    @GET("admin/chat/settings") suspend fun chatSettings(): ChatSettings
+    @PUT("admin/chat/settings") suspend fun setChatSettings(@Body body: ChatSettingsRequest): ChatSettings
+    @GET("admin/chat/conversations") suspend fun chatConversations(@Query("take") take: Int = 50): List<ChatConversation>
+    @GET("admin/chat/conversations/{customerId}") suspend fun chatConversation(@Path("customerId") customerId: String): List<ChatLine>
+
+    @GET("admin/reports/behavior") suspend fun behavior(@Query("from") from: String? = null, @Query("to") to: String? = null): BehaviorReport
+    @GET("admin/customers/{id}/usage") suspend fun customerUsage(@Path("id") id: String): CustomerUsage
 }

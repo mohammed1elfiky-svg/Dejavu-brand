@@ -1332,6 +1332,8 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { c ->
             LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Time this customer spent in the app (shown once there is any).
+                item { com.dejavu.admin.ui.customerapp.CustomerUsageCard(c.id) }
                 item {
                     InfoCard {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -10,5 +10,6 @@ class DejavuApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.start()
+        Analytics.init(container)
     }
 }

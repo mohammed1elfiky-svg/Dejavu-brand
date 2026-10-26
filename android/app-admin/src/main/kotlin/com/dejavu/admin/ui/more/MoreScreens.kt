@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -137,6 +139,10 @@ private val menu = listOf(
     MenuEntry(R.SHIFT, "الوردية", "فتح وإقفال الوردية وعدّ النقد في الدرج", Icons.Filled.DateRange, listOf(Perm.POS_SELL), SALES, badge = { it.openShifts }),
     MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ), SALES),
     MenuEntry(R.COUPONS, "أكواد الخصم", "أكواد خصم للعملاء وللكاشير", Icons.Filled.Favorite, listOf("coupons.manage"), SALES),
+    MenuEntry(R.LAYAWAYS, "الحجز بعربون", "حجز قطع لعميل بعربون وإكمال البيع عند السداد", Icons.Filled.DateRange, listOf("layaways.manage"), SALES),
+    MenuEntry(R.GIFT_CARDS, "بطاقات الهدايا", "بيع بطاقات الهدايا واستخدامها في حساب العميل", Icons.Filled.Favorite, listOf("giftcards.manage"), SALES),
+    MenuEntry(R.BULK_PRICE, "تعديل الأسعار جماعياً", "رفع أو خفض أسعار منتجات أو أقسام كاملة وطباعة الملصقات", Icons.Filled.Edit, listOf(Perm.PRODUCTS_WRITE), SALES),
+    MenuEntry(R.OFFERS, "المنتجات المعروضة بخصم", "كل المنتجات التي عليها عرض أو سعر مشطوب", Icons.Filled.Star, listOf(Perm.PRODUCTS_READ), SALES),
     MenuEntry(R.RETURNS, "المرتجعات", "طلبات الإرجاع والاسترداد", Icons.Filled.Refresh, listOf(Perm.RETURNS), ORDERS, badge = { it.returns }),
     MenuEntry(R.CUSTOMERS, "العملاء", "بيانات العملاء وأرصدتهم", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), ORDERS),
     MenuEntry(R.DEBTORS, "العملاء المدينون", "الديون المستحقة على العملاء وتذكيرهم برسالة", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), ORDERS),
@@ -146,6 +152,8 @@ private val menu = listOf(
     MenuEntry(R.BRANDS, "الماركات", "إضافة الماركات وشعاراتها وتصفح منتجاتها", Icons.Filled.AccountBox, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.CATEGORIES, "الأقسام", "تعديل أسماء الأقسام وإظهارها أو إخفاؤها في التطبيق", Icons.AutoMirrored.Filled.List, listOf(Perm.CATEGORIES_WRITE), STOCK),
     MenuEntry(R.STOCK_COUNTS, "جرد المخزون", "عدّ القطع على الرفوف وترحيل فروقات الجرد", Icons.Filled.CheckCircle, listOf("stock.count"), STOCK),
+    MenuEntry(R.DAMAGES, "البضاعة التالفة", "إخراج القطع التالفة من المخزون مع صورة وسبب", Icons.Filled.Warning, listOf("stock.adjust"), STOCK),
+    MenuEntry(R.EXCEL, "Excel: تصدير واستيراد", "تصدير القوائم والتقارير وإدخال المنتجات من ملف", Icons.AutoMirrored.Filled.List, listOf(Perm.PRODUCTS_READ, Perm.CUSTOMERS_READ, Perm.REPORTS_SALES), STOCK),
     MenuEntry(R.PURCHASING, "المشتريات", "أوامر الشراء والموردين", Icons.Filled.ShoppingCart, listOf(Perm.PURCHASES_READ), PURCHASES),
     MenuEntry(R.SUPPLIERS, "الموردون والاستيراد", "عمولة الموردين، البضائع المعلقة، طلبيات الاستيراد والـ CBM", Icons.Filled.Person, listOf(Perm.PURCHASES_READ), PURCHASES),
     MenuEntry(R.EXPENSES, "المصروفات", "تسجيل واعتماد وسداد المصروفات", Icons.AutoMirrored.Filled.List, listOf(Perm.EXPENSES_READ), FINANCE),
@@ -155,11 +163,16 @@ private val menu = listOf(
     MenuEntry(R.EXCHANGE, "صرف العملات", "شراء وبيع العملات بين الصناديق وأرباح فروق العملة", Icons.Filled.Refresh, listOf(Perm.CASHBOXES_MANAGE), FINANCE),
     MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE), FINANCE),
     MenuEntry(R.STORE_SETUP, "إعدادات تطبيق العملاء", "طرق الدفع والمحافظات والدفع عند الاستلام", Icons.Filled.Settings, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.CUSTOMER_APP, "صفحة المتجر والإعلانات", "عن المتجر، تسجيل الدخول قبل التصفح وإعلانات جوجل", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.ASSISTANT, "مساعد الدردشة", "تعليمات البوت ورسالة الترحيب ومحادثات العملاء", Icons.Filled.Email, listOf("chat.manage"), STORE),
+    MenuEntry(R.CAMPAIGNS, "إرسال إشعار أو رسالة للعملاء", "إشعار بصورة ورابط لمنتج أو قسم، لكل العملاء أو فئة منهم", Icons.Filled.Notifications, listOf("notifications.send"), STORE),
+    MenuEntry(R.BEHAVIOR, "سلوك العملاء", "الوقت في التطبيق، أكثر المنتجات مشاهدة وما يبحثون عنه", Icons.Filled.Search, listOf(Perm.REPORTS_SALES), STORE),
     MenuEntry(R.BANK_ACCOUNTS, "الحسابات البنكية للمتجر", "تظهر للعملاء عند شحن الرصيد", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.SMS, "الرسائل النصية (SMS)", "إرسال الرسائل من شريحة هذا الهاتف ورمز التحقق للعملاء", Icons.Filled.Phone, listOf(Perm.SETTINGS_MANAGE), STORE, badge = { it.smsWaiting }),
     MenuEntry(R.DAILY_SUMMARY, "الملخص اليومي", "رسالة مسائية بأرقام اليوم إلى هاتف المالك", Icons.Filled.Email, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.STAFF, "الموظفون والصلاحيات", "إضافة الموظفين، كلمات المرور، الصلاحيات والصناديق", Icons.Filled.Person, listOf(Perm.USERS_MANAGE), SYSTEM),
     MenuEntry(R.AUDIT, "سجل العمليات", "من أضاف أو عدّل أو حذف ماذا ومتى", Icons.AutoMirrored.Filled.List, listOf("audit.read"), SYSTEM),
+    MenuEntry(R.OWNER_ALERTS, "تنبيهات المالك", "إشعار فوري عند حذف فاتورة أو عجز في الصندوق أو تعديل سعر", Icons.Filled.Notifications, listOf(Perm.SETTINGS_MANAGE), SYSTEM),
     MenuEntry(R.BACKUP, "النسخ الاحتياطي", "تنزيل نسخة من كل البيانات، نسخ يومي تلقائي واستعادة", Icons.Filled.Lock, listOf("system.backup"), SYSTEM),
 )
 

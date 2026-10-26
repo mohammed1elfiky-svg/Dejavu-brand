@@ -146,6 +146,14 @@ data class StoreProduct(
     val bagSize: String? = null,
     /** Heel height in cm, e.g. "7.5". */
     val heelHeightCm: String? = null,
+    /** Uploaded product video. */
+    val videoUrl: String? = null,
+    val instagramUrl: String? = null,
+    val createdAt: String? = null,
+    /** Added in the last two weeks ("وصل حديثاً"). */
+    val isNew: Boolean = false,
+    /** Pieces left in all sizes when only a few are (1-3), for "باقي قطعتان فقط". */
+    val fewLeft: Int? = null,
 ) {
     /** Photos to show for [color]: the ones tagged with it first, then the general ones. */
     fun imagesFor(color: String?): List<ProductImage> {
@@ -622,3 +630,99 @@ data class UpdateTopUpRequest(
 
 @Serializable
 data class UploadedFile(val id: String, val url: String, val mimeType: String, val size: Int)
+
+
+// ------------------------------------------------------------ round 5 ---
+
+/** GET store/config: what the app needs at start. */
+@Serializable
+data class StoreConfig(
+    val requireLogin: Boolean = false,
+    val ads: AdsConfig = AdsConfig(),
+    val chat: ChatConfig = ChatConfig(),
+)
+
+@Serializable
+data class AdsConfig(
+    val enabled: Boolean = false,
+    /** AdMob unit ids; empty = Google's test ads. */
+    val bannerUnitId: String = "",
+    val interstitialUnitId: String = "",
+    val homeBanner: Boolean = true,
+    val productBanner: Boolean = true,
+    /** A full-screen ad after every N product pages; 0 = never. */
+    val interstitialEvery: Int = 0,
+)
+
+@Serializable
+data class ChatConfig(val enabled: Boolean = false, val welcome: String = "")
+
+/** GET store/about: the "عن المتجر" page. */
+@Serializable
+data class StoreAbout(
+    val name: String = "Dejavu",
+    val about: String = "",
+    val address: String = "",
+    val mapUrl: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val hours: String = "",
+    val returnPolicy: String = "",
+    val phones: List<String> = emptyList(),
+    val whatsapp: String = "",
+    val instagram: String = "",
+    val facebook: String = "",
+    val tiktok: String = "",
+)
+
+/** GET store/products/{slug}/related */
+@Serializable
+data class RelatedProducts(val similar: List<StoreProduct> = emptyList(), val alsoBought: List<StoreProduct> = emptyList())
+
+@Serializable
+enum class ChatRole { USER, BOT }
+
+@Serializable
+data class ChatMessage(
+    val id: String,
+    val role: ChatRole,
+    val text: String,
+    val imageFileId: String? = null,
+    val handover: Boolean = false,
+    val createdAt: String,
+    val products: List<StoreProduct> = emptyList(),
+    /** On an answer: the staff WhatsApp number when the assistant handed over. */
+    val whatsapp: String? = null,
+)
+
+/** GET store/chat */
+@Serializable
+data class ChatHistory(
+    val enabled: Boolean = false,
+    val welcome: String = "",
+    val whatsapp: String = "",
+    val messages: List<ChatMessage> = emptyList(),
+)
+
+@Serializable
+data class ChatSendRequest(val text: String? = null, val imageFileId: String? = null)
+
+/** POST store/analytics: time in the app and product views, in batches. */
+@Serializable
+data class AnalyticsBatch(
+    val deviceId: String,
+    val sessions: List<AnalyticsSession> = emptyList(),
+    val views: List<AnalyticsView> = emptyList(),
+)
+
+@Serializable
+data class AnalyticsSession(val id: String, val startedAt: String, val seconds: Int)
+
+@Serializable
+data class AnalyticsView(val productId: String, val seconds: Int, val at: String)
+
+@Serializable
+data class GiftCardRedeemRequest(val code: String)
+
+@Serializable
+data class GiftCardRedeemed(val code: String, val currency: String, val amount: String)

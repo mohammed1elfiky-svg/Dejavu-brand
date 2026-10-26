@@ -44,6 +44,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        Analytics.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Analytics.onStop()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handle(intent)
@@ -58,6 +68,11 @@ class MainActivity : ComponentActivity() {
             // "Shipped" notification (with the shipping receipt).
             ?: intent.getStringExtra(EXTRA_ORDER_NUMBER)
         val container = (application as DejavuApp).container
+        // A shared product link opened from WhatsApp: dejavu://product/<slug>
+        intent.data?.takeIf { it.scheme == "dejavu" && it.host == "product" }?.lastPathSegment?.let {
+            container.requestProduct(it)
+            return
+        }
         container.requestOrder(order)
         if (!order.isNullOrBlank()) return
         // New-product or back-in-stock notification: open the product.

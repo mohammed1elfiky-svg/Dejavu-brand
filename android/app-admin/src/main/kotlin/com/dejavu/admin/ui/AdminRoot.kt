@@ -94,6 +94,19 @@ import com.dejavu.admin.ui.system.DailySummaryScreen
 import com.dejavu.admin.ui.store.ReviewsScreen
 import com.dejavu.admin.ui.store.StoreSetupScreen
 import com.dejavu.admin.ui.search.SearchScreen
+import com.dejavu.admin.ui.layaway.LayawayScreen
+import com.dejavu.admin.ui.layaway.LayawaysScreen
+import com.dejavu.admin.ui.layaway.NewLayawayScreen
+import com.dejavu.admin.ui.giftcards.GiftCardsScreen
+import com.dejavu.admin.ui.inventory.DamagesScreen
+import com.dejavu.admin.ui.pricing.BulkPriceScreen
+import com.dejavu.admin.ui.pricing.OffersScreen
+import com.dejavu.admin.ui.system.OwnerAlertsScreen
+import com.dejavu.admin.ui.excel.ExcelScreen
+import com.dejavu.admin.ui.customerapp.AssistantScreen
+import com.dejavu.admin.ui.customerapp.BehaviorScreen
+import com.dejavu.admin.ui.customerapp.CampaignsScreen
+import com.dejavu.admin.ui.customerapp.CustomerAppSettingsScreen
 import com.dejavu.admin.ui.more.AppearanceScreen
 import com.dejavu.admin.ui.more.OnboardingTour
 import com.dejavu.admin.ui.finance.DebtorsScreen
@@ -191,6 +204,19 @@ object R {
     const val REVIEWS = "reviews"
     const val SEARCH = "search"
     const val APPEARANCE = "appearance"
+    const val LAYAWAYS = "layaways"
+    const val LAYAWAY = "layaway/{id}"
+    const val LAYAWAY_NEW = "layaway-new"
+    const val GIFT_CARDS = "gift-cards"
+    const val DAMAGES = "damages"
+    const val BULK_PRICE = "bulk-price"
+    const val OFFERS = "offers"
+    const val OWNER_ALERTS = "owner-alerts"
+    const val EXCEL = "excel"
+    const val CUSTOMER_APP = "customer-app"
+    const val ASSISTANT = "assistant"
+    const val CAMPAIGNS = "campaigns"
+    const val BEHAVIOR = "behavior"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -410,6 +436,19 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             composable(R.REVIEWS) { ReviewsScreen(back) }
             composable(R.SEARCH) { SearchScreen(session, back, navigate = { nav.navigate(it) }) }
             composable(R.APPEARANCE) { AppearanceScreen(back) }
+            composable(R.LAYAWAYS) { LayawaysScreen(session, back, open = { open(R.LAYAWAY, it) }, newLayaway = { nav.navigate(R.LAYAWAY_NEW) }) }
+            composable(R.LAYAWAY) { e -> LayawayScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            composable(R.LAYAWAY_NEW) { NewLayawayScreen(back, created = { id -> nav.navigate(R.of(R.LAYAWAY, id)) { popUpTo(R.LAYAWAYS) } }) }
+            composable(R.GIFT_CARDS) { GiftCardsScreen(session, back) }
+            composable(R.DAMAGES) { DamagesScreen(session, back) }
+            composable(R.BULK_PRICE) { BulkPriceScreen(back) }
+            composable(R.OFFERS) { OffersScreen(back, openProduct = { open(R.PRODUCT, it) }) }
+            composable(R.OWNER_ALERTS) { OwnerAlertsScreen(back) }
+            composable(R.EXCEL) { ExcelScreen(session, back) }
+            composable(R.CUSTOMER_APP) { CustomerAppSettingsScreen(back) }
+            composable(R.ASSISTANT) { AssistantScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
+            composable(R.CAMPAIGNS) { CampaignsScreen(back) }
+            composable(R.BEHAVIOR) { BehaviorScreen(back, openCustomer = { open(R.CUSTOMER, it) }, openProduct = { open(R.PRODUCT, it) }) }
             composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
             composable(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })

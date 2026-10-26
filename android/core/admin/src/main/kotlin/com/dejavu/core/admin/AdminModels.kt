@@ -1356,7 +1356,24 @@ data class ProductsReport(
     val deadDays: Int = 60,
     val topSellers: List<TopSeller> = emptyList(),
     val deadStock: List<DeadItem> = emptyList(),
+    /** Products that made the most profit. */
+    val topProfit: List<TopSeller> = emptyList(),
+    /** Categories by pieces sold, and by profit. */
+    val topCategories: List<CategorySales> = emptyList(),
+    val profitableCategories: List<CategorySales> = emptyList(),
 ) {
+    @Serializable
+    data class CategorySales(
+        val categoryId: String,
+        val nameAr: String,
+        val units: Int,
+        val products: Int = 0,
+        val revenue: String,
+        val cost: String,
+        val grossProfit: String,
+        val margin: String,
+    )
+
     @Serializable
     data class TopSeller(
         val productId: String,

@@ -151,6 +151,8 @@ import com.dejavu.core.admin.FinanceRepository
 import com.dejavu.core.admin.Perm
 import com.dejavu.core.admin.PosItem
 import com.dejavu.core.admin.PosProduct
+import com.dejavu.core.admin.PosQuote
+import com.dejavu.core.admin.OffersRepository
 import com.dejavu.core.admin.PosReceipt
 import com.dejavu.core.admin.PosRepository
 import com.dejavu.core.admin.PosSaleRequest
@@ -223,6 +225,8 @@ class PosTotals(
     val change: BigDecimal,
     /** [change] in the change currency. */
     val changeAmount: BigDecimal,
+    /** Quantity offers ("قطعة + قطعة مجاناً") taken off [subtotal] before [discount]. */
+    val offers: BigDecimal = BigDecimal.ZERO,
 )
 
 private val HUNDRED = BigDecimal(100)
@@ -266,16 +270,21 @@ fun computeTotals(
     tenders: List<TenderInput>,
     changeCurrency: Currency,
     buyer: PosCustomer? = null,
+    /** SAR the server's quantity offers take off (POST admin/pos/quote). */
+    offers: BigDecimal = BigDecimal.ZERO,
 ): PosTotals {
     val rate = rates[invoice] ?: BigDecimal.ONE
     val subtotal = money(cart.fold(BigDecimal.ZERO) { acc, l -> acc.add(l.lineTotal(buyer)) })
+    // Like the server's priceOrder: offers first, then the invoice discount on what is left.
+    val offerTotal = money(offers.max(BigDecimal.ZERO).min(subtotal))
+    val afterOffers = money(subtotal.subtract(offerTotal))
     val value = discountValue.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
     val discount = when {
         value == null -> BigDecimal.ZERO
-        discountType == DiscountType.PERCENT -> subtotal.multiply(value.min(HUNDRED)).divide(HUNDRED, 2, RoundingMode.HALF_UP)
+        discountType == DiscountType.PERCENT -> afterOffers.multiply(value.min(HUNDRED)).divide(HUNDRED, 2, RoundingMode.HALF_UP)
         else -> Money.toBase(value, invoice, rate)
-    }.min(subtotal)
-    val total = money(subtotal.subtract(discount))
+    }.min(afterOffers)
+    val total = money(afterOffers.subtract(discount))
 
     var paid = BigDecimal.ZERO
     var last: Pair<Currency, BigDecimal>? = null
@@ -298,7 +307,7 @@ fun computeTotals(
         changeAmount = BigDecimal.ZERO
     }
     val owed = if (paid < total) money(total.subtract(paid)) else BigDecimal.ZERO
-    return PosTotals(subtotal, discount, total, paid, owed, change, changeAmount)
+    return PosTotals(subtotal, discount, total, paid, owed, change, changeAmount, offerTotal)
 }
 
 // -------------------------------------------------------------- viewmodel ---
@@ -369,6 +378,7 @@ class PosViewModel(
     private val finance: FinanceRepository,
     private val treasury: TreasuryRepository,
     private val offline: OfflineSales,
+    private val offerRepo: OffersRepository,
 ) : BaseViewModel() {
     var products by mutableStateOf<Load<List<PosProduct>>>(Load.Loading)
         private set
@@ -463,6 +473,43 @@ class PosViewModel(
 
     private var searchJob: Job? = null
     private var customerJob: Job? = null
+    private var quoteJob: Job? = null
+
+    /** The server's quantity offers for a basket ([key]: items + customer id). */
+    private data class QuotedBasket(val key: Pair<List<PosItem>, String?>, val quote: PosQuote)
+
+    /** Last offers quote; null while none could be had (offline, failed). */
+    private var quoted by mutableStateOf<QuotedBasket?>(null)
+
+    private fun basketKey(): Pair<List<PosItem>, String?> = cart.map { PosItem(it.variant.id, it.qty) } to customer?.id
+
+    /** The offers quote of the basket as it is now; null while it is being asked for or could not be had. */
+    val appliedQuote: PosQuote?
+        get() = quoted?.takeIf { it.key == basketKey() }?.quote
+
+    /** Offers shown at the till (SAR off). */
+    val appliedDeals: List<PosQuote.Applied>
+        get() = appliedQuote?.deals.orEmpty()
+
+    /** SAR the quantity offers take off the basket (0 without a fresh quote). */
+    private val offerDiscount: BigDecimal
+        get() = appliedQuote?.let { Money.parse(it.dealDiscount) } ?: BigDecimal.ZERO
+
+    /** Asks the server (debounced) which quantity offers the basket gets; failures just show none. */
+    private fun requote() {
+        quoteJob?.cancel()
+        val key = basketKey()
+        if (key.first.isEmpty()) {
+            quoted = null
+            return
+        }
+        if (quoted?.key == key) return
+        quoteJob = viewModelScope.launch {
+            delay(400)
+            val q = offerRepo.posQuote(key.first, key.second).getOrNull()
+            quoted = q?.let { QuotedBasket(key, it) }
+        }
+    }
     /** The signed-in employee's till currency (code), applied until the cashier picks one. */
     private var preferredCurrency: String? = null
     private var currencyPicked = false
@@ -550,7 +597,7 @@ class PosViewModel(
 
     /** Totals with only the typed (%/amount) discount and nothing paid. */
     private val beforePayment: PosTotals
-        get() = computeTotals(cart, currency, rates, discountType, discountValue, emptyList(), currency, customer)
+        get() = computeTotals(cart, currency, rates, discountType, discountValue, emptyList(), currency, customer, offerDiscount)
 
     /** What the customer has to pay, in the invoice currency. */
     val dueInInvoice: BigDecimal
@@ -577,7 +624,9 @@ class PosViewModel(
         get() {
             if (receivedDiscount != null) {
                 val received = validAmount(receivedShown, currency) ?: return null
-                val subtotal = Money.convert(beforePayment.subtotal, currency, invoiceRate)
+                // The offers are the server's; the cashier's discount comes on top of them.
+                val b = beforePayment
+                val subtotal = Money.convert(b.subtotal.subtract(b.offers), currency, invoiceRate)
                 val amount = subtotal.subtract(received)
                 return if (amount.signum() > 0) DiscountType.AMOUNT to amount else null
             }
@@ -601,6 +650,7 @@ class PosViewModel(
                 paidTenders,
                 changeIn,
                 customer,
+                offerDiscount,
             )
         }
 
@@ -845,6 +895,7 @@ class PosViewModel(
         }
         cart = if (line == null) cart + CartLine(product, variant, 1) else cart.map { if (it.variant.id == variant.id) it.copy(qty = it.qty + 1) else it }
         receivedText = null
+        requote()
     }
 
     fun setQty(variantId: String, qty: Int) {
@@ -858,6 +909,7 @@ class PosViewModel(
             else -> cart.map { if (it.variant.id == variantId) it.copy(qty = qty) else it }
         }
         receivedText = null
+        requote()
     }
 
     // ---- payment
@@ -880,7 +932,7 @@ class PosViewModel(
         val t = tenders.getOrNull(index) ?: return
         val r = rates[t.currency] ?: return
         val others = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = "") else x }
-        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: defaultChangeCurrency(others), customer).owed
+        val owed = computeTotals(cart, currency, rates, discountType, discountValue, others, changeCurrency ?: defaultChangeCurrency(others), customer, offerDiscount).owed
         val amount = if (owed.signum() > 0) Money.convert(owed, t.currency, r).stripTrailingZeros().toPlainString() else ""
         tenders = tenders.mapIndexed { i, x -> if (i == index) x.copy(amount = amount) else x }
         checkoutError = null
@@ -905,6 +957,7 @@ class PosViewModel(
         customerBalances = emptyList()
         receivedText = null
         checkoutError = null
+        requote()
         viewModelScope.launch {
             customerBalances = finance.customerAccount(c.id).getOrNull()?.balances.orEmpty()
         }
@@ -914,6 +967,7 @@ class PosViewModel(
         customer = null
         customerBalances = emptyList()
         receivedText = null
+        requote()
     }
 
     fun quickCustomer(name: String, phone: String) {
@@ -961,6 +1015,9 @@ class PosViewModel(
             reference = reference.trim().ifBlank { null }?.takeIf { bank },
             slipFileId = slipFileId?.takeIf { bank },
             clientRef = clientRef,
+            // Offers only when the till showed them (fresh quote); otherwise the customer paid the
+            // full price shown, so the server must not take them off (offline / failed quote).
+            applyDeals = if (appliedQuote != null) null else false,
         )
         val editId = editing?.id
         busy = true
@@ -1053,6 +1110,7 @@ class PosViewModel(
             newSale()
             editing = r
             cart = lines
+            requote()
             currency = r.currency
             currencyPicked = true
             if (!Money.isZero(r.onAccount)) saleType = SaleType.CREDIT
@@ -1096,6 +1154,7 @@ class PosViewModel(
         printAfterSale = null
         tenders = tenders.map { it.copy(amount = "") }
         clientRef = UUID.randomUUID().toString()
+        requote()
         if (wasEditing) {
             currencyPicked = false
             applyPreferredCurrency()
@@ -1126,7 +1185,7 @@ fun PosScreen(
 ) {
     var confirmLogout by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury, OfflineSales.get(context)) }
+    val vm = adminViewModel { PosViewModel(it.pos, it.finance, it.treasury, OfflineSales.get(context), it.offers) }
     val snackbar = remember { SnackbarHostState() }
     val canArrange = session.can(Perm.PRODUCTS_WRITE)
     var arranging by rememberSaveable { mutableStateOf(false) }
@@ -1841,7 +1900,7 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
     val discountValid = vm.discountValue.isBlank() || when (vm.discountType) {
         DiscountType.PERCENT -> discountNumber != null && discountNumber.signum() >= 0 && discountNumber <= HUNDRED
         DiscountType.AMOUNT -> discountNumber != null && discountNumber.signum() >= 0 &&
-            discountNumber.stripTrailingZeros().scale() <= inv.decimals && discountNumber <= Money.convert(t.subtotal, inv, rate)
+            discountNumber.stripTrailingZeros().scale() <= inv.decimals && discountNumber <= Money.convert(t.subtotal.subtract(t.offers), inv, rate)
     }
     val tendersValid = if (vm.multiCurrency) {
         vm.tenders.all { it.amount.isBlank() || validAmount(it.amount, it.currency) != null }
@@ -1876,6 +1935,7 @@ private fun CheckoutContent(vm: PosViewModel, canEditRates: Boolean, onNewCustom
                 ) {
                     vm.cart.forEach { l -> key(l.variant.id) { CartLineRow(l, vm, inv, rate) } }
                 }
+                vm.appliedDeals.forEach { d -> DealRow(d, inv, rate) }
             }
         }
 
@@ -1998,6 +2058,7 @@ private fun TotalsRows(vm: PosViewModel, t: PosTotals) {
     val inv = vm.currency
     val rate = vm.rateOf(inv) ?: BigDecimal.ONE
     CompactRow("المجموع", Money.format(t.subtotal, inv, rate))
+    if (t.offers.signum() > 0) CompactRow("العروض", "− ${Money.format(t.offers, inv, rate)}", Success)
     if (t.discount.signum() > 0) CompactRow("الخصم", "− ${Money.format(t.discount, inv, rate)}", MaterialTheme.colorScheme.error)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -2028,6 +2089,26 @@ private fun ReceivedField(vm: PosViewModel, credit: Boolean, valid: Boolean) {
     )
     vm.receivedDiscount?.let { d ->
         Text("خصم: ${Money.plain(d, inv)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** One quantity offer the basket gets: "🎁 name ×times −discount", in green. */
+@Composable
+private fun DealRow(d: PosQuote.Applied, inv: Currency, rate: BigDecimal) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Success.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "🎁 ${d.name}" + if (d.times > 1) " ×${d.times}" else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = Success,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text("−${Money.format(Money.parse(d.discount), inv, rate)}", style = MaterialTheme.typography.bodySmall, color = Success, fontWeight = FontWeight.SemiBold)
     }
 }
 

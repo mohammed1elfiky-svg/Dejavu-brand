@@ -93,6 +93,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.dejavu.core.admin.MarketingTexts
+import com.dejavu.core.admin.OffersRepository
+import com.dejavu.core.data.userMessage
+import com.dejavu.core.network.ApiException
 
 // ------------------------------------------------------------------ draft ---
 
@@ -172,6 +176,7 @@ class CampaignsViewModel(
     private val inventory: InventoryRepository,
     private val storeSetup: StoreSetupRepository,
     private val finance: FinanceRepository,
+    private val offerRepo: OffersRepository,
 ) : BaseViewModel() {
     private val _history = MutableStateFlow<Load<List<Campaign>>>(Load.Loading)
     val history = _history.asStateFlow()
@@ -197,6 +202,17 @@ class CampaignsViewModel(
     val governorates = _governorates.asStateFlow()
     private val _categories = MutableStateFlow<List<Pair<AdminCategory, Int>>?>(null)
     val categories = _categories.asStateFlow()
+
+    private val _writing = MutableStateFlow(false)
+
+    /** True while the AI writes the message. */
+    val writing = _writing.asStateFlow()
+    private val _suggestions = MutableStateFlow<List<MarketingTexts.Suggestion>>(emptyList())
+
+    /** Wordings the AI suggested for the idea. */
+    val suggestions = _suggestions.asStateFlow()
+    private val _writeError = MutableStateFlow<String?>(null)
+    val writeError = _writeError.asStateFlow()
 
     private var started = false
 
@@ -245,6 +261,37 @@ class CampaignsViewModel(
             inventory.uploadImage(bytes).orSay()?.let { file -> edit { it.copy(imageUrl = file.url) } }
             _uploading.value = false
         }
+    }
+
+    /** Asks the AI for three wordings of [idea] (SMS length when only SMS is chosen). */
+    fun writeText(idea: String) {
+        if (_writing.value || idea.isBlank()) return
+        val d = draft
+        val channel = if (d.sms && !d.push) "SMS" else "PUSH"
+        _writing.value = true
+        _writeError.value = null
+        _suggestions.value = emptyList()
+        viewModelScope.launch {
+            offerRepo.marketingText(idea, channel).fold(
+                { r ->
+                    _suggestions.value = r.suggestions
+                    if (r.suggestions.isEmpty()) _writeError.value = "لم يقترح الذكاء الاصطناعي نصاً، جرّب وصف الفكرة بشكل أوضح"
+                },
+                { e -> _writeError.value = if ((e as? ApiException)?.status == 503) "أضف مفتاح Gemini في إعدادات الخادم" else e.userMessage() },
+            )
+            _writing.value = false
+        }
+    }
+
+    /** Puts a suggested wording in the title and text. */
+    fun useSuggestion(s: MarketingTexts.Suggestion) {
+        edit { it.copy(title = s.title.trim().ifBlank { it.title }.take(100), body = s.body.trim().take(500)) }
+        clearSuggestions()
+    }
+
+    fun clearSuggestions() {
+        _suggestions.value = emptyList()
+        _writeError.value = null
     }
 
     fun previewCount() {
@@ -297,7 +344,7 @@ class CampaignsViewModel(
 
 @Composable
 internal fun CampaignsContent(onBack: () -> Unit) {
-    val vm = adminViewModel(key = "campaigns") { CampaignsViewModel(it.customerApp, it.inventory, it.storeSetup, it.finance) }
+    val vm = adminViewModel(key = "campaigns") { CampaignsViewModel(it.customerApp, it.inventory, it.storeSetup, it.finance, it.offers) }
     val composing by vm.composing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
@@ -396,6 +443,7 @@ private fun CampaignComposer(vm: CampaignsViewModel, snackbar: SnackbarHostState
     val categories by vm.categories.collectAsStateWithLifecycle()
     var picking by rememberSaveable { mutableStateOf<String?>(null) }
     var confirming by remember { mutableStateOf(false) }
+    var writingText by remember { mutableStateOf(false) }
     val picker = rememberImagePicker { bytes -> vm.upload(bytes) }
     val smsMax = preview?.smsMax ?: 500
 
@@ -414,7 +462,10 @@ private fun CampaignComposer(vm: CampaignsViewModel, snackbar: SnackbarHostState
         ) {
             // ---- message
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("الرسالة", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("الرسالة", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { writingText = true }, enabled = !sending) { Text("✨ اكتب لي النص") }
+                }
                 FormField(d.title, { v -> vm.edit { it.copy(title = v.take(100)) } }, "العنوان", enabled = !sending)
                 FormField(
                     d.body,
@@ -638,6 +689,13 @@ private fun CampaignComposer(vm: CampaignsViewModel, snackbar: SnackbarHostState
         }
     }
 
+    if (writingText) {
+        WriteTextDialog(vm, initialIdea = listOf(d.title.trim(), d.body.trim()).filter { it.isNotEmpty() }.joinToString(" — ")) {
+            writingText = false
+            vm.clearSuggestions()
+        }
+    }
+
     if (confirming) {
         val p = preview
         val who = when {
@@ -701,6 +759,52 @@ private fun CampaignComposer(vm: CampaignsViewModel, snackbar: SnackbarHostState
         }
         else -> {}
     }
+}
+
+/** Asks for the idea, then shows the AI's three wordings; tapping one fills the title and text. */
+@Composable
+private fun WriteTextDialog(vm: CampaignsViewModel, initialIdea: String, onDismiss: () -> Unit) {
+    var idea by rememberSaveable { mutableStateOf(initialIdea) }
+    val writing by vm.writing.collectAsStateWithLifecycle()
+    val suggestions by vm.suggestions.collectAsStateWithLifecycle()
+    val error by vm.writeError.collectAsStateWithLifecycle()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("✨ اكتب لي النص") },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = idea,
+                    onValueChange = { idea = it.take(300) },
+                    label = { Text("فكرة الرسالة") },
+                    placeholder = { Text("مثل: خصم 20% على الكعب العالي حتى الخميس") },
+                    minLines = 2,
+                    enabled = !writing,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (writing) LinearProgressIndicator(Modifier.fillMaxWidth())
+                error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                if (suggestions.isNotEmpty()) {
+                    Text("اختر صيغة:", style = MaterialTheme.typography.labelLarge)
+                    suggestions.forEach { s ->
+                        GlassCard(Modifier.fillMaxWidth(), elevation = 2.dp, contentPadding = 12.dp, onClick = {
+                            vm.useSuggestion(s)
+                            onDismiss()
+                        }) {
+                            if (s.title.isNotBlank()) Text(s.title, style = MaterialTheme.typography.titleSmall)
+                            Text(s.body, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.writeText(idea) }, enabled = !writing && idea.trim().length >= 3) {
+                Text(if (suggestions.isEmpty()) "اكتب" else "صيغ أخرى")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }
 
 private const val PICK_PRODUCT = "product"

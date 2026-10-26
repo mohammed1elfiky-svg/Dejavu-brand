@@ -96,6 +96,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.material3.LinearProgressIndicator
+import com.dejavu.core.admin.OffersRepository
+import com.dejavu.core.admin.ProductDraft
+import com.dejavu.core.data.userMessage
+import com.dejavu.core.network.ApiException
+import com.dejavu.core.ui.media.rememberImagePicker
+import java.math.RoundingMode
 
 /** A non-negative amount with up to 2 decimals, as the API accepts. */
 internal fun isAmount(v: String) = v.trim().toBigDecimalOrNull()?.let { it.signum() >= 0 && it.scale() <= 2 } == true
@@ -170,7 +177,11 @@ data class ProductForm(
     val variantColors: List<String> = emptyList(),
 )
 
-class ProductFormViewModel(private val productId: String?, private val repo: InventoryRepository) : BaseViewModel() {
+class ProductFormViewModel(
+    private val productId: String?,
+    private val repo: InventoryRepository,
+    private val offerRepo: OffersRepository,
+) : BaseViewModel() {
     private val _categories = MutableStateFlow<Load<List<Pair<AdminCategory, Int>>>>(Load.Loading)
     val categories = _categories.asStateFlow()
     private val _brands = MutableStateFlow<List<AdminBrand>>(emptyList())
@@ -198,6 +209,10 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
     private val _saved = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val saved = _saved.asSharedFlow()
     val isNew = productId == null
+    private val _drafting = MutableStateFlow(false)
+
+    /** True while the AI looks at a photo (product draft / description suggestion). */
+    val drafting = _drafting.asStateFlow()
 
     fun load() {
         viewModelScope.launch { _categories.value = repo.categories().toLoad() }
@@ -297,6 +312,56 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
             _uploading.value -= 1
         }
     }
+
+    /** New product: uploads the photo, adds it to the gallery and fills the empty fields from what the AI sees. */
+    fun draftFromPhoto(bytes: ByteArray) {
+        if (_drafting.value) return
+        _drafting.value = true
+        viewModelScope.launch {
+            repo.uploadImage(bytes).orSay()?.let { file ->
+                edit { f ->
+                    if (f.images.any { it.url == file.url } || f.images.size >= MAX_IMAGES) f
+                    else f.copy(images = f.images + ImageUrl(file.url))
+                }
+                offerRepo.productDraft(file.id).fold(
+                    { d ->
+                        edit { f -> f.fillFrom(d) }
+                        say("راجع البيانات قبل الحفظ")
+                    },
+                    { e -> say(aiError(e)) },
+                )
+            }
+            _drafting.value = false
+        }
+    }
+
+    /** The stored-file id of the first photo uploaded here ("…/files/<id>"); null for other links. */
+    fun firstPhotoFileId(f: ProductForm): String? =
+        f.images.firstOrNull()?.url?.let { FILE_ID.find(it)?.groupValues?.get(1) }
+
+    /** Suggests a description from the first photo (replaces the current one). */
+    fun suggestDescription() {
+        val id = firstPhotoFileId(_form.value) ?: return say("أضف صورة للمنتج أولاً")
+        if (_drafting.value) return
+        _drafting.value = true
+        viewModelScope.launch {
+            offerRepo.productDraft(id).fold(
+                { d ->
+                    if (d.descriptionAr.isBlank()) {
+                        say("لم يقترح الذكاء الاصطناعي وصفاً، جرّب صورة أوضح")
+                    } else {
+                        edit { it.copy(descriptionAr = d.descriptionAr) }
+                        say("راجع الوصف قبل الحفظ")
+                    }
+                },
+                { e -> say(aiError(e)) },
+            )
+            _drafting.value = false
+        }
+    }
+
+    private fun aiError(e: Throwable): String =
+        if ((e as? ApiException)?.status == 503) "أضف مفتاح Gemini في إعدادات الخادم" else e.userMessage()
 
     fun save() {
         val f = _form.value
@@ -402,6 +467,23 @@ class ProductFormViewModel(private val productId: String?, private val repo: Inv
     }
 }
 
+private val FILE_ID = Regex("""/files/([A-Za-z0-9_-]+)/?(?:[?#].*)?$""")
+
+/** Fills only the fields still empty with the AI's suggestions. */
+private fun ProductForm.fillFrom(d: ProductDraft): ProductForm {
+    val heel = d.heelHeightCm
+        ?.takeIf { it > 0 && it < 100 }
+        ?.toBigDecimal()?.setScale(1, RoundingMode.HALF_UP)?.stripTrailingZeros()?.toPlainString()
+        ?.takeIf { isHeelHeight(it) }
+    return copy(
+        nameAr = nameAr.ifBlank { d.nameAr.trim() },
+        descriptionAr = descriptionAr.ifBlank { d.descriptionAr.trim() },
+        categoryId = categoryId ?: d.categoryId,
+        brandId = brandId ?: d.brandId,
+        heelHeight = heelHeight.ifBlank { heel.orEmpty() },
+    )
+}
+
 /** Heel height in cm: up to two digits and one decimal, e.g. 7 or 7.5. */
 private fun isHeelHeight(v: String) = Regex("""\d{1,2}(\.\d)?""").matches(v.trim())
 
@@ -453,7 +535,7 @@ private fun AdminProduct.toForm() = ProductForm(
 /** Create ([productId] null) or edit a product. */
 @Composable
 fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) -> Unit) {
-    val vm = adminViewModel(key = "product-form:${productId ?: "new"}") { ProductFormViewModel(productId, it.inventory) }
+    val vm = adminViewModel(key = "product-form:${productId ?: "new"}") { ProductFormViewModel(productId, it.inventory, it.offers) }
     val categories by vm.categories.collectAsStateWithLifecycle()
     val brands by vm.brands.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -462,6 +544,9 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     val busy by vm.busy.collectAsStateWithLifecycle()
     val uploading by vm.uploading.collectAsStateWithLifecycle()
     val videoUploading by vm.videoUploading.collectAsStateWithLifecycle()
+    val drafting by vm.drafting.collectAsStateWithLifecycle()
+    var choosingDraftPhoto by remember { mutableStateOf(false) }
+    val draftPicker = rememberImagePicker { bytes -> vm.draftFromPhoto(bytes) }
     val snackbar = remember { SnackbarHostState() }
     var scanRow by rememberSaveable { mutableStateOf(-1) }
     var managingCategories by rememberSaveable { mutableStateOf(false) }
@@ -505,6 +590,12 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                             minLines = 2,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (!vm.isNew && vm.firstPhotoFileId(form) != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (drafting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                TextButton(onClick = vm::suggestDescription, enabled = !drafting) { Text("✨ اقتراح وصف") }
+                            }
+                        }
                         OutlinedTextField(
                             value = form.instagramUrl,
                             onValueChange = { v -> vm.edit { it.copy(instagramUrl = v.trim()) } },
@@ -597,6 +688,27 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                     }
                 }
                 item { SectionTitle("الصور") }
+                if (vm.isNew) {
+                    item {
+                        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            OutlinedButton(
+                                onClick = { choosingDraftPhoto = true },
+                                enabled = !drafting && !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("✨ تعبئة من صورة") }
+                            if (drafting) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text("يحلّل الذكاء الاصطناعي الصورة…", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                            } else {
+                                Text(
+                                    "صوّر المنتج ليقترح الاسم والوصف والقسم والماركة، وتُضاف الصورة لصور المنتج",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Lux.InkSoft,
+                                )
+                            }
+                        }
+                    }
+                }
                 item {
                     ProductGallery(
                         images = form.images,
@@ -620,6 +732,25 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                 }
             }
         }
+    }
+    if (choosingDraftPhoto) {
+        AlertDialog(
+            onDismissRequest = { choosingDraftPhoto = false },
+            title = { Text("✨ تعبئة من صورة") },
+            text = { Text("اختر صورة واضحة للمنتج وحده") },
+            confirmButton = {
+                TextButton(onClick = {
+                    choosingDraftPhoto = false
+                    draftPicker.fromCamera()
+                }) { Text("الكاميرا") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    choosingDraftPhoto = false
+                    draftPicker.fromGallery()
+                }) { Text("من المعرض") }
+            },
+        )
     }
     if (managingCategories) {
         val close = {

@@ -86,6 +86,7 @@ import com.dejavu.core.data.CatalogRepository
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.SessionState
 import com.dejavu.core.model.StoreProduct
+import com.dejavu.core.model.PreOrder
 import com.dejavu.core.model.StoreVariant
 import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
@@ -240,6 +241,58 @@ class ProductViewModel(
         }
     }
 
+    /** Reserving pieces of the next shipment, and the pre-order just made (for the success dialog). */
+    private val _preOrdering = MutableStateFlow(false)
+    val preOrdering = _preOrdering.asStateFlow()
+    private val _preOrdered = MutableStateFlow<PreOrder?>(null)
+    val preOrdered = _preOrdered.asStateFlow()
+
+    /** Signed out: asks to sign in and returns false. */
+    fun canPreOrder(): Boolean {
+        if (session.isLoggedIn) return true
+        _events.tryEmit(Event.LoginRequired)
+        return false
+    }
+
+    fun preOrder(variantId: String, quantity: Int, done: () -> Unit) {
+        if (!canPreOrder() || _preOrdering.value) return
+        _preOrdering.value = true
+        viewModelScope.launch {
+            extras.preOrder(variantId, quantity).orSay()?.let {
+                _preOrdered.value = it
+                done()
+                // The open quantity of the shipment went down.
+                catalog.product(slug).onSuccess { p -> _product.value = Load.Ready(p) }
+            }
+            _preOrdering.value = false
+        }
+    }
+
+    fun clearPreOrdered() {
+        _preOrdered.value = null
+    }
+
+    /** One piece of each product of a set offer. */
+    fun addSet(variantIds: List<String>) {
+        if (!session.isLoggedIn) {
+            _events.tryEmit(Event.LoginRequired)
+            return
+        }
+        if (_selection.value.adding) return
+        _selection.value = _selection.value.copy(adding = true)
+        viewModelScope.launch {
+            var ok = true
+            for (id in variantIds) {
+                if (cart.add(id, 1).orSay() == null) {
+                    ok = false
+                    break
+                }
+            }
+            if (ok) _events.tryEmit(Event.Added)
+            _selection.value = _selection.value.copy(adding = false)
+        }
+    }
+
     fun selectedVariant(): StoreVariant? {
         val p = (product.value as? Load.Ready)?.value ?: return null
         val s = _selection.value
@@ -266,6 +319,9 @@ fun ProductScreen(
     val watched by vm.watched.collectAsStateWithLifecycle()
     val watching by vm.watching.collectAsStateWithLifecycle()
     val related by vm.related.collectAsStateWithLifecycle()
+    val preOrdering by vm.preOrdering.collectAsStateWithLifecycle()
+    val preOrdered by vm.preOrdered.collectAsStateWithLifecycle()
+    var preOrderFor by remember { mutableStateOf<StoreVariant?>(null) }
     val container = appContainer()
     val config by container.extras.config.collectAsStateWithLifecycle()
     val wishlistIds by container.extras.wishlistIds.collectAsStateWithLifecycle()
@@ -331,7 +387,12 @@ fun ProductScreen(
                             if (p.merchantPrice) Text("سعر التاجر", style = MaterialTheme.typography.labelSmall, color = Liquid.GoldDeep)
                             PriceText(variant?.price ?: p.basePrice, variant?.compareAtPrice ?: p.compareAtPrice)
                         }
-                        if (variant != null && !variant.inStock) {
+                        if (variant != null && variant.preOrderable()) {
+                            // Sold out, but more is on its way: reserve from the next shipment.
+                            Button(onClick = { if (vm.canPreOrder()) preOrderFor = variant }, enabled = !preOrdering) {
+                                Text("احجزي من الشحنة القادمة")
+                            }
+                        } else if (variant != null && !variant.inStock) {
                             // Out of stock: offer a back-in-stock notification instead.
                             if (variant.id in watched) {
                                 Column(horizontalAlignment = Alignment.End) {
@@ -446,6 +507,14 @@ fun ProductScreen(
                             specs.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         }
                     }
+                    ProductDeals(
+                        product = p,
+                        selected = variant,
+                        known = (related.similar + related.alsoBought).distinctBy { it.id },
+                        openProduct = openProduct,
+                        onAddSet = vm::addSet,
+                        adding = selection.adding,
+                    )
                     ReviewsSection(reviewsVm, openAll = openReviews)
                 }
                 ProductStrip("يناسبه أيضاً", related.similar, openProduct)
@@ -455,6 +524,16 @@ fun ProductScreen(
             }
         }
     }
+
+    preOrderFor?.let { v ->
+        PreOrderDialog(
+            variant = v,
+            busy = preOrdering,
+            onConfirm = { qty -> vm.preOrder(v.id, qty) { preOrderFor = null } },
+            onDismiss = { preOrderFor = null },
+        )
+    }
+    preOrdered?.let { done -> PreOrderDoneDialog(done, onDismiss = vm::clearPreOrdered) }
 }
 
 /** Photos of the chosen [color] first (then the video); a new color starts again from its first photo. */
@@ -534,6 +613,10 @@ private fun ColorDot(hex: String?, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun Availability(variant: StoreVariant?) {
+    if (variant != null && variant.preOrderable()) {
+        IncomingInfo(variant)
+        return
+    }
     val (text, color) = when {
         variant == null -> "اختر اللون والمقاس" to MaterialTheme.colorScheme.onSurfaceVariant
         !variant.inStock -> "نفدت الكمية" to MaterialTheme.colorScheme.error

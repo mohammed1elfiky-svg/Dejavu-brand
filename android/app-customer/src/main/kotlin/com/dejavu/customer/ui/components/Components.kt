@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dejavu.core.model.Money
 import com.dejavu.core.model.StoreProduct
+import com.dejavu.core.model.ProductDeal
 import com.dejavu.core.ui.PriceText
 import com.dejavu.core.ui.ProductImage
 import com.dejavu.core.ui.Tag
@@ -86,6 +87,7 @@ fun ProductCard(product: StoreProduct, onClick: () -> Unit, modifier: Modifier =
                     Tag("نفدت الكمية", Color.Black.copy(alpha = 0.7f))
                 } else {
                     product.discountBadge()?.let { Tag(it, Gold) }
+                    product.deals.firstOrNull()?.let { Tag(dealLabel(it), Liquid.Success) }
                     if (product.isNew) Tag("جديد", Liquid.Success)
                     fewLeftText(product.fewLeft)?.let { Tag(it, Liquid.Danger) }
                 }
@@ -222,6 +224,17 @@ fun StoreProduct.discountPercent(): Int? {
     promotion?.percent?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }?.let { return it.setScale(0, RoundingMode.HALF_UP).toInt() }
     val cheapest = variants.minByOrNull { Money.parse(it.price) }
     return Money.discountPercent(cheapest?.price ?: basePrice, cheapest?.compareAtPrice ?: compareAtPrice)
+}
+
+/**
+ * Short label of a quantity offer for badges: "قطعة + قطعة مجاناً", "اشترِ 2 واحصلي على قطعة مجاناً",
+ * "طقم بسعر 250 ر.س" (the set price in the display currency).
+ */
+fun dealLabel(deal: ProductDeal): String = when {
+    deal.type == "BUNDLE" -> deal.bundlePrice?.let { "طقم بسعر ${Money.format(it)}" } ?: deal.label
+    deal.buyQty == 1 && deal.freeQty == 1 -> "قطعة + قطعة مجاناً"
+    deal.type == "BUY_X_GET_Y" -> Numerals.of("اشترِ ${deal.buyQty} واحصلي على ${if (deal.freeQty == 1) "قطعة" else "${deal.freeQty} قطع"} مجاناً")
+    else -> deal.label
 }
 
 /** "خصم 20%" on promoted or reduced products, null otherwise. */

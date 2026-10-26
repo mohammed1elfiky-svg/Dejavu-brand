@@ -65,6 +65,9 @@ import com.dejavu.core.data.StoreExtrasRepository
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.customer.ui.components.ProductStrip
 import com.dejavu.core.model.Cart
+import com.dejavu.core.model.AppliedDeal
+import com.dejavu.core.model.Numerals
+import java.math.BigDecimal
 import com.dejavu.core.model.CartItem
 import com.dejavu.core.model.Money
 import com.dejavu.core.ui.BaseViewModel
@@ -185,6 +188,9 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, suggestion
         items(cart.items, key = { it.variantId }) { item ->
             CartRow(item, busy, onOpen = { openProduct(item.slug) }, onQuantity = { vm.setQuantity(item, it) }, onRemove = { vm.remove(item) })
         }
+        if (cart.deals.isNotEmpty()) {
+            item(key = "deals") { AppliedDeals(cart.deals) }
+        }
         item {
             GlassCard(Modifier.fillMaxWidth()) {
                 Column {
@@ -228,6 +234,33 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, suggestion
         val others = suggestions.filter { it.slug !in inCart }
         if (others.isNotEmpty()) {
             item(key = "suggestions") { ProductStrip("قد يعجبك أيضاً", others, openProduct) }
+        }
+    }
+}
+
+/** The quantity offers that applied, in green, and what they saved. */
+@Composable
+private fun AppliedDeals(deals: List<AppliedDeal>) {
+    GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("عروض مطبّقة على سلتك", style = MaterialTheme.typography.titleSmall, color = Success, fontWeight = FontWeight.Bold)
+            deals.forEach { d ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        Numerals.of("🎁 ${d.name}" + if (d.times > 1) " ×${d.times}" else ""),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Success,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("−${Money.format(d.discount)}", style = MaterialTheme.typography.bodyMedium, color = Success, fontWeight = FontWeight.Bold)
+                }
+            }
+            val saved = deals.fold(BigDecimal.ZERO) { acc, d -> acc + Money.parse(d.discount) }
+            HorizontalDivider(color = Success.copy(alpha = 0.25f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("وفّرتِ من العروض", style = MaterialTheme.typography.titleSmall, color = Success, modifier = Modifier.weight(1f))
+                Text(Money.format(saved), style = MaterialTheme.typography.titleSmall, color = Success, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

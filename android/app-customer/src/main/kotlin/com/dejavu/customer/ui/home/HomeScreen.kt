@@ -191,6 +191,12 @@ fun HomeScreen(
                     item { SectionTitle("مختارات Dejavu", "عرض الكل") { openProducts("مختارات Dejavu", null, null, true) } }
                     item { ProductRow(data.featured, openProduct) }
                 }
+                // Quantity offers ("قطعة + قطعة مجاناً", sets) among what is already loaded.
+                val offers = (data.featured + data.newest).filter { it.deals.isNotEmpty() && it.inStock }.distinctBy { it.id }
+                if (offers.isNotEmpty()) {
+                    item { SectionTitle("عروض القطع 🎁") }
+                    item { ProductRow(offers, openProduct) }
+                }
                 item { AdBanner(AdPlacement.HOME, Modifier.padding(vertical = 8.dp)) }
                 item { SectionTitle("وصل حديثاً", "عرض الكل") { openProducts("وصل حديثاً", null, null, false) } }
                 item { ProductRow(data.newest, openProduct) }

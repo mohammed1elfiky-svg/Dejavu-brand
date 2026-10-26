@@ -333,6 +333,7 @@ fun DejavuNavHost() {
                     wishlist = { nav.navigate(Routes.WISHLIST) },
                     about = { nav.navigate(Routes.ABOUT) },
                     chat = { nav.navigate(Routes.CHAT) },
+                    preOrders = { nav.navigate(Routes.PRE_ORDERS) },
                 )
             }
             composable(Routes.WISHLIST) {

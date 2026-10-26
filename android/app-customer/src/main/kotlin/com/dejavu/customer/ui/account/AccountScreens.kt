@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
@@ -131,6 +132,7 @@ fun AccountScreen(
     wishlist: () -> Unit = {},
     about: () -> Unit = {},
     chat: () -> Unit = {},
+    preOrders: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
@@ -186,6 +188,7 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
                     MenuRow(Icons.Filled.Notifications, "تنبيهات التوفر", stockAlerts)
                     MenuRow(Icons.Filled.Favorite, "المفضلة", wishlist)
+                    MenuRow(Icons.Filled.DateRange, "حجوزاتي المسبقة", preOrders)
                     MenuHeader("المتجر")
                     if (config.chat.enabled) MenuRow(Icons.Filled.Face, "مساعد التسوق", chat)
                     MenuRow(Icons.Filled.Info, "عن المتجر", about)

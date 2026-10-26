@@ -47,8 +47,8 @@ fi
 
 docker build -t dejavu-api:local ../backend
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-(crontab -l 2>/dev/null | grep -v backup.sh; echo "0 3 * * * cd $DIR/deploy && ./backup.sh") | crontab -
 chmod +x backup.sh
+(crontab -l 2>/dev/null | grep -v backup.sh || true; echo "0 3 * * * cd $DIR/deploy && ./backup.sh") | crontab -
 
 echo
 echo "Done. API: https://$DOMAIN/api/v1/   (health: https://$DOMAIN/api/v1/health)"

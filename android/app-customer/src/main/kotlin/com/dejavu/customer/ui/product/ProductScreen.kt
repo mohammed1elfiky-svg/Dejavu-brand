@@ -130,6 +130,10 @@ class ProductViewModel(
     private val _related = MutableStateFlow(RelatedProducts())
     val related = _related.asStateFlow()
 
+    /** The other products of this product's offers (sets and "buy X get Y"). */
+    private val _offerProducts = MutableStateFlow<List<StoreProduct>>(emptyList())
+    val offerProducts = _offerProducts.asStateFlow()
+
     /** The full-screen ad counter runs once per opening of this page. */
     var adCounted = false
 
@@ -205,6 +209,8 @@ class ProductViewModel(
                 val first = p.variants.firstOrNull { it.inStock } ?: p.variants.firstOrNull()
                 _selection.value = Selection(color = first?.color, size = first?.size)
                 extras.related(slug).onSuccess { _related.value = it }
+                val others = p.deals.flatMap { it.productIds }.filter { it != p.id }.distinct()
+                if (others.isNotEmpty()) extras.productsByIds(others).onSuccess { _offerProducts.value = it }
             }
         }
     }
@@ -319,6 +325,7 @@ fun ProductScreen(
     val watched by vm.watched.collectAsStateWithLifecycle()
     val watching by vm.watching.collectAsStateWithLifecycle()
     val related by vm.related.collectAsStateWithLifecycle()
+    val offerProducts by vm.offerProducts.collectAsStateWithLifecycle()
     val preOrdering by vm.preOrdering.collectAsStateWithLifecycle()
     val preOrdered by vm.preOrdered.collectAsStateWithLifecycle()
     var preOrderFor by remember { mutableStateOf<StoreVariant?>(null) }
@@ -510,7 +517,7 @@ fun ProductScreen(
                     ProductDeals(
                         product = p,
                         selected = variant,
-                        known = (related.similar + related.alsoBought).distinctBy { it.id },
+                        known = (offerProducts + related.similar + related.alsoBought).distinctBy { it.id },
                         openProduct = openProduct,
                         onAddSet = vm::addSet,
                         adding = selection.adding,

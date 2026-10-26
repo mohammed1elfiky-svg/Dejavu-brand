@@ -65,7 +65,7 @@ internal fun StoreVariant.preOrderable(): Boolean = (!inStock || availableQty <=
 
 /**
  * The quantity offers on this product. [known] are products already loaded on the page
- * (related ones) used to show the other products of the offer; the API has no lookup by id.
+ * (loaded by id, plus related ones) used to show the other products of the offer.
  * [onAddSet] gets the variant ids of one piece of each set product, offered only when every
  * product of the set is known and has a single in-stock option (otherwise the shopper opens
  * each product and picks the size).

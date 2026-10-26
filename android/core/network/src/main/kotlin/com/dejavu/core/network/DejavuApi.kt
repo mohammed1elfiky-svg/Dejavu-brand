@@ -245,6 +245,9 @@ interface DejavuApi {
     @GET("store/products/{slug}/related")
     suspend fun related(@Path("slug") slug: String): com.dejavu.core.model.RelatedProducts
 
+    @GET("store/products/by-ids")
+    suspend fun productsByIds(@Query("ids") ids: String): List<StoreProduct>
+
     @GET("store/wishlist")
     suspend fun wishlist(): List<StoreProduct>
 

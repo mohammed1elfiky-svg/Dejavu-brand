@@ -143,6 +143,14 @@ export class StoreCatalogController {
     return this.catalog.storeProducts(q, customerOf(u), deviceId);
   }
 
+  /** Products by id (e.g. the other pieces of a set offer), comma separated, at most 50. */
+  @Get('products/by-ids')
+  async byIds(@Query('ids') ids: string | undefined, @CurrentUser() u?: AuthPrincipal) {
+    await this.catalog.storeGate(customerOf(u));
+    const list = (ids ?? '').split(',').map((s) => s.trim()).filter((s) => /^[0-9a-f-]{36}$/i.test(s)).slice(0, 50);
+    return this.catalog.storeProductsByIds(list, customerOf(u));
+  }
+
   @Get('products/:slug')
   async product(@Param('slug') slug: string, @CurrentUser() u?: AuthPrincipal) {
     await this.catalog.storeGate(customerOf(u));

@@ -79,6 +79,9 @@ describe('Round 6 (e2e)', () => {
     await http.post('/admin/deals', { name: 'طقم الحذاء والشنطة', type: 'BUNDLE', bundlePrice: '200', productIds: [shoe.id, bag.id] }, admin).expect(201);
     const q = (await http.post('/admin/pos/quote', { items: [{ variantId: shoe.variants[0].id, quantity: 1 }, { variantId: bag.variants[0].id, quantity: 1 }] }, admin).expect(200)).body;
     expect(q).toMatchObject({ dealDiscount: '50', total: '200' });
+    const byIds = (await http.get(`/store/products/by-ids?ids=${bag.id},${shoe.id},nope`).expect(200)).body as { id: string; deals: { type: string }[] }[];
+    expect(byIds.map((x) => x.id)).toEqual([bag.id, shoe.id]);
+    expect(byIds[0].deals[0].type).toBe('BUNDLE');
 
     const tee = await product('بلوزة ٢+١', 40, [{ size: 'S', qty: 9 }]);
     await http.post('/admin/deals', { name: 'قطعتين والثالثة مجاناً', type: 'BUY_X_GET_Y', buyQty: 2, freeQty: 1, productIds: [tee.id], online: false }, admin).expect(201);

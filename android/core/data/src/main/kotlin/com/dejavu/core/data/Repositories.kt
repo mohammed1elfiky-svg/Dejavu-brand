@@ -401,6 +401,10 @@ class StoreExtrasRepository(private val api: DejavuApi) {
 
     suspend fun related(slug: String) = apiCall { api.related(slug) }
 
+    /** Products by id (the other pieces of an offer). */
+    suspend fun productsByIds(ids: Collection<String>): Result<List<StoreProduct>> =
+        if (ids.isEmpty()) Result.success(emptyList()) else apiCall { api.productsByIds(ids.joinToString(",")) }
+
     suspend fun cartSuggestions() = apiCall { api.cartSuggestions() }
 
     private val _wishlist = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())

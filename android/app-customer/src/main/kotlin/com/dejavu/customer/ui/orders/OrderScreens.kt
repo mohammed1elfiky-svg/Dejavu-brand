@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
@@ -417,29 +418,103 @@ private fun decodeScaled(bytes: ByteArray, maxSide: Int = 2048): ImageBitmap? {
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
 }
 
+/** One step of the order tracking stepper. */
+private data class TrackStep(val title: String, val at: String?, val state: StepState)
+
+private enum class StepState { DONE, CURRENT, TODO, FAILED }
+
+/** The stepper's steps: placed → confirmed → preparing → shipped → delivered, or a red end when cancelled / not received. */
+private fun trackSteps(order: OrderDetail): List<TrackStep> {
+    val flow = listOf(OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED)
+    val titles = listOf("تم الطلب", "تم التأكيد", "قيد التجهيز", "تم الشحن", "تم التسليم")
+    // When each status was reached (the latest time, should it repeat).
+    val reached = order.statusHistory.groupBy { it.toStatus }.mapValues { (_, v) -> v.maxOf { it.createdAt } }
+    val shipment = order.shipments.firstOrNull()
+    fun dateOf(status: OrderStatus): String? = when (status) {
+        OrderStatus.PENDING -> order.placedAt
+        OrderStatus.SHIPPED -> reached[status] ?: shipment?.shippedAt
+        OrderStatus.DELIVERED -> reached[status] ?: order.deliveredAt ?: shipment?.deliveredAt ?: reached[OrderStatus.COMPLETED]
+        else -> reached[status]
+    }
+    val ended = order.status == OrderStatus.CANCELLED || order.status == OrderStatus.RETURNED
+    if (!ended) {
+        val current = if (order.status == OrderStatus.COMPLETED) flow.lastIndex else flow.indexOf(order.status).coerceAtLeast(0)
+        return flow.mapIndexed { i, status ->
+            val state = when {
+                i < current -> StepState.DONE
+                i == current -> if (i == flow.lastIndex) StepState.DONE else StepState.CURRENT
+                else -> StepState.TODO
+            }
+            TrackStep(titles[i], if (i <= current) dateOf(status) else null, state)
+        }
+    }
+    // Cancelled or not received: the steps it got through, then the red end.
+    val last = flow.indices.filter { i -> i == 0 || flow[i] in reached }.maxOrNull() ?: 0
+    val through = (0..last).map { i -> TrackStep(titles[i], dateOf(flow[i]), StepState.DONE) }
+    val endAt = reached[order.status] ?: order.cancelledAt.takeIf { order.status == OrderStatus.CANCELLED }
+    val endTitle = if (order.status == OrderStatus.CANCELLED) "تم إلغاء الطلب" else "لم يتم الاستلام"
+    return through + TrackStep(endTitle, endAt, StepState.FAILED)
+}
+
+/** Vertical tracking stepper: done steps in gold with a check, the current one glowing, the rest faded. */
 @Composable
 private fun Timeline(order: OrderDetail) {
-    val steps = listOf(OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED)
-    val reached = order.statusHistory.associate { it.toStatus to it.createdAt }
-    val ended = order.status == OrderStatus.CANCELLED || order.status == OrderStatus.RETURNED
+    val steps = remember(order) { trackSteps(order) }
     GlassCard(Modifier.fillMaxWidth()) {
+        Text("تتبّع الطلب", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
         Column {
-            val shown = if (ended) steps.filter { it in reached } + order.status else steps
-            shown.forEachIndexed { i, step ->
-                val at = reached[step]
-                val done = at != null
+            steps.forEachIndexed { i, step ->
+                val danger = MaterialTheme.colorScheme.error
+                val dotColor = when (step.state) {
+                    StepState.DONE, StepState.CURRENT -> Liquid.Gold
+                    StepState.FAILED -> danger
+                    StepState.TODO -> Liquid.InkSoft.copy(alpha = 0.35f)
+                }
+                val next = steps.getOrNull(i + 1)
+                val lineColor = when {
+                    next == null -> Color.Transparent
+                    next.state == StepState.FAILED -> danger.copy(alpha = 0.5f)
+                    next.state == StepState.TODO -> Liquid.InkSoft.copy(alpha = 0.25f)
+                    else -> Liquid.Gold.copy(alpha = 0.7f)
+                }
                 Row(verticalAlignment = Alignment.Top) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            Modifier.size(14.dp).clip(CircleShape)
-                                .background(if (done) step.color() else MaterialTheme.colorScheme.outline),
-                        )
-                        if (i < shown.lastIndex) Box(Modifier.width(2.dp).height(28.dp).background(if (done) Liquid.Gold.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline))
+                    Column(Modifier.width(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        when (step.state) {
+                            StepState.DONE -> Box(Modifier.size(24.dp).clip(CircleShape).background(Liquid.GoldBrush), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                            StepState.CURRENT -> Box(
+                                Modifier.size(24.dp).clip(CircleShape).background(Liquid.GoldPale),
+                                contentAlignment = Alignment.Center,
+                            ) { Box(Modifier.size(12.dp).clip(CircleShape).background(dotColor)) }
+                            StepState.FAILED -> Box(Modifier.size(24.dp).clip(CircleShape).background(danger), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                            StepState.TODO -> Box(Modifier.padding(top = 5.dp).size(14.dp).clip(CircleShape).background(dotColor))
+                        }
+                        if (next != null) Box(Modifier.width(2.dp).height(30.dp).background(lineColor))
                     }
                     Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(step.label, style = MaterialTheme.typography.bodyMedium, color = if (done) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (at != null) Text(formatDateTime(at), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.weight(1f).padding(top = 2.dp)) {
+                        Text(
+                            step.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (step.state == StepState.CURRENT || step.state == StepState.FAILED) FontWeight.Bold else FontWeight.Normal,
+                            color = when (step.state) {
+                                StepState.CURRENT -> Liquid.GoldDeep
+                                StepState.FAILED -> danger
+                                StepState.TODO -> MaterialTheme.colorScheme.onSurfaceVariant
+                                StepState.DONE -> Liquid.Ink
+                            },
+                        )
+                        step.at?.let { at ->
+                            val text = formatDateTime(at)
+                            if (text.isNotEmpty()) Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (step.state == StepState.CURRENT) {
+                            Text("المرحلة الحالية", style = MaterialTheme.typography.labelSmall, color = Liquid.GoldDeep)
+                        }
                     }
                 }
             }

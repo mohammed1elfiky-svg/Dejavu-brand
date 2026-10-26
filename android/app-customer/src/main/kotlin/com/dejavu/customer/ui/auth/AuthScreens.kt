@@ -326,15 +326,16 @@ class AuthViewModel(
 }
 
 @Composable
-fun LoginScreen(onBack: () -> Unit, loggedIn: () -> Unit, register: () -> Unit) =
-    AuthScreen(registering = false, onBack = onBack, done = loggedIn, switch = register)
+fun LoginScreen(onBack: () -> Unit, loggedIn: () -> Unit, register: () -> Unit, required: Boolean = false) =
+    AuthScreen(registering = false, onBack = onBack, done = loggedIn, switch = register, required = required)
 
 @Composable
-fun RegisterScreen(onBack: () -> Unit, registered: () -> Unit, login: () -> Unit) =
-    AuthScreen(registering = true, onBack = onBack, done = registered, switch = login)
+fun RegisterScreen(onBack: () -> Unit, registered: () -> Unit, login: () -> Unit, required: Boolean = false) =
+    AuthScreen(registering = true, onBack = onBack, done = registered, switch = login, required = required)
 
 @Composable
-private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Unit, switch: () -> Unit) {
+/** [required]: the store asks shoppers to sign in before browsing (no way back into the store). */
+private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Unit, switch: () -> Unit, required: Boolean = false) {
     val vm = appViewModel(key = "auth:$registering") { c ->
         AuthViewModel(c.session, registering, c.savedLogin, onRegistered = { code -> c.applyRegionCurrency(code, force = true) })
     }
@@ -350,13 +351,30 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
         else -> "تسجيل الدخول"
     }
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { BackTopBar(title, if (form.reset) vm::cancelReset else onBack) }) { padding ->
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            if (required && !form.reset) {
+                com.dejavu.core.ui.theme.GlassTopBar(title = { Text(title) })
+            } else {
+                BackTopBar(title, if (form.reset) vm::cancelReset else onBack)
+            }
+        },
+    ) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Dejavu", style = MaterialTheme.typography.headlineMedium, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
+            if (required) {
+                Text(
+                    "سجّل الدخول أو أنشئ حساباً جديداً لتصفّح المتجر",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
             GlassCard(Modifier.fillMaxWidth(), elevation = 16.dp, contentPadding = 20.dp) {
                 if (form.otpStep) {
                     OtpStep(vm, form, errors)

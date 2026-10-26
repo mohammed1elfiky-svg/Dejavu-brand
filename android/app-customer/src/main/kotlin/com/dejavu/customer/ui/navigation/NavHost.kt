@@ -1,6 +1,9 @@
 package com.dejavu.customer.ui.navigation
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -33,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import com.dejavu.core.model.Category
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -124,6 +129,30 @@ fun DejavuNavHost() {
     val session by container.session.state.collectAsStateWithLifecycle()
     val openOrder by container.openOrder.collectAsStateWithLifecycle()
     val openWallet by container.openWallet.collectAsStateWithLifecycle()
+    val config by container.extras.config.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    // The owner can ask shoppers to sign in before browsing: then only sign-in / sign-up show.
+    val signInFirst = config.requireLogin && session is SessionState.LoggedOut
+    val ready = backStack != null
+    LaunchedEffect(signInFirst, route, ready) {
+        if (!signInFirst || !ready) return@LaunchedEffect
+        if (route != Routes.LOGIN && route != Routes.REGISTER && route != Routes.SERVER) {
+            nav.navigate(Routes.LOGIN) {
+                popUpTo(nav.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+    /** After signing in: back where the shopper was, or into the store when sign-in came first. */
+    val afterSignIn: () -> Unit = {
+        if (config.requireLogin || !nav.popBackStack()) {
+            nav.navigate(Routes.HOME) {
+                popUpTo(nav.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
 
     // A notification tap or the payment page's "back to the app" link.
     LaunchedEffect(openOrder, session is SessionState.LoggedIn) {
@@ -134,10 +163,35 @@ fun DejavuNavHost() {
     }
     // A new-product notification tap (no sign-in needed to browse).
     val openProduct by container.openProduct.collectAsStateWithLifecycle()
-    LaunchedEffect(openProduct) {
+    LaunchedEffect(openProduct, signInFirst, ready) {
         val slug = openProduct ?: return@LaunchedEffect
+        if (signInFirst || !ready) return@LaunchedEffect
         nav.navigate(Routes.product(slug)) { launchSingleTop = true }
         container.productOpened()
+    }
+    // A review prompt ("how was your order?"): the product's reviews, to rate it.
+    val openReviews by container.openReviews.collectAsStateWithLifecycle()
+    LaunchedEffect(openReviews, signInFirst, ready) {
+        val slug = openReviews ?: return@LaunchedEffect
+        if (signInFirst || !ready) return@LaunchedEffect
+        nav.navigate(Routes.productReviews(slug)) { launchSingleTop = true }
+        container.reviewsOpened()
+    }
+    // An offer notification leading to a category: its products.
+    val openCategory by container.openCategory.collectAsStateWithLifecycle()
+    LaunchedEffect(openCategory, signInFirst, ready) {
+        val slug = openCategory ?: return@LaunchedEffect
+        if (signInFirst || !ready) return@LaunchedEffect
+        val title = container.catalog.categories().getOrNull()?.let { findCategory(it, slug) }?.nameAr ?: "المنتجات"
+        nav.navigate(Routes.products(title, category = slug)) { launchSingleTop = true }
+        container.categoryOpened()
+    }
+    // An offer notification leading to a web page: the browser.
+    val openUrl by container.openUrl.collectAsStateWithLifecycle()
+    LaunchedEffect(openUrl) {
+        val url = openUrl ?: return@LaunchedEffect
+        runCatching { uriHandler.openUri(url) }
+        container.urlOpened()
     }
     // A cart-reminder notification tap.
     val openCart by container.openCart.collectAsStateWithLifecycle()
@@ -160,7 +214,7 @@ fun DejavuNavHost() {
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (tabs.any { it.route == route }) {
+            if (!signInFirst && tabs.any { it.route == route }) {
                 FloatingGlassBar {
                     tabs.forEach { tab ->
                         GlassNavItem(
@@ -297,16 +351,18 @@ fun DejavuNavHost() {
             }
             composable(Routes.LOGIN) {
                 LoginScreen(
-                    onBack = { nav.popBackStack() },
-                    loggedIn = { nav.popBackStack() },
+                    onBack = { if (signInFirst) context.findActivity()?.finish() else nav.popBackStack() },
+                    loggedIn = afterSignIn,
                     register = { nav.navigate(Routes.REGISTER) { popUpTo(Routes.LOGIN) { inclusive = true } } },
+                    required = signInFirst,
                 )
             }
             composable(Routes.REGISTER) {
                 RegisterScreen(
-                    onBack = { nav.popBackStack() },
-                    registered = { nav.popBackStack() },
+                    onBack = { if (signInFirst) context.findActivity()?.finish() else nav.popBackStack() },
+                    registered = afterSignIn,
                     login = { nav.navigate(Routes.LOGIN) { popUpTo(Routes.REGISTER) { inclusive = true } } },
+                    required = signInFirst,
                 )
             }
             composable(Routes.SERVER) { ServerSettingsScreen(onBack = { nav.popBackStack() }) }
@@ -317,6 +373,8 @@ fun DejavuNavHost() {
                     openWallet = { nav.navigate(Routes.WALLET) { launchSingleTop = true } },
                     openProduct = { nav.navigate(Routes.product(it)) },
                     openCart = { nav.switchTab(Routes.CART) },
+                    openReviews = { nav.navigate(Routes.productReviews(it)) },
+                    openCategory = { container.requestCategory(it) },
                 )
             }
             composable(Routes.WALLET) {
@@ -351,6 +409,21 @@ private fun AskNotificationPermission() {
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+}
+
+/** The category with [slug] anywhere in the tree. */
+private fun findCategory(list: List<Category>, slug: String): Category? {
+    for (c in list) {
+        if (c.slug == slug) return c
+        findCategory(c.children, slug)?.let { return it }
+    }
+    return null
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /** Bottom-tab navigation: one copy of each tab, state restored when coming back. */

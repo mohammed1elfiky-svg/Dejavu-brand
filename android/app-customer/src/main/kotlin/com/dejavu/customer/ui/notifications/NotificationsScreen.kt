@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -88,19 +89,28 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
         }
     }
 
-    /** Marks as read and reports what to open: the order it is about, the product (new or back in stock), the cart, or the wallet for top-up news. */
-    fun open(n: AppNotification, openOrder: (String) -> Unit, openWallet: () -> Unit, openProduct: (String) -> Unit, openCart: () -> Unit) {
+    /**
+     * Marks as read and reports what to open: the order it is about, the product (new or back in
+     * stock) or its reviews (rating prompt), an offer's category or web page, the cart, or the
+     * wallet for top-up news.
+     */
+    fun open(n: AppNotification, routes: NotificationRoutes) {
         if (!n.isRead) {
             markLocally(n.id)
             viewModelScope.launch { repo.markRead(n.id) }
         }
         val order = n.orderNumber?.takeIf { it.isNotBlank() } ?: n.data["orderNumber"]?.takeIf { it.isNotBlank() }
         val product = n.data["product"]?.takeIf { it.isNotBlank() } ?: n.data["productSlug"]?.takeIf { it.isNotBlank() }
+        val category = n.data["category"]?.takeIf { it.isNotBlank() }
+        val url = n.data["url"]?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
         when {
-            order != null -> openOrder(order)
-            product != null -> openProduct(product)
-            n.data["screen"] == "cart" -> openCart()
-            n.type == "WALLET" || n.data["topUp"] != null -> openWallet()
+            order != null -> routes.openOrder(order)
+            product != null && !n.data["review"].isNullOrBlank() -> routes.openReviews(product)
+            product != null -> routes.openProduct(product)
+            category != null -> routes.openCategory(category)
+            url != null -> routes.openUrl(url)
+            n.data["screen"] == "cart" -> routes.openCart()
+            n.type == "WALLET" || n.data["topUp"] != null -> routes.openWallet()
         }
     }
 
@@ -119,6 +129,17 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
     }
 }
 
+/** Where a notification tap can lead. */
+class NotificationRoutes(
+    val openOrder: (String) -> Unit,
+    val openWallet: () -> Unit,
+    val openProduct: (String) -> Unit,
+    val openCart: () -> Unit,
+    val openReviews: (String) -> Unit,
+    val openCategory: (String) -> Unit,
+    val openUrl: (String) -> Unit,
+)
+
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
@@ -126,7 +147,19 @@ fun NotificationsScreen(
     openWallet: () -> Unit,
     openProduct: (String) -> Unit = {},
     openCart: () -> Unit = {},
+    openReviews: (String) -> Unit = openProduct,
+    openCategory: (String) -> Unit = {},
 ) {
+    val uriHandler = LocalUriHandler.current
+    val routes = NotificationRoutes(
+        openOrder = openOrder,
+        openWallet = openWallet,
+        openProduct = openProduct,
+        openCart = openCart,
+        openReviews = openReviews,
+        openCategory = openCategory,
+        openUrl = { runCatching { uriHandler.openUri(it) } },
+    )
     val vm = appViewModel { NotificationsViewModel(it.notifications) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
@@ -158,7 +191,7 @@ fun NotificationsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(items, key = { it.id }) { n ->
-                    NotificationRow(n) { vm.open(n, openOrder, openWallet, openProduct, openCart) }
+                    NotificationRow(n) { vm.open(n, routes) }
                 }
                 if (hasMore) {
                     item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) { Text("عرض المزيد") } }

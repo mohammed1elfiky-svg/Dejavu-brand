@@ -78,7 +78,19 @@ class MainActivity : ComponentActivity() {
         // New-product or back-in-stock notification: open the product.
         val product = intent.getStringExtra(EXTRA_PRODUCT)?.takeIf { it.isNotBlank() } ?: intent.getStringExtra(EXTRA_PRODUCT_SLUG)
         if (!product.isNullOrBlank()) {
-            container.requestProduct(product)
+            // "How was your order?": straight to the product's reviews, to rate it.
+            if (!intent.getStringExtra(EXTRA_REVIEW).isNullOrBlank()) container.requestReviews(product) else container.requestProduct(product)
+            return
+        }
+        // Offer notification that leads to a category or a web page.
+        val category = intent.getStringExtra(EXTRA_CATEGORY)
+        if (!category.isNullOrBlank()) {
+            container.requestCategory(category)
+            return
+        }
+        val url = intent.getStringExtra(EXTRA_URL)
+        if (!url.isNullOrBlank()) {
+            container.requestUrl(url)
             return
         }
         // Cart reminder: open the cart.
@@ -100,5 +112,10 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_PRODUCT_SLUG = "productSlug"
         const val EXTRA_SCREEN = "screen"
         const val SCREEN_CART = "cart"
+
+        // Offers (campaigns) and review prompts.
+        const val EXTRA_CATEGORY = "category"
+        const val EXTRA_URL = "url"
+        const val EXTRA_REVIEW = "review"
     }
 }

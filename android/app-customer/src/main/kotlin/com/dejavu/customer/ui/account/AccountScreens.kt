@@ -38,6 +38,9 @@ import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -131,6 +134,7 @@ fun AccountScreen(
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
+    val config by container.extras.config.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("حسابي") }) }) { padding ->
@@ -181,6 +185,10 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
                     MenuRow(Icons.Filled.Notifications, "الإشعارات", notifications)
                     MenuRow(Icons.Filled.Notifications, "تنبيهات التوفر", stockAlerts)
+                    MenuRow(Icons.Filled.Favorite, "المفضلة", wishlist)
+                    MenuHeader("المتجر")
+                    if (config.chat.enabled) MenuRow(Icons.Filled.Face, "مساعد التسوق", chat)
+                    MenuRow(Icons.Filled.Info, "عن المتجر", about)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)
@@ -196,6 +204,9 @@ fun AccountScreen(
                             OutlinedButton(onClick = register, modifier = Modifier.fillMaxWidth()) { Text("إنشاء حساب جديد") }
                         }
                     }
+                    MenuHeader("المتجر")
+                    if (config.chat.enabled) MenuRow(Icons.Filled.Face, "مساعد التسوق", chat)
+                    MenuRow(Icons.Filled.Info, "عن المتجر", about)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
                     MenuRow(Icons.Filled.Settings, "الخادم", server)

@@ -189,6 +189,46 @@ class AppContainer(private val context: Context) {
         _openWallet.value = false
     }
 
+    private val _openCategory = MutableStateFlow<String?>(null)
+
+    /** Category (slug) whose products to show, requested from outside the UI (an offer notification tap). */
+    val openCategory = _openCategory.asStateFlow()
+
+    fun requestCategory(slug: String?) {
+        if (!slug.isNullOrBlank()) _openCategory.value = slug
+    }
+
+    fun categoryOpened() {
+        _openCategory.value = null
+    }
+
+    private val _openReviews = MutableStateFlow<String?>(null)
+
+    /** Product (slug) whose reviews to show, to rate it (a "how was your order?" notification tap). */
+    val openReviews = _openReviews.asStateFlow()
+
+    fun requestReviews(slug: String?) {
+        if (!slug.isNullOrBlank()) _openReviews.value = slug
+    }
+
+    fun reviewsOpened() {
+        _openReviews.value = null
+    }
+
+    private val _openUrl = MutableStateFlow<String?>(null)
+
+    /** Web link to open in the browser, requested from outside the UI (an offer notification tap). */
+    val openUrl = _openUrl.asStateFlow()
+
+    fun requestUrl(url: String?) {
+        val link = url?.trim()
+        if (!link.isNullOrEmpty() && (link.startsWith("http://") || link.startsWith("https://"))) _openUrl.value = link
+    }
+
+    fun urlOpened() {
+        _openUrl.value = null
+    }
+
     fun start() {
         // Channels are needed for push and for the background inbox checks alike.
         ensureChannels(context)

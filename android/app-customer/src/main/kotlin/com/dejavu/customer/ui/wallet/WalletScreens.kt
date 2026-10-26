@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Star
 import com.dejavu.core.ui.theme.Button
 import com.dejavu.core.ui.theme.GlassCard
 import com.dejavu.core.ui.theme.Liquid
@@ -71,6 +72,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +87,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.CurrencyRepository
+import com.dejavu.core.data.StoreExtrasRepository
 import com.dejavu.core.data.WalletRepository
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Currency
@@ -124,9 +127,29 @@ import java.math.BigDecimal
 
 data class WalletData(val wallet: Wallet, val topUps: List<TopUp>)
 
-class WalletViewModel(private val repo: WalletRepository) : BaseViewModel() {
+class WalletViewModel(private val repo: WalletRepository, private val extras: StoreExtrasRepository? = null) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<WalletData>>(Load.Loading)
     val state = _state.asStateFlow()
+
+    private val _redeeming = MutableStateFlow(false)
+    val redeeming = _redeeming.asStateFlow()
+
+    /** Adds a gift card's value (code GC-XXXX-XXXX) to the wallet; [done] closes the dialog. */
+    fun redeemGiftCard(code: String, done: () -> Unit) {
+        val store = extras ?: return
+        if (_redeeming.value) return
+        _redeeming.value = true
+        viewModelScope.launch {
+            store.redeemGiftCard(code)
+                .onSuccess { r ->
+                    say("تمت إضافة ${Money.plain(Money.parse(r.amount), Currency.of(r.currency))} إلى رصيدك 🎁")
+                    done()
+                    load()
+                }
+                .onFailure { say(it.userMessage()) }
+            _redeeming.value = false
+        }
+    }
 
     fun load() {
         if (_state.value !is Load.Ready) _state.value = Load.Loading
@@ -253,7 +276,9 @@ data class TopUpEdit(
 /** Balances per currency, top-up requests and recent movements. */
 @Composable
 fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
-    val vm = appViewModel { WalletViewModel(it.wallet) }
+    val vm = appViewModel { WalletViewModel(it.wallet, it.extras) }
+    val redeeming by vm.redeeming.collectAsStateWithLifecycle()
+    var giftCard by rememberSaveable { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
     val editing by vm.editing.collectAsStateWithLifecycle()
     val editReceipt by vm.editReceipt.collectAsStateWithLifecycle()
@@ -288,6 +313,12 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
                             Icon(Icons.Filled.Add, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("شحن الرصيد")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(onClick = { giftCard = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Filled.Star, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("استخدام بطاقة هدية")
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -334,6 +365,14 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
         )
     }
 
+    if (giftCard) {
+        GiftCardDialog(
+            busy = redeeming,
+            onRedeem = { code -> vm.redeemGiftCard(code) { giftCard = false } },
+            onDismiss = { if (!redeeming) giftCard = false },
+        )
+    }
+
     confirmDelete?.let { t ->
         AlertDialog(
             onDismissRequest = { if (!deleting) confirmDelete = null },
@@ -351,6 +390,48 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
             dismissButton = { TextButton(onClick = { confirmDelete = null }, enabled = !deleting) { Text("إلغاء") } },
         )
     }
+}
+
+/** Typing a gift card's code (GC-XXXX-XXXX): its value goes to the wallet. */
+@Composable
+private fun GiftCardDialog(busy: Boolean, onRedeem: (String) -> Unit, onDismiss: () -> Unit) {
+    var code by rememberSaveable { mutableStateOf("") }
+    val normalized = code.trim().uppercase().replace(" ", "")
+    val valid = Regex("^GC-[A-Z0-9]{4}-[A-Z0-9]{4}$").matches(normalized)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("استخدام بطاقة هدية") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "اكتب الكود المطبوع على البطاقة، وتُضاف قيمتها إلى رصيدك فوراً.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { v -> code = v.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(14) },
+                    label = { Text("كود البطاقة") },
+                    placeholder = { Text("GC-XXXX-XXXX") },
+                    singleLine = true,
+                    enabled = !busy,
+                    isError = normalized.length >= 12 && !valid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onRedeem(normalized) }, enabled = valid && !busy) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("استخدام", color = Liquid.GoldDeep)
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("إلغاء") } },
+    )
 }
 
 @Composable

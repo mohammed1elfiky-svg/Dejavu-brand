@@ -22,10 +22,14 @@ class PushService : DejavuMessagingService() {
             .putExtra(MainActivity.EXTRA_ORDER_NUMBER, data["orderNumber"])
             .putExtra(MainActivity.EXTRA_PRODUCT_SLUG, data["productSlug"])
             .putExtra(MainActivity.EXTRA_SCREEN, data["screen"])
+            .putExtra(MainActivity.EXTRA_CATEGORY, data["category"])
+            .putExtra(MainActivity.EXTRA_URL, data["url"])
+            .putExtra(MainActivity.EXTRA_REVIEW, data["review"])
         val tap = PendingIntent.getActivity(
             this,
             (
                 data["order"] ?: data["orderNumber"] ?: data["topUp"] ?: data["product"] ?: data["productSlug"]
+                    ?: data["category"] ?: data["url"]
                     ?: data["promotion"] ?: data["screen"] ?: data["notificationId"]
                 ).hashCode(),
             intent,

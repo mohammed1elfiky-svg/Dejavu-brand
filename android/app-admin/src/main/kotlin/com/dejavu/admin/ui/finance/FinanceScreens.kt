@@ -844,6 +844,57 @@ private fun ProductsTab(vm: ReportsViewModel, range: ReportRange) {
                     SummaryRow("الربح", Money.formatBase(t.grossProfit), valueColor = signColor(t.grossProfit))
                 }
             }
+            if (r.topProfit.isNotEmpty()) {
+                item { Text("الأكثر ربحاً", style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep, modifier = Modifier.padding(top = 12.dp)) }
+                itemsIndexed(r.topProfit, key = { _, t -> "profit:${t.productId}" }) { i, t ->
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ProductImage(t.imageUrl, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), t.nameAr)
+                            Column(Modifier.weight(1f)) {
+                                Text("${i + 1}. ${t.nameAr}", style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                                Text(
+                                    listOfNotNull(t.skuNumber?.let { "#$it" }, "${t.units} قطعة", "الإيراد ${Money.formatBase(t.revenue)}").joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Lux.InkSoft,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(Money.formatBase(t.grossProfit), style = MaterialTheme.typography.titleSmall, color = signColor(t.grossProfit))
+                                Text(marginText(t.margin), style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                            }
+                        }
+                    }
+                }
+            }
+            if (r.topCategories.isNotEmpty()) {
+                item { Text("الأقسام الأكثر مبيعاً", style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep, modifier = Modifier.padding(top = 12.dp)) }
+                itemsIndexed(r.topCategories, key = { _, c -> "cat:${c.categoryId}" }) { i, c ->
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${i + 1}. ${c.nameAr}", style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                                Text("${c.units} قطعة · ${c.products} صنف", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                            }
+                            Text(Money.formatBase(c.revenue), style = MaterialTheme.typography.titleSmall)
+                        }
+                    }
+                }
+            }
+            if (r.profitableCategories.isNotEmpty()) {
+                item { Text("الأقسام الأكثر ربحاً", style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep, modifier = Modifier.padding(top = 12.dp)) }
+                itemsIndexed(r.profitableCategories, key = { _, c -> "catProfit:${c.categoryId}" }) { i, c ->
+                    GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${i + 1}. ${c.nameAr}", style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                                Text("${c.units} قطعة · الإيراد ${Money.formatBase(c.revenue)}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                            }
+                            GoldPill { Text(marginText(c.margin), color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                        }
+                        SummaryRow("الربح", Money.formatBase(c.grossProfit), valueColor = signColor(c.grossProfit))
+                    }
+                }
+            }
             item {
                 Column(Modifier.padding(top = 12.dp)) {
                     Text("راكد", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)

@@ -106,6 +106,7 @@ import com.dejavu.customer.ui.components.BrandChip
 import com.dejavu.customer.ui.components.GlassBottomPanel
 import com.dejavu.customer.ui.components.goldChipColors
 import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.GlassIconButton
 import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.core.ui.theme.glass
 import com.dejavu.customer.ui.components.discountBadge
@@ -378,12 +379,12 @@ fun ProductScreen(
             val loaded = (state as? Load.Ready)?.value
             BackTopBar(loaded?.nameAr ?: "", onBack) {
                 if (loaded != null) {
-                    IconButton(onClick = {
+                    GlassIconButton(onClick = {
                         val price = vm.selectedVariant()?.price ?: loaded.basePrice
                         shareProduct(context, loaded, price, container.settings.baseUrl)
                     }) { Icon(Icons.Filled.Share, contentDescription = "مشاركة") }
                     val saved = loaded.id in wishlistIds
-                    IconButton(onClick = { toggleWishlist(loaded) }) {
+                    GlassIconButton(onClick = { toggleWishlist(loaded) }) {
                         Icon(
                             if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                             contentDescription = if (saved) "إزالة من المفضلة" else "أضف إلى المفضلة",

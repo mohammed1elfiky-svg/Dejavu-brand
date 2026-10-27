@@ -59,6 +59,7 @@ import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
+import com.dejavu.core.ui.theme.GlassIconButton
 import com.dejavu.customer.ui.components.BrandMark
 import com.dejavu.customer.ui.components.BrandAvatar
 import com.dejavu.customer.ui.components.CategoryAvatar
@@ -135,9 +136,9 @@ fun HomeScreen(
             GlassTopBar(
                 title = { BrandMark(height = 30.dp) },
                 actions = {
-                    IconButton(onClick = openWishlist) { Icon(Icons.Filled.FavoriteBorder, contentDescription = "المفضلة") }
+                    GlassIconButton(onClick = openWishlist) { Icon(Icons.Filled.FavoriteBorder, contentDescription = "المفضلة") }
                     if (loggedIn is SessionState.LoggedIn) {
-                        IconButton(onClick = openNotifications) {
+                        GlassIconButton(onClick = openNotifications) {
                             BadgedBox(badge = { if (unread > 0) Badge { Text(if (unread > 99) "99+" else "$unread") } }) {
                                 Icon(Icons.Filled.Notifications, contentDescription = "الإشعارات")
                             }

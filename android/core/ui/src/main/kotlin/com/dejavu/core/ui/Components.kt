@@ -61,7 +61,7 @@ fun BackTopBar(title: String, onBack: () -> Unit, actions: @Composable () -> Uni
     com.dejavu.core.ui.theme.GlassTopBar(
         title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
+            com.dejavu.core.ui.theme.GlassIconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
         },
         actions = { actions() },
     )

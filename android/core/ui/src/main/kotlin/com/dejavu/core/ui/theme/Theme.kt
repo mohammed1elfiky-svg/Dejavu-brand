@@ -70,6 +70,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -133,7 +134,7 @@ object Liquid {
     val GlassEdge get() = if (LiquidMode.dark) edgeDark else edgeLight
 
     val CardShape = RoundedCornerShape(24.dp)
-    val ButtonShape = RoundedCornerShape(18.dp)
+    val ButtonShape = RoundedCornerShape(50)
     val FieldShape = RoundedCornerShape(16.dp)
 }
 
@@ -364,6 +365,34 @@ private fun Modifier.pressScale(source: MutableInteractionSource): Modifier {
     }
 }
 
+/** Translucent gold used by glass buttons. */
+private val glassGold get() = Brush.verticalGradient(listOf(Liquid.Gold.copy(alpha = 0.80f), Liquid.GoldSoft.copy(alpha = 0.90f), Liquid.GoldDeep.copy(alpha = 0.92f)))
+
+/** The bright, glowing rim around a glass button. */
+private val glassRim get() = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.95f), Color.White.copy(alpha = 0.25f), Liquid.GoldPale.copy(alpha = 0.9f), Color.White.copy(alpha = 0.7f)))
+
+/** A round frosted-glass button for icons (back, favorite, notifications, share). */
+@Composable
+fun GlassIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val source = remember { MutableInteractionSource() }
+    Box(
+        modifier
+            .padding(horizontal = 3.dp)
+            .size(42.dp)
+            .pressScale(source)
+            .glass(androidx.compose.foundation.shape.CircleShape, elevation = 8.dp)
+            .clickable(interactionSource = source, indication = LocalIndication.current, enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Liquid.GoldDeep) { content() }
+    }
+}
+
 /**
  * Drop-in for Material's Button: liquid-gold gradient with a glow and the press effect.
  * Passing [colors] (e.g. a red "delete") keeps Material's flat look in those colors.
@@ -385,11 +414,21 @@ fun Button(
     val look = if (colors != null) {
         modifier.pressScale(source)
     } else {
+        // Tinted glass: translucent gold, a bright highlight across the top and a glowing rim.
         modifier
             .pressScale(source)
-            .shadow(if (enabled) 12.dp else 0.dp, shape, ambientColor = Liquid.Gold, spotColor = Liquid.GoldDeep)
+            .shadow(if (enabled) 14.dp else 0.dp, shape, ambientColor = Liquid.Gold.copy(alpha = 0.45f), spotColor = Liquid.GoldDeep.copy(alpha = 0.40f))
             .clip(shape)
-            .background(if (enabled) Liquid.GoldBrushH else Brush.horizontalGradient(listOf(Liquid.Mist, Liquid.Mist.copy(alpha = 0.8f))))
+            .background(if (enabled) glassGold else Brush.horizontalGradient(listOf(Liquid.Mist, Liquid.Mist.copy(alpha = 0.8f))))
+            .drawBehind {
+                if (enabled) {
+                    val h = size.height * 0.55f
+                    drawRect(
+                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.10f), Color.Transparent), endY = h),
+                        size = androidx.compose.ui.geometry.Size(size.width, h),
+                    )
+                }
+            }
     }
     androidx.compose.material3.Button(
         onClick = onClick,
@@ -403,12 +442,15 @@ fun Button(
             disabledContentColor = Liquid.InkSoft,
         ),
         elevation = elevation ?: if (colors == null) ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp) else ButtonDefaults.buttonElevation(),
-        border = border ?: if (colors == null) BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)) else null,
+        border = border ?: if (colors == null) BorderStroke(1.5.dp, glassRim) else null,
         contentPadding = contentPadding,
         interactionSource = source,
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.material3.LocalTextStyle provides MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            androidx.compose.material3.LocalTextStyle provides MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.Bold,
+                shadow = if (colors == null) androidx.compose.ui.graphics.Shadow(Color(0x66000000), Offset(0f, 2f), 4f) else null,
+            ),
         ) { content() }
     }
 }
@@ -430,12 +472,14 @@ fun OutlinedButton(
     val source = interactionSource ?: remember { MutableInteractionSource() }
     androidx.compose.material3.OutlinedButton(
         onClick = onClick,
-        modifier = modifier.pressScale(source),
+        modifier = modifier
+            .pressScale(source)
+            .then(if (colors == null && enabled) Modifier.shadow(8.dp, shape, ambientColor = Liquid.Gold.copy(alpha = 0.25f), spotColor = Liquid.GoldDeep.copy(alpha = 0.2f)) else Modifier),
         enabled = enabled,
         shape = shape,
-        colors = colors ?: ButtonDefaults.outlinedButtonColors(containerColor = Liquid.Frost.copy(alpha = 0.55f), contentColor = Liquid.GoldDeep),
+        colors = colors ?: ButtonDefaults.outlinedButtonColors(containerColor = Liquid.Frost.copy(alpha = 0.6f), contentColor = Liquid.GoldDeep),
         elevation = elevation,
-        border = border ?: BorderStroke(1.dp, Liquid.Gold.copy(alpha = if (enabled) 0.6f else 0.2f)),
+        border = border ?: if (enabled) BorderStroke(1.5.dp, glassRim) else BorderStroke(1.dp, Liquid.Gold.copy(alpha = 0.2f)),
         contentPadding = contentPadding,
         interactionSource = source,
         content = content,
@@ -562,13 +606,20 @@ fun RowScope.GlassNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVec
     Box(Modifier.weight(1f).fillMaxSize().liquidClickable(onClick = onClick), contentAlignment = Alignment.Center) {
         Column(
             Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .then(if (selected) Modifier.background(Liquid.GoldBrush) else Modifier)
+                .then(
+                    if (selected) {
+                        Modifier
+                            .glass(RoundedCornerShape(22.dp), elevation = 8.dp)
+                            .background(Liquid.Gold.copy(alpha = 0.16f))
+                    } else {
+                        Modifier.clip(RoundedCornerShape(22.dp))
+                    },
+                )
                 .padding(horizontal = 12.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box {
-                Icon(icon, contentDescription = label, tint = if (selected) Color.White else Liquid.InkSoft, modifier = Modifier.size(22.dp))
+                Icon(icon, contentDescription = label, tint = if (selected) Liquid.GoldDeep else Liquid.InkSoft, modifier = Modifier.size(22.dp))
                 if (badge > 0) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(start = 14.dp).size(16.dp).clip(RoundedCornerShape(8.dp)).background(Liquid.Danger),
@@ -579,7 +630,7 @@ fun RowScope.GlassNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVec
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium),
-                color = if (selected) Color.White else Liquid.InkSoft,
+                color = if (selected) Liquid.GoldDeep else Liquid.InkSoft,
                 maxLines = 1,
             )
         }

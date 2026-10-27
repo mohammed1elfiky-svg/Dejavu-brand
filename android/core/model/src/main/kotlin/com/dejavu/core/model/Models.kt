@@ -41,8 +41,38 @@ data class OtpRequest(val phone: String)
 @Serializable
 data class PasswordResetRequest(val phone: String, val code: String, val newPassword: String)
 
+/**
+ * A code request: [channel] SMS = texted from the store phone (Yemeni numbers); WHATSAPP =
+ * nothing was sent, ask the store on WhatsApp ([whatsapp] is its number).
+ */
 @Serializable
-data class OtpSent(val sent: Boolean = true, val expiresInMinutes: Int = 10)
+data class OtpSent(
+    val sent: Boolean = true,
+    val expiresInMinutes: Int = 10,
+    val channel: String = "SMS",
+    val whatsapp: String? = null,
+) {
+    val byWhatsapp: Boolean get() = channel == "WHATSAPP"
+}
+
+/** POST auth/customer/register: a session, or (when a code is needed) [pending] and how the code comes. */
+@Serializable
+data class SignUpResult(
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+    val expiresIn: String? = null,
+    val customer: Customer? = null,
+    val pending: Boolean = false,
+    val sent: Boolean = true,
+    val channel: String = "SMS",
+    val whatsapp: String? = null,
+) {
+    val byWhatsapp: Boolean get() = channel == "WHATSAPP"
+}
+
+/** POST auth/customer/verify: finishes a sign-up that waited for its code. */
+@Serializable
+data class VerifyRequest(val phone: String, val code: String)
 
 @Serializable
 data class LoginRequest(val phone: String, val password: String)
@@ -242,6 +272,9 @@ data class Address(
     val apartment: String? = null,
     val landmark: String? = null,
     val isDefault: Boolean = false,
+    /** The spot on the map, when the shopper set it (sent as text by the server). */
+    val latitude: String? = null,
+    val longitude: String? = null,
 ) {
     /** One-line address for lists: "شارع عباس العقاد 15، مدينة نصر، القاهرة" */
     val summary: String
@@ -268,6 +301,8 @@ data class AddressRequest(
     val apartment: String? = null,
     val landmark: String? = null,
     val isDefault: Boolean? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 // ------------------------------------------------------------------ cart ---
@@ -574,6 +609,21 @@ data class WalletBalance(val currency: Currency, val balance: String, val owed: 
 
 @Serializable
 data class WalletEntry(val id: String, val currency: Currency, val amount: String, val note: String, val createdAt: String)
+
+/** POST store/me/wallet/gift: balance given to another customer by their mobile number. */
+@Serializable
+data class GiftRequest(val phone: String, val currency: String, val amount: String, val password: String, val note: String? = null)
+
+/** The receiver's name as the sender may see it ("منى س."). */
+@Serializable
+data class GiftRecipient(val name: String)
+
+@Serializable
+data class GiftSent(val sent: Boolean = true, val to: String = "", val amount: String = "")
+
+/** POST auth/change-password */
+@Serializable
+data class ChangePasswordRequest(val currentPassword: String, val newPassword: String)
 
 @Serializable
 data class MerchantTerms(val discount: String = "0", val creditLimit: String? = null)

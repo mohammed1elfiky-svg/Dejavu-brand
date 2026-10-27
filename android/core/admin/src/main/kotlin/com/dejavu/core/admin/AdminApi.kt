@@ -182,7 +182,12 @@ interface AdminApi {
     @GET("admin/currencies/{code}/rates") suspend fun rateHistory(@Path("code") code: String): List<ExchangeRates.Entry>
 
     // customers
-    @GET("admin/customers") suspend fun customers(@Query("q") query: String? = null, @Query("page") page: Int = 1): Page<AdminCustomerSummary>
+    @GET("admin/customers") suspend fun customers(@Query("q") query: String? = null, @Query("page") page: Int = 1, @Query("status") status: String? = null): Page<AdminCustomerSummary>
+    @POST("admin/customers/{id}/approve") suspend fun approveCustomer(@Path("id") id: String): okhttp3.ResponseBody
+    @POST("admin/customers/{id}/password") suspend fun customerPassword(@Path("id") id: String, @Body body: SendPasswordRequest): CustomerPassword
+    @POST("admin/customers/{id}/code") suspend fun customerCode(@Path("id") id: String, @Body body: IssueCodeRequest): CustomerCode
+    @GET("admin/store-order") suspend fun storeOrder(): List<StoreOrderItem>
+    @PUT("admin/store-order") suspend fun setStoreOrder(@Body body: StoreOrderRequest): List<StoreOrderItem>
     @GET("admin/customers/{id}") suspend fun customer(@Path("id") id: String): AdminCustomerDetail
     @GET("admin/customers/{id}/account") suspend fun customerAccount(@Path("id") id: String, @Query("page") page: Int = 1): CustomerAccount
     @POST("admin/customers/{id}/account/receipts") suspend fun customerReceipt(@Path("id") id: String, @Body body: CustomerReceiptRequest): AccountBalances

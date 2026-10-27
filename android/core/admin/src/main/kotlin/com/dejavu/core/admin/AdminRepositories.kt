@@ -376,7 +376,20 @@ class FinanceRepository(private val api: AdminApi) {
     suspend fun setRate(currency: Currency, rate: String, note: String?) =
         apiCall { api.setRate(currency, SetRateRequest(rate.trim(), note?.trim()?.ifBlank { null })) }
 
-    suspend fun customers(query: String? = null, page: Int = 1) = apiCall { api.customers(query?.trim()?.ifBlank { null }, page) }
+    suspend fun customers(query: String? = null, page: Int = 1, status: String? = null) = apiCall { api.customers(query?.trim()?.ifBlank { null }, page, status) }
+
+    /** A sign-up that never entered its code may sign in from now on. */
+    suspend fun approveCustomer(id: String) = apiCall { api.approveCustomer(id).close() }
+
+    /** A new random password for the customer, texted to Yemeni numbers; returned once. */
+    suspend fun sendCustomerPassword(id: String, sendSms: Boolean = true) = apiCall { api.customerPassword(id, SendPasswordRequest(sendSms)) }
+
+    /** A sign-up (or reset) code to hand over yourself. */
+    suspend fun customerCode(id: String, purpose: String? = null) = apiCall { api.customerCode(id, IssueCodeRequest(purpose)) }
+
+    /** Products placed by hand at the top of the customer app. */
+    suspend fun storeOrder() = apiCall { api.storeOrder() }
+    suspend fun setStoreOrder(ids: List<String>) = apiCall { api.setStoreOrder(StoreOrderRequest(ids)) }
     suspend fun customer(id: String) = apiCall { api.customer(id) }
     suspend fun customerAccount(id: String, page: Int = 1) = apiCall { api.customerAccount(id, page) }
 

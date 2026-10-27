@@ -78,6 +78,27 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
     suspend fun login(phone: String, password: String): Result<Customer> =
         apiCall { api.login(LoginRequest(phone.normalizedPhone(), password)) }.map(::start)
 
+    /**
+     * Sign-up. Without [otp], when the store asks for a texted code, the account waits
+     * ([SignUpResult.pending]) until [verify] gets the code or the owner approves it.
+     */
+    suspend fun signUp(
+        name: String,
+        phone: String,
+        password: String,
+        email: String? = null,
+        governorate: String? = null,
+        area: String? = null,
+        otp: String? = null,
+    ): Result<SignUpResult> = apiCall {
+        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }))
+    }.map { r ->
+        val customer = r.customer
+        if (r.accessToken != null && r.refreshToken != null && customer != null) start(AuthResponse(r.accessToken, r.refreshToken, r.expiresIn, customer))
+        r
+    }
+
+    /** Sign-up that signs in at once (the store asks for no code, or [otp] is given). */
     suspend fun register(
         name: String,
         phone: String,
@@ -86,9 +107,24 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         governorate: String? = null,
         area: String? = null,
         otp: String? = null,
-    ): Result<Customer> = apiCall {
-        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }))
-    }.map(::start)
+    ): Result<Customer> = signUp(name, phone, password, email, governorate, area, otp).mapCatching { r ->
+        r.customer ?: throw com.dejavu.core.network.ApiException(0, "أدخل رمز التحقق المرسل إلى رقمك")
+    }
+
+    /**
+     * Changes the password. The server then signs out every device, so this one signs in
+     * again at once with the new password.
+     */
+    suspend fun changePassword(current: String, new: String): Result<Customer> {
+        val phone = (_state.value as? SessionState.LoggedIn)?.customer?.phone ?: apiCall { api.me() }.getOrNull()?.phone
+            ?: return Result.failure(com.dejavu.core.network.ApiException(0, "سجّل الدخول من جديد"))
+        return apiCall { api.changePassword(com.dejavu.core.model.ChangePasswordRequest(current, new)).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+            .mapCatching { login(phone, new).getOrThrow() }
+    }
+
+    /** Finishes a waiting sign-up with its code, and signs in. */
+    suspend fun verify(phone: String, code: String): Result<Customer> =
+        apiCall { api.verify(com.dejavu.core.model.VerifyRequest(phone.normalizedPhone(), code.trim())) }.map(::start)
 
     /** Governorates for the sign-up form. */
     suspend fun governorates() = apiCall { api.governorates() }
@@ -137,7 +173,8 @@ private fun String.normalizedPhone() = filterNot { it.isWhitespace() }
 
 // ----------------------------------------------------------------- catalog ---
 
-enum class ProductSort(val wire: String?) { NEWEST(null), PRICE_ASC("price_asc"), PRICE_DESC("price_desc") }
+/** STORE: the owner's own order (the server's default), then the newest. */
+enum class ProductSort(val wire: String?) { STORE(null), NEWEST("newest"), PRICE_ASC("price_asc"), PRICE_DESC("price_desc") }
 
 class CatalogRepository(private val api: DejavuApi) {
     /** Approved reviews of a product with the average rating. */
@@ -174,7 +211,7 @@ class CatalogRepository(private val api: DejavuApi) {
         query: String? = null,
         category: String? = null,
         featured: Boolean? = null,
-        sort: ProductSort = ProductSort.NEWEST,
+        sort: ProductSort = ProductSort.STORE,
         page: Int = 1,
         pageSize: Int = 20,
         brand: String? = null,
@@ -315,6 +352,13 @@ class CurrencyRepository(private val api: DejavuApi, private val preferred: () -
 /** The shopper's balance and manual top-ups through a bank transfer. */
 class WalletRepository(private val api: DejavuApi) {
     suspend fun wallet(): Result<Wallet> = apiCall { api.wallet() }
+
+    /** Who a gift to [phone] would reach (masked name), to check before sending. */
+    suspend fun giftRecipient(phone: String) = apiCall { api.giftRecipient(phone.filterNot { it.isWhitespace() }) }
+
+    /** Gives [amount] of [currency] from this wallet to the customer with [phone]; [password] confirms. */
+    suspend fun sendGift(phone: String, currency: Currency, amount: String, password: String, note: String?) =
+        apiCall { api.sendGift(com.dejavu.core.model.GiftRequest(phone.filterNot { it.isWhitespace() }, currency.code, amount.trim(), password, note?.trim()?.ifBlank { null })) }
 
     suspend fun bankAccounts(): Result<List<StoreBankAccount>> = apiCall { api.bankAccounts() }
 

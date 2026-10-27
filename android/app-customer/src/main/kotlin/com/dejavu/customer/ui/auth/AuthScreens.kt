@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dejavu.core.data.SessionRepository
 import com.dejavu.core.data.Validators
+import com.dejavu.core.network.ApiException
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Governorate
 import com.dejavu.core.ui.BaseViewModel
@@ -75,6 +76,8 @@ import kotlinx.coroutines.launch
 
 data class AuthForm(
     val name: String = "",
+    /** The country of the mobile number (Yemen unless picked) and the number without its code. */
+    val country: Country = Country.YE,
     val phone: String = "",
     val password: String = "",
     /** Login only: keep the phone and password on this device for the next sign-in. */
@@ -92,10 +95,17 @@ data class AuthForm(
     val otp: String = "",
     /** Seconds until the code can be sent again (0 = now). */
     val resendIn: Int = 0,
+    /** No text reaches this number: the code is asked for on the store's WhatsApp (its number; "" = unknown). */
+    val whatsapp: String? = null,
+    /** Signing in to an account still waiting for its code. */
+    val pendingLogin: Boolean = false,
     val submitted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 )
+
+/** The number as the server takes it (+967…, +966…). */
+val AuthForm.full: String get() = country.full(phone)
 
 /** Taiz is split between the old and the new rial; these are its two areas. */
 private const val TAIZ = "تعز"
@@ -117,7 +127,11 @@ class AuthViewModel(
     private val onRegistered: (String?) -> Unit = {},
 ) : BaseViewModel() {
     private val _form = MutableStateFlow(
-        if (registering) AuthForm() else savedLogin.load()?.let { AuthForm(phone = it.login, password = it.password) } ?: AuthForm(),
+        if (registering) {
+            AuthForm()
+        } else {
+            savedLogin.load()?.let { saved -> Country.split(saved.login).let { (c, n) -> AuthForm(country = c, phone = n, password = saved.password) } } ?: AuthForm()
+        },
     )
     val form = _form.asStateFlow()
     private val _done = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -131,15 +145,10 @@ class AuthViewModel(
     private val _governoratesError = MutableStateFlow<String?>(null)
     val governoratesError = _governoratesError.asStateFlow()
 
-    /** Whether sign-up needs a texted code; null = not known yet. */
-    private var otpNeeded: Boolean? = null
     private var countdown: Job? = null
 
     init {
-        if (registering) {
-            loadGovernorates()
-            viewModelScope.launch { session.otpRequired().onSuccess { otpNeeded = it } }
-        }
+        if (registering) loadGovernorates()
     }
 
     fun loadGovernorates() {
@@ -166,7 +175,7 @@ class AuthViewModel(
     private fun selectedGovernorate(f: AuthForm): Governorate? = _governorates.value.firstOrNull { it.name == f.governorate }
 
     fun errors(f: AuthForm = _form.value): Map<String, String> = buildMap {
-        Validators.phone(f.phone)?.let { put("phone", it) }
+        if (!f.country.isValid(f.phone)) put("phone", "رقم موبايل ${f.country.nameAr} غير صحيح (مثال: ${f.country.example})")
         if (f.reset) {
             if (f.otpStep) {
                 Validators.password(f.newPassword)?.let { put("newPassword", it) }
@@ -189,16 +198,23 @@ class AuthViewModel(
         _form.value = f.copy(busy = true)
         viewModelScope.launch {
             if (!registering) {
-                session.login(f.phone, f.password)
+                session.login(f.full, f.password)
                     .onSuccess {
                         // "Remember me" survives sign-out; unticking it forgets the saved sign-in.
-                        savedLogin.save(if (f.remember) SavedLogin(f.phone.trim(), f.password) else null)
+                        savedLogin.save(if (f.remember) SavedLogin(f.full, f.password) else null)
                         _done.tryEmit(Unit)
                     }
-                    .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
+                    .onFailure { e ->
+                        // Signed up but never entered the code: ask for it now.
+                        if ((e as? ApiException)?.status == 403) {
+                            _form.value = _form.value.copy(pendingLogin = true, error = null)
+                            sendCode(_form.value)
+                        } else {
+                            _form.value = _form.value.copy(error = e.userMessage())
+                        }
+                    }
             } else {
-                val needOtp = otpNeeded ?: session.otpRequired().getOrNull()?.also { otpNeeded = it } ?: false
-                if (needOtp) sendCode(f) else register(f, otp = null)
+                register(f)
             }
             _form.value = _form.value.copy(busy = false)
         }
@@ -238,10 +254,10 @@ class AuthViewModel(
 
     /** Forgotten password step 2: sets the new password with the code, which also signs in. */
     private suspend fun resetPassword(f: AuthForm) {
-        session.resetPassword(f.phone, f.otp, f.newPassword)
+        session.resetPassword(f.full, f.otp, f.newPassword)
             .onSuccess {
                 // Same as a sign-in: keep (or forget) the saved sign-in, now with the new password.
-                savedLogin.save(if (f.remember) SavedLogin(f.phone.trim(), f.newPassword) else null)
+                savedLogin.save(if (f.remember) SavedLogin(f.full, f.newPassword) else null)
                 _done.tryEmit(Unit)
             }
             .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
@@ -249,10 +265,10 @@ class AuthViewModel(
 
     /** Texts the code (sign-up or password reset) to the phone and shows the code step. */
     private suspend fun sendCode(f: AuthForm) {
-        (if (f.reset) session.sendResetCode(f.phone) else session.sendOtp(f.phone))
-            .onSuccess {
-                _form.value = _form.value.copy(otpStep = true, otp = "", error = null)
-                startCountdown()
+        (if (f.reset) session.sendResetCode(f.full) else session.sendOtp(f.full))
+            .onSuccess { sent ->
+                _form.value = _form.value.copy(otpStep = true, otp = "", error = null, whatsapp = if (sent.byWhatsapp) sent.whatsapp.orEmpty() else null)
+                if (!sent.byWhatsapp) startCountdown()
             }
             .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
     }
@@ -294,7 +310,7 @@ class AuthViewModel(
         }
         _form.value = f.copy(busy = true, error = null)
         viewModelScope.launch {
-            if (f.reset) resetPassword(_form.value) else register(_form.value, otp = f.otp)
+            if (f.reset) resetPassword(_form.value) else verify(_form.value)
             _form.value = _form.value.copy(busy = false)
         }
     }
@@ -302,21 +318,43 @@ class AuthViewModel(
     /** Back from the code step to the form (e.g. to fix the phone number). */
     fun editDetails() {
         countdown?.cancel()
-        _form.value = _form.value.copy(otpStep = false, otp = "", resendIn = 0, error = null)
+        _form.value = _form.value.copy(otpStep = false, otp = "", resendIn = 0, error = null, pendingLogin = false, whatsapp = null)
     }
 
-    private suspend fun register(f: AuthForm, otp: String?) {
-        val g = selectedGovernorate(f)
+    /** Sign-up: signs in at once, or (the store asks for a code) waits for the code step. */
+    private suspend fun register(f: AuthForm) {
         // Phone + password only: no email is collected.
-        session.register(f.name, f.phone, f.password, null, governorate = f.governorate, area = f.area, otp = otp)
-            .onSuccess { c ->
-                val regionCurrency = c.preferredCurrency
-                    ?: g?.areas?.firstOrNull { it.name == f.area }?.currency
-                    ?: g?.currency
-                onRegistered(regionCurrency)
-                _done.tryEmit(Unit)
+        session.signUp(f.name, f.full, f.password, null, governorate = f.governorate, area = f.area)
+            .onSuccess { r ->
+                val c = r.customer
+                if (r.pending || c == null) {
+                    _form.value = _form.value.copy(otpStep = true, otp = "", error = null, whatsapp = if (r.byWhatsapp) r.whatsapp.orEmpty() else null)
+                    if (!r.byWhatsapp) startCountdown()
+                } else {
+                    signedUp(f, c.preferredCurrency)
+                }
             }
             .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
+    }
+
+    /** The code of a waiting sign-up (new, or met at sign-in): finishes it and signs in. */
+    private suspend fun verify(f: AuthForm) {
+        session.verify(f.full, f.otp)
+            .onSuccess { c ->
+                if (registering) {
+                    signedUp(f, c.preferredCurrency)
+                } else {
+                    savedLogin.save(if (f.remember) SavedLogin(f.full, f.password) else null)
+                    _done.tryEmit(Unit)
+                }
+            }
+            .onFailure { _form.value = _form.value.copy(error = it.userMessage()) }
+    }
+
+    private fun signedUp(f: AuthForm, preferred: String?) {
+        val g = selectedGovernorate(f)
+        onRegistered(preferred ?: g?.areas?.firstOrNull { it.name == f.area }?.currency ?: g?.currency)
+        _done.tryEmit(Unit)
     }
 
     private companion object {
@@ -386,7 +424,7 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                     if (registering) {
                         Input("الاسم", form.name, errors["name"]) { v -> vm.update { copy(name = v) } }
                     }
-                    Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
+                    PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
                     Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
                     if (registering) {
                         RegionFields(vm, form, errors)
@@ -526,7 +564,7 @@ private fun ResetPhoneStep(vm: AuthViewModel, form: AuthForm, errors: Map<String
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Input("رقم الموبايل", form.phone, errors["phone"], KeyboardType.Phone, placeholder = "771234567") { v -> vm.update { copy(phone = v) } }
+        PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
         form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = vm::requestResetCode, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
             if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text("إرسال الرمز")
@@ -540,9 +578,27 @@ private fun ResetPhoneStep(vm: AuthViewModel, form: AuthForm, errors: Map<String
 /** Step 2 of sign-up or of a password reset: the code texted to the phone (and, for a reset, the new password). */
 @Composable
 private fun OtpStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, String>) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("أدخل رمز التحقق المرسل إلى رقمك", style = MaterialTheme.typography.titleMedium)
-        Text(form.phone.trim(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (form.pendingLogin) Text("حسابك بانتظار تأكيد رقم الجوال", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+        Text(if (form.whatsapp != null) "أدخل رمز التحقق" else "أدخل رمز التحقق المرسل إلى رقمك", style = MaterialTheme.typography.titleMedium)
+        Text(form.full, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        form.whatsapp?.let { store ->
+            Text(
+                "لا تصل الرسائل النصية إلى أرقام ${form.country.nameAr}. اطلب الرمز من المتجر عبر واتساب وسنرسله لك هناك.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (store.isNotBlank()) {
+                OutlinedButton(
+                    onClick = {
+                        val what = if (form.reset) "رمز استعادة كلمة المرور" else "رمز التحقق"
+                        runCatching { uriHandler.openUri(whatsappLink(store, "مرحباً، أرجو إرسال $what لتطبيق Dejavu لرقمي: ${form.full}")) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("اطلب الرمز عبر واتساب") }
+            }
+        }
         OutlinedTextField(
             value = form.otp,
             onValueChange = { v -> vm.update { copy(otp = v.filter { it.isDigit() }.take(6)) } },
@@ -558,9 +614,19 @@ private fun OtpStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, Strin
         }
         form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = vm::confirmCode, enabled = !form.busy && form.otp.length == 6, modifier = Modifier.fillMaxWidth()) {
-            if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text(if (form.reset) "حفظ كلمة المرور" else "تأكيد وإنشاء الحساب")
+            if (form.busy) {
+                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
+            } else {
+                Text(
+                    when {
+                        form.reset -> "حفظ كلمة المرور"
+                        form.pendingLogin -> "تأكيد ودخول"
+                        else -> "تأكيد وإنشاء الحساب"
+                    },
+                )
+            }
         }
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        if (form.whatsapp == null) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             TextButton(onClick = vm::resend, enabled = !form.busy && form.resendIn == 0) {
                 Text(
                     if (form.resendIn > 0) "إعادة إرسال الرمز بعد ${form.resendIn} ث" else "إعادة إرسال الرمز",

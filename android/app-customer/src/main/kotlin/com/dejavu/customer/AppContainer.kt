@@ -39,6 +39,9 @@ import java.io.IOException
 class AppContainer(private val context: Context) {
     val settings = SettingsStore(context, BuildConfig.API_BASE_URL)
 
+    /** The last home page and categories, for an instant start. */
+    val offline = OfflineCache(context)
+
     /** Moves the app to another server address when this one cannot be reached. */
     val failover = ServerFailover(
         context,
@@ -307,6 +310,7 @@ class AppContainer(private val context: Context) {
     suspend fun logout() {
         pushToken?.let { notifications.unregisterDevice(it) }
         session.logout()
+        offline.clear()
     }
 
     companion object {

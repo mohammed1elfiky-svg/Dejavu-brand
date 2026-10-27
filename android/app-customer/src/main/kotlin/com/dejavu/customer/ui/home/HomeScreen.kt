@@ -67,7 +67,11 @@ import com.dejavu.core.ui.LoadContent
 import com.dejavu.customer.ui.components.ProductCard
 import com.dejavu.customer.ui.components.SectionTitle
 import com.dejavu.core.ui.toLoad
+import com.dejavu.core.data.ProductSort
+import com.dejavu.core.data.userMessage
+import com.dejavu.customer.OfflineCache
 import kotlinx.coroutines.async
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -79,29 +83,47 @@ data class HomeData(
     val brands: List<Brand> = emptyList(),
 )
 
-class HomeViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
+class HomeViewModel(private val catalog: CatalogRepository, private val cache: OfflineCache? = null) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<HomeData>>(Load.Loading)
     val state = _state.asStateFlow()
 
     init { load() }
 
     fun load() {
-        _state.value = Load.Loading
         viewModelScope.launch {
+            // The last home page shows at once; the fresh one replaces it when it arrives.
+            if (_state.value !is Load.Ready) _state.value = cache?.let { readCached(it) }?.let { Load.Ready(it) } ?: Load.Loading
             val categories = async { catalog.categories() }
             val featured = async { catalog.products(featured = true, pageSize = 10) }
-            val newest = async { catalog.products(pageSize = 10) }
+            val newest = async { catalog.products(pageSize = 10, sort = ProductSort.NEWEST) }
             // Optional: without brands the home screen simply hides their row.
             val brands = async { catalog.brands() }
-            _state.value = runCatching {
+            val fresh = runCatching {
                 HomeData(
                     categories.await().getOrThrow(),
                     featured.await().getOrThrow().items,
                     newest.await().getOrThrow().items,
                     brands.await().getOrNull().orEmpty(),
                 )
-            }.toLoad()
+            }
+            fresh.onSuccess { data -> cache?.let { save(it, data) } }
+            // Keep what is shown when the network failed; say why instead.
+            if (fresh.isFailure && _state.value is Load.Ready) say(fresh.exceptionOrNull()!!.userMessage()) else _state.value = fresh.toLoad()
         }
+    }
+
+    private suspend fun readCached(c: OfflineCache): HomeData? {
+        val categories = c.read("home-categories", ListSerializer(Category.serializer())) ?: return null
+        val featured = c.read("home-featured", ListSerializer(StoreProduct.serializer())) ?: return null
+        val newest = c.read("home-newest", ListSerializer(StoreProduct.serializer())) ?: return null
+        return HomeData(categories, featured, newest, c.read("home-brands", ListSerializer(Brand.serializer())).orEmpty())
+    }
+
+    private suspend fun save(c: OfflineCache, d: HomeData) {
+        c.write("home-categories", ListSerializer(Category.serializer()), d.categories)
+        c.write("home-featured", ListSerializer(StoreProduct.serializer()), d.featured)
+        c.write("home-newest", ListSerializer(StoreProduct.serializer()), d.newest)
+        c.write("home-brands", ListSerializer(Brand.serializer()), d.brands)
     }
 }
 
@@ -114,7 +136,7 @@ fun HomeScreen(
     openChat: () -> Unit = {},
     openWishlist: () -> Unit = {},
 ) {
-    val vm = appViewModel { HomeViewModel(it.catalog) }
+    val vm = appViewModel { HomeViewModel(it.catalog, it.offline) }
     val state by vm.state.collectAsStateWithLifecycle()
     val container = appContainer()
     val loggedIn by container.session.state.collectAsStateWithLifecycle()

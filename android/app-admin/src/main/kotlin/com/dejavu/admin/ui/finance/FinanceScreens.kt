@@ -139,6 +139,7 @@ import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.formatDateTime
 import com.dejavu.core.ui.label
 import com.dejavu.core.ui.theme.Success
+import com.dejavu.core.ui.theme.Warning
 import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1033,6 +1034,17 @@ class CustomersViewModel(private val repo: FinanceRepository) : BaseViewModel() 
     private var page = 1
     private var search: Job? = null
 
+    /** Only sign-ups that never entered their code. */
+    private val _pendingOnly = MutableStateFlow(false)
+    val pendingOnly = _pendingOnly.asStateFlow()
+
+    fun showPending(on: Boolean) {
+        if (_pendingOnly.value == on) return
+        _pendingOnly.value = on
+        _state.value = Load.Loading
+        viewModelScope.launch { fetch(reset = true) }
+    }
+
     fun search(q: String) {
         query = q
         search?.cancel()
@@ -1060,7 +1072,7 @@ class CustomersViewModel(private val repo: FinanceRepository) : BaseViewModel() 
 
     private suspend fun fetch(reset: Boolean) {
         val next = if (reset) 1 else page + 1
-        repo.customers(query, next).fold(
+        repo.customers(query, next, if (_pendingOnly.value) "PENDING" else null).fold(
             { p ->
                 page = next
                 val before = if (reset) emptyList() else (_state.value as? Load.Ready)?.value.orEmpty()
@@ -1106,6 +1118,7 @@ private fun CustomersList(onBack: () -> Unit, openCustomer: (String) -> Unit, se
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
+    val pendingOnly by vm.pendingOnly.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var query by rememberSaveable { mutableStateOf("") }
     CollectMessages(vm, snackbar)
@@ -1125,8 +1138,12 @@ private fun CustomersList(onBack: () -> Unit, openCustomer: (String) -> Unit, se
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 placeholder = { Text("الاسم أو رقم الهاتف أو الكود") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
             )
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !pendingOnly, onClick = { vm.showPending(false) }, label = { Text("كل العملاء") })
+                FilterChip(selected = pendingOnly, onClick = { vm.showPending(true) }, label = { Text("بانتظار التحقق") })
+            }
             LoadContent(state, onRetry = vm::load) { customers ->
                 RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (customers.isEmpty()) {
@@ -1160,6 +1177,7 @@ private fun CustomersList(onBack: () -> Unit, openCustomer: (String) -> Unit, se
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(c.name, style = MaterialTheme.typography.titleSmall)
                                         if (c.isMerchant) MerchantBadge()
+                                        if (c.status == "PENDING") StatusChip("بانتظار التحقق", Warning)
                                     }
                                     Text("${c.code} · ${c.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -1393,6 +1411,9 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                         }
                         Text(listOfNotNull(c.code, c.phone, c.email).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                     }
+                }
+                if (canEdit) {
+                    item(key = "access:${c.status}") { CustomerAccessCard(c, onChanged = vm::load) }
                 }
                 if (canEdit || c.isMerchant) {
                     item(key = "merchant:${c.isMerchant}:${c.merchantDiscount}:${c.creditLimit}") {

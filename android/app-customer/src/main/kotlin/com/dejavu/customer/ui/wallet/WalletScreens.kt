@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Star
 import com.dejavu.core.ui.theme.Button
 import com.dejavu.core.ui.theme.GlassCard
@@ -279,6 +280,7 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
     val vm = appViewModel { WalletViewModel(it.wallet, it.extras) }
     val redeeming by vm.redeeming.collectAsStateWithLifecycle()
     var giftCard by rememberSaveable { mutableStateOf(false) }
+    var giving by rememberSaveable { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
     val editing by vm.editing.collectAsStateWithLifecycle()
     val editReceipt by vm.editReceipt.collectAsStateWithLifecycle()
@@ -319,6 +321,14 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
                             Icon(Icons.Filled.Star, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("استخدام بطاقة هدية")
+                        }
+                        if (balances.any { Money.parse(it.balance).signum() > 0 }) {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(onClick = { giving = true }, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.Favorite, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("إهداء رصيد لعميل آخر")
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -362,6 +372,19 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
             onRemoveReceipt = { vm.setEditReceipt(null) },
             onSave = vm::saveEdit,
             onDismiss = vm::cancelEdit,
+        )
+    }
+
+    if (giving) {
+        val balances = (state as? com.dejavu.core.ui.Load.Ready)?.value?.wallet?.balances.orEmpty()
+        GiftBalanceDialog(
+            balances = balances,
+            snackbar = snackbar,
+            onSent = {
+                giving = false
+                vm.load()
+            },
+            onDismiss = { giving = false },
         )
     }
 

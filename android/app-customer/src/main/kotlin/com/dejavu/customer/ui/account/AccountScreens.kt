@@ -145,6 +145,7 @@ fun AccountScreen(
     val uriHandler = LocalUriHandler.current
     val openPrivacy = { runCatching { uriHandler.openUri(normalizeBaseUrl(container.settings.baseUrl) + "privacy") } }
     var deleting by remember { mutableStateOf(false) }
+    var changingPassword by remember { mutableStateOf(false) }
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("حسابي") }) }) { padding ->
         Column(
@@ -202,6 +203,7 @@ fun AccountScreen(
                     MenuHeader("الإعدادات")
                     CurrencyRow()
                     if (BuildConfig.DEBUG) MenuRow(Icons.Filled.Settings, "الخادم", server)
+                    MenuRow(Icons.Filled.Lock, "تغيير كلمة المرور") { changingPassword = true }
                     MenuRow(Icons.Filled.Lock, "سياسة الخصوصية") { openPrivacy() }
                     MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.logout() } }
                     MenuRow(Icons.Filled.Delete, "حذف الحساب") { deleting = true }
@@ -236,6 +238,80 @@ fun AccountScreen(
     }
 
     if (deleting) DeleteAccountDialog(onClose = { deleting = false })
+    if (changingPassword) ChangePasswordDialog(onClose = { changingPassword = false })
+}
+
+/** New password: the current one, then the new one twice. */
+@Composable
+private fun ChangePasswordDialog(onClose: () -> Unit) {
+    val container = appContainer()
+    val scope = rememberCoroutineScope()
+    var current by rememberSaveable { mutableStateOf("") }
+    var new by rememberSaveable { mutableStateOf("") }
+    var again by rememberSaveable { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var done by remember { mutableStateOf(false) }
+    val problem = when {
+        new.isNotEmpty() && new.length < 8 -> "كلمة المرور 8 أحرف على الأقل"
+        again.isNotEmpty() && again != new -> "كلمتا المرور غير متطابقتين"
+        else -> null
+    }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onClose() },
+        title = { Text(if (done) "تم تغيير كلمة المرور" else "تغيير كلمة المرور") },
+        text = {
+            if (done) {
+                Text("استخدم كلمة المرور الجديدة في المرات القادمة.")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Triple("كلمة المرور الحالية", current) { v: String -> current = v },
+                        Triple("كلمة المرور الجديدة", new) { v: String -> new = v },
+                        Triple("تأكيد كلمة المرور الجديدة", again) { v: String -> again = v },
+                    ).forEach { (label, value, set) ->
+                        OutlinedTextField(
+                            value = value,
+                            onValueChange = {
+                                set(it)
+                                error = null
+                            },
+                            label = { Text(label) },
+                            singleLine = true,
+                            enabled = !busy,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    (error ?: problem)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        },
+        confirmButton = {
+            if (done) {
+                TextButton(onClick = onClose) { Text("تم") }
+            } else {
+                TextButton(
+                    enabled = !busy && current.isNotBlank() && new.length >= 8 && again == new,
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            container.session.changePassword(current, new)
+                                .onSuccess {
+                                    // A saved sign-in on this phone follows the new password.
+                                    container.savedLogin.load()?.let { saved -> container.savedLogin.save(saved.copy(password = new)) }
+                                    done = true
+                                }
+                                .onFailure { error = it.userMessage() }
+                            busy = false
+                        }
+                    },
+                ) { Text(if (busy) "جارٍ الحفظ…" else "حفظ") }
+            }
+        },
+        dismissButton = { if (!done) TextButton(enabled = !busy, onClick = onClose) { Text("إلغاء") } },
+    )
 }
 
 /** Deleting the account for good: what goes, what stays, and the password once more. */
@@ -533,6 +609,8 @@ data class AddressForm(
     val street: String = "",
     val landmark: String = "",
     val isDefault: Boolean = false,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     val showErrors: Boolean = false,
 ) {
     val errors: Map<String, String>
@@ -548,6 +626,8 @@ data class AddressForm(
         recipient = recipient.trim(), phone = phone.filterNot { it.isWhitespace() }, governorate = governorate, city = city.trim(), street = street.trim(),
         label = label.trim().ifBlank { null }, district = district.trim().ifBlank { null }, landmark = landmark.trim().ifBlank { null },
         isDefault = isDefault.takeIf { it },
+        latitude = latitude,
+        longitude = longitude,
     )
 }
 
@@ -569,6 +649,7 @@ class AddressFormViewModel(private val id: String?, private val repo: AddressRep
                     _form.value = AddressForm(
                         a.label.orEmpty(), a.recipient, a.phone, a.governorate, a.city, a.district.orEmpty(), a.street,
                         a.landmark.orEmpty(), a.isDefault,
+                        latitude = a.latitude?.toDoubleOrNull(), longitude = a.longitude?.toDoubleOrNull(),
                     )
                 }
             }
@@ -639,6 +720,7 @@ fun AddressFormScreen(id: String?, onDone: () -> Unit) {
                     Field("الحي (اختياري)", form.district) { v -> vm.update { copy(district = v) } }
                     Field("الشارع", form.street, err("street")) { v -> vm.update { copy(street = v) } }
                     Field("علامة مميزة (اختياري)", form.landmark) { v -> vm.update { copy(landmark = v) } }
+                    MyLocationRow(form.latitude, form.longitude) { lat, lng -> vm.update { copy(latitude = lat, longitude = lng) } }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = form.isDefault,

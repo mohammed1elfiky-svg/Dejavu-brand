@@ -448,6 +448,12 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                         )
                         a.landmark?.let { Text("علامة: $it", style = MaterialTheme.typography.bodySmall) }
                         Text("المستلم: ${a.recipient} · ${a.phone}", style = MaterialTheme.typography.bodySmall)
+                        if (a.latitude != null && a.longitude != null) {
+                            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                            androidx.compose.material3.TextButton(onClick = { runCatching { uriHandler.openUri("https://maps.google.com/?q=${a.latitude},${a.longitude}") } }) {
+                                Text("📍 فتح موقع العميل على الخريطة")
+                            }
+                        }
                         o.customerNote?.let { Text("ملاحظة العميل: $it", color = MaterialTheme.colorScheme.secondary) }
                     }
                 }

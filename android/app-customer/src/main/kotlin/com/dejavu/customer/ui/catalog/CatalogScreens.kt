@@ -90,21 +90,27 @@ import kotlinx.coroutines.launch
 
 // --------------------------------------------------------------- categories ---
 
-class CategoriesViewModel(private val catalog: CatalogRepository) : BaseViewModel() {
+class CategoriesViewModel(private val catalog: CatalogRepository, private val cache: com.dejavu.customer.OfflineCache? = null) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<List<Category>>>(Load.Loading)
     val state = _state.asStateFlow()
+    private val listSerializer = kotlinx.serialization.builtins.ListSerializer(Category.serializer())
 
     init { load() }
 
     fun load() {
-        _state.value = Load.Loading
-        viewModelScope.launch { _state.value = catalog.categories(refresh = true).toLoad() }
+        viewModelScope.launch {
+            // The last list shows at once; the fresh one replaces it.
+            if (_state.value !is Load.Ready) _state.value = cache?.read("categories", listSerializer)?.let { Load.Ready(it) } ?: Load.Loading
+            val fresh = catalog.categories(refresh = true)
+            fresh.onSuccess { list -> cache?.write("categories", listSerializer, list) }
+            if (fresh.isFailure && _state.value is Load.Ready) say(fresh.exceptionOrNull()!!.userMessage()) else _state.value = fresh.toLoad()
+        }
     }
 }
 
 @Composable
 fun CategoriesScreen(openCategory: (title: String, slug: String) -> Unit) {
-    val vm = appViewModel { CategoriesViewModel(it.catalog) }
+    val vm = appViewModel { CategoriesViewModel(it.catalog, it.offline) }
     val state by vm.state.collectAsStateWithLifecycle()
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("الأقسام") }) }) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { categories ->
@@ -146,7 +152,7 @@ data class ProductListState(
     val hasMore: Boolean = true,
     val loading: Boolean = false,
     val error: String? = null,
-    val sort: ProductSort = ProductSort.NEWEST,
+    val sort: ProductSort = ProductSort.STORE,
 )
 
 class ProductListViewModel(
@@ -278,6 +284,7 @@ fun ProductListScreen(
 }
 
 private fun sortLabel(sort: ProductSort) = when (sort) {
+    ProductSort.STORE -> "المقترح"
     ProductSort.NEWEST -> "الأحدث"
     ProductSort.PRICE_ASC -> "السعر: من الأقل"
     ProductSort.PRICE_DESC -> "السعر: من الأعلى"

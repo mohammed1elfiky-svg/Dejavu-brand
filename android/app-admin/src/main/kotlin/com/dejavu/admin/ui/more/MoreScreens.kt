@@ -153,6 +153,7 @@ private val menu = listOf(
     MenuEntry(R.PRODUCTS, "المنتجات", "الأسعار والنشر والمقاسات", Icons.Filled.Star, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.BRANDS, "الماركات", "إضافة الماركات وشعاراتها وتصفح منتجاتها", Icons.Filled.AccountBox, listOf(Perm.PRODUCTS_READ), STOCK),
     MenuEntry(R.CATEGORIES, "الأقسام", "تعديل أسماء الأقسام وإظهارها أو إخفاؤها في التطبيق", Icons.AutoMirrored.Filled.List, listOf(Perm.CATEGORIES_WRITE), STOCK),
+    MenuEntry(R.STORE_ORDER, "ترتيب المنتجات في التطبيق", "اختر المنتجات التي تظهر أولاً للعملاء وبأي ترتيب", Icons.AutoMirrored.Filled.List, listOf(Perm.PRODUCTS_WRITE), STOCK),
     MenuEntry(R.STOCK_COUNTS, "جرد المخزون", "عدّ القطع على الرفوف وترحيل فروقات الجرد", Icons.Filled.CheckCircle, listOf("stock.count"), STOCK),
     MenuEntry(R.DAMAGES, "البضاعة التالفة", "إخراج القطع التالفة من المخزون مع صورة وسبب", Icons.Filled.Warning, listOf("stock.adjust"), STOCK),
     MenuEntry(R.EXCEL, "Excel: تصدير واستيراد", "تصدير القوائم والتقارير وإدخال المنتجات من ملف", Icons.AutoMirrored.Filled.List, listOf(Perm.PRODUCTS_READ, Perm.CUSTOMERS_READ, Perm.REPORTS_SALES), STOCK),

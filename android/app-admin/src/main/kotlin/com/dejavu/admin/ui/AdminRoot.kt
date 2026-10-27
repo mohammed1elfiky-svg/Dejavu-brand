@@ -86,6 +86,7 @@ import com.dejavu.admin.ui.printers.PrinterSettingsScreen
 import com.dejavu.admin.ui.purchasing.EditImportScreen
 import com.dejavu.admin.ui.purchasing.SupplierAccountScreen
 import com.dejavu.admin.ui.sms.SmsGatewayScreen
+import com.dejavu.admin.ui.storeorder.StoreOrderScreen
 import com.dejavu.admin.ui.categories.CategoriesScreen
 import com.dejavu.admin.ui.coupons.CouponsScreen
 import com.dejavu.admin.ui.pos.ShiftScreen
@@ -227,6 +228,7 @@ object R {
     const val DEAL = "deal/{id}"
     const val PRE_ORDERS = "pre-orders"
     const val WEEKLY = "weekly-summary"
+    const val STORE_ORDER = "store-order"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -408,6 +410,7 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             page(R.SUPPLIER_ACCOUNT) { e -> SupplierAccountScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             page(R.SMS) { SmsGatewayScreen(back) }
             page(R.CATEGORIES) { CategoriesScreen(back) }
+            page(R.STORE_ORDER) { StoreOrderScreen(back) }
             page(R.COUPONS) { CouponsScreen(back) }
             page(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
             page(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }, editImport = { open(R.IMPORT_EDIT, it) }) }

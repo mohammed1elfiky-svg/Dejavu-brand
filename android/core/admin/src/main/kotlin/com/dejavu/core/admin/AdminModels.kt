@@ -214,6 +214,9 @@ data class ShippingSnapshot(
     val floor: String? = null,
     val apartment: String? = null,
     val landmark: String? = null,
+    /** Where the shopper pinned the address, if they did. */
+    val latitude: String? = null,
+    val longitude: String? = null,
 )
 
 @Serializable
@@ -1052,6 +1055,8 @@ data class AdminCustomerSummary(
     val email: String? = null,
     val createdAt: String,
     @SerialName("_count") val count: OrdersCount? = null,
+    /** ACTIVE, PENDING (signed up, never entered the code) or BLOCKED. */
+    val status: String = "ACTIVE",
     /** Merchant (wholesale) customer. */
     val isMerchant: Boolean = false,
     /** Extra percent off wholesale prices. */
@@ -1069,6 +1074,7 @@ data class AdminCustomerDetail(
     val name: String,
     val phone: String,
     val email: String? = null,
+    val status: String = "ACTIVE",
     val ledgerBalance: String,
     val lifetime: Lifetime,
     val orders: List<Order> = emptyList(),
@@ -1574,3 +1580,26 @@ data class HomeBadges(
 data class DailySales(val days: List<Day> = emptyList(), val total: String = "0", val previousTotal: String = "0") {
     @Serializable data class Day(val date: String, val revenue: String, val orders: Int = 0)
 }
+
+// ------------------------------------------------------------ customer access ---
+
+/** POST admin/customers/{id}/password: the new random password (shown once). */
+@Serializable
+data class CustomerPassword(val password: String, val smsQueued: Boolean = false, val phone: String = "", val message: String = "")
+
+/** POST admin/customers/{id}/code: a code to hand over yourself (e.g. on WhatsApp). */
+@Serializable
+data class CustomerCode(val code: String, val phone: String = "", val expiresInMinutes: Int = 10, val message: String = "")
+
+@Serializable
+data class SendPasswordRequest(val sendSms: Boolean = true)
+
+@Serializable
+data class IssueCodeRequest(val purpose: String? = null)
+
+/** GET admin/store-order: products placed by hand, in their order. */
+@Serializable
+data class StoreOrderItem(val id: String, val nameAr: String, val slug: String = "", val status: String = "ACTIVE", val imageUrl: String? = null)
+
+@Serializable
+data class StoreOrderRequest(val productIds: List<String>)

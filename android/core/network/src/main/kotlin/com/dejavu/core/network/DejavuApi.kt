@@ -54,7 +54,19 @@ import retrofit2.http.Query
 interface DejavuApi {
     // auth
     @POST("auth/customer/register")
-    suspend fun register(@Body body: RegisterRequest): AuthResponse
+    suspend fun register(@Body body: RegisterRequest): com.dejavu.core.model.SignUpResult
+
+    @POST("auth/change-password")
+    suspend fun changePassword(@Body body: com.dejavu.core.model.ChangePasswordRequest): Response<Unit>
+
+    @GET("store/me/wallet/gift/recipient")
+    suspend fun giftRecipient(@retrofit2.http.Query("phone") phone: String): com.dejavu.core.model.GiftRecipient
+
+    @POST("store/me/wallet/gift")
+    suspend fun sendGift(@Body body: com.dejavu.core.model.GiftRequest): com.dejavu.core.model.GiftSent
+
+    @POST("auth/customer/verify")
+    suspend fun verify(@Body body: com.dejavu.core.model.VerifyRequest): AuthResponse
 
     @GET("auth/governorates")
     suspend fun governorates(): List<com.dejavu.core.model.Governorate>

@@ -366,7 +366,7 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Dejavu", style = MaterialTheme.typography.headlineMedium, color = Liquid.GoldDeep, fontWeight = FontWeight.Bold)
+            com.dejavu.customer.ui.components.BrandMark(height = 48.dp)
             if (required) {
                 Text(
                     "سجّل الدخول أو أنشئ حساباً جديداً لتصفّح المتجر",

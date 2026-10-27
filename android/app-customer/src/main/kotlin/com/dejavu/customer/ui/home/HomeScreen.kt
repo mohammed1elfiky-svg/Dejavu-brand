@@ -59,6 +59,7 @@ import com.dejavu.core.ui.BaseViewModel
 import com.dejavu.core.ui.Load
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.appViewModel
+import com.dejavu.customer.ui.components.BrandMark
 import com.dejavu.customer.ui.components.BrandAvatar
 import com.dejavu.customer.ui.components.CategoryAvatar
 import com.dejavu.core.ui.LoadContent
@@ -132,7 +133,7 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             GlassTopBar(
-                title = { Text("Dejavu", style = MaterialTheme.typography.headlineSmall, color = Liquid.GoldDeep) },
+                title = { BrandMark(height = 30.dp) },
                 actions = {
                     IconButton(onClick = openWishlist) { Icon(Icons.Filled.FavoriteBorder, contentDescription = "المفضلة") }
                     if (loggedIn is SessionState.LoggedIn) {

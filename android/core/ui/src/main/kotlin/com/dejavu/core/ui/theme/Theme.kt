@@ -132,7 +132,7 @@ object Liquid {
     val GlassFill get() = if (LiquidMode.dark) fillDark else fillLight
     val GlassEdge get() = if (LiquidMode.dark) edgeDark else edgeLight
 
-    val CardShape = RoundedCornerShape(22.dp)
+    val CardShape = RoundedCornerShape(24.dp)
     val ButtonShape = RoundedCornerShape(18.dp)
     val FieldShape = RoundedCornerShape(16.dp)
 }
@@ -226,7 +226,7 @@ fun DejavuTheme(fontScale: Float = 1f, content: @Composable () -> Unit) {
             extraSmall = RoundedCornerShape(10.dp),
             small = RoundedCornerShape(14.dp),
             medium = RoundedCornerShape(18.dp),
-            large = RoundedCornerShape(22.dp),
+            large = RoundedCornerShape(24.dp),
             extraLarge = RoundedCornerShape(28.dp),
         ),
     ) {

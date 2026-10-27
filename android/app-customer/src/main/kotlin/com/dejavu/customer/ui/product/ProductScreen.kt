@@ -67,6 +67,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -329,13 +336,30 @@ fun ProductScreen(
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     CollectMessages(reviewsVm, snackbar)
+
+    // Add-to-cart flow: the picture flies to the floating cart, the cart bumps, a card confirms.
+    val cart by container.cart.cart.collectAsStateWithLifecycle()
+    var flight by remember { mutableStateOf(0) }
+    var bump by remember { mutableStateOf(0) }
+    var confirm by remember { mutableStateOf(false) }
+    var pictureBounds by remember { mutableStateOf<Rect?>(null) }
+    var cartBounds by remember { mutableStateOf<Rect?>(null) }
+    var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             when (event) {
                 ProductViewModel.Event.LoginRequired -> requireLogin()
-                ProductViewModel.Event.Added ->
-                    if (snackbar.showSnackbar("تمت الإضافة إلى السلة", actionLabel = "عرض السلة") == SnackbarResult.ActionPerformed) openCart()
+                ProductViewModel.Event.Added -> {
+                    confirm = false
+                    flight += 1
+                }
             }
+        }
+    }
+    LaunchedEffect(confirm) {
+        if (confirm) {
+            delay(4000)
+            confirm = false
         }
     }
 
@@ -372,8 +396,18 @@ fun ProductScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             val p = (state as? Load.Ready)?.value
-            if (p != null) {
+            if (p != null) Column {
                 val variant = vm.selectedVariant()
+                FloatingOptionsSheet(
+                    product = p,
+                    selectedColor = selection.color,
+                    selectedSize = selection.size,
+                    variant = variant,
+                    onColor = vm::pickColor,
+                    onSize = vm::pickSize,
+                    quantity = { if (variant != null) QuantityStepper(selection.quantity, vm::setQuantity, max = minOf(variant.availableQty, 20)) },
+                    availability = { Availability(variant) },
+                )
                 GlassBottomPanel {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -415,10 +449,11 @@ fun ProductScreen(
             }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize().onGloballyPositioned { layerOrigin = it.positionInRoot() }) {
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             val variant = vm.selectedVariant()
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-                Gallery(p, selection.color, container.settings.baseUrl)
+                Gallery(p, selection.color, container.settings.baseUrl, Modifier.onGloballyPositioned { pictureBounds = it.boundsInRoot() })
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -436,47 +471,6 @@ fun ProductScreen(
                                     Icon(Icons.Filled.Face, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text("اسأل المساعد")
-                                }
-                            }
-                        }
-                    }
-
-                    GlassCard(Modifier.fillMaxWidth()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            val colors = p.variants.map { it.color to it.colorHex }.distinctBy { it.first }
-                            if (colors.size > 1 || colors.firstOrNull()?.first != null) {
-                                Text("اللون: ${selection.color ?: ""}", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    colors.forEach { (name, hex) -> ColorDot(hex, selected = name == selection.color) { vm.pickColor(name) } }
-                                }
-                            }
-
-                            val sizes = p.variants.filter { it.color == selection.color }
-                            if (sizes.any { it.size != null }) {
-                                Text("المقاس", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    sizes.forEach { v ->
-                                        FilterChip(
-                                            selected = v.size == selection.size,
-                                            onClick = { vm.pickSize(v.size) },
-                                            label = {
-                                                Text(
-                                                    v.size ?: "-",
-                                                    textDecoration = if (v.inStock) null else TextDecoration.LineThrough,
-                                                    color = if (v.inStock) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            },
-                                            colors = goldChipColors(),
-                                        )
-                                    }
-                                }
-                            }
-
-                            Availability(variant)
-                            if (variant?.inStock == true) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("الكمية", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
-                                    QuantityStepper(selection.quantity, vm::setQuantity, max = minOf(variant.availableQty, 20))
                                 }
                             }
                         }
@@ -515,6 +509,37 @@ fun ProductScreen(
                 Spacer(Modifier.height(16.dp))
             }
         }
+        val loaded = (state as? Load.Ready)?.value
+        if (loaded != null) {
+            FloatingCartButton(
+                count = cart?.itemCount ?: 0,
+                bump = bump,
+                onClick = openCart,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 16.dp).onGloballyPositioned { cartBounds = it.boundsInRoot() },
+            )
+            FlyToCart(
+                flight = flight,
+                imageUrl = productMedia(loaded, selection.color, container.settings.baseUrl).filterIsInstance<MediaItem.Image>().firstOrNull()?.url,
+                from = pictureBounds,
+                to = cartBounds,
+                origin = layerOrigin,
+                onLanded = {
+                    bump += 1
+                    confirm = true
+                },
+            )
+            AddedCard(
+                visible = confirm,
+                productName = loaded.nameAr,
+                onViewCart = {
+                    confirm = false
+                    openCart()
+                },
+                onContinue = { confirm = false },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+            )
+        }
+        }
     }
 
     preOrderFor?.let { v ->
@@ -530,8 +555,8 @@ fun ProductScreen(
 
 /** Photos of the chosen [color] first (then the video); a new color starts again from its first photo. */
 @Composable
-private fun Gallery(p: StoreProduct, color: String?, baseUrl: String) {
-    key(color) { ColorGallery(p, color, baseUrl) }
+private fun Gallery(p: StoreProduct, color: String?, baseUrl: String, modifier: Modifier = Modifier) {
+    Morph(color, modifier) { c -> ColorGallery(p, c, baseUrl) }
 }
 
 @Composable

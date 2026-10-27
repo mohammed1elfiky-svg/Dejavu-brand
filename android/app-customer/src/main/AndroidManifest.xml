@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:enableOnBackInvokedCallback="true"
         android:name=".DejavuApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -82,6 +83,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavBackStackEntry
@@ -657,31 +659,28 @@ fun GoldBadge(text: String, modifier: Modifier = Modifier) {
 // ---------------------------------------------------------- transitions ---
 
 /**
- * Screen changes like iOS: the new screen slides in over the old one, which drifts away a
- * third of the way and dims; going back reverses it. Switching between the main tabs only
- * cross-fades. Everything eases out with the same soft curve.
+ * Screen changes like iOS: the new screen slides in solid over the old one, which drifts a
+ * third of the way and dims (see [IosPage]); going back reverses it, and with Android's back
+ * gesture it follows the finger. A critically damped spring, as on iOS. Switching between the
+ * main tabs is instant.
  */
 class IosTransitions(private val tabs: Set<String> = emptySet()) {
-    private val ease = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+    private val slide = spring(dampingRatio = 1f, stiffness = 220f, visibilityThreshold = IntOffset.VisibilityThreshold)
 
     private fun AnimatedContentTransitionScope<NavBackStackEntry>.betweenTabs() =
         initialState.destination.route in tabs && targetState.destination.route in tabs
 
     val enter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        if (betweenTabs()) fadeIn(tween(220)) else slideInHorizontally(tween(MS, easing = ease)) { -it } + fadeIn(tween(MS / 2))
+        if (betweenTabs()) EnterTransition.None else slideInHorizontally(slide) { -it }
     }
     val exit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        if (betweenTabs()) fadeOut(tween(160)) else slideOutHorizontally(tween(MS, easing = ease)) { it / 3 } + fadeOut(tween(MS, easing = ease), targetAlpha = 0.65f)
+        if (betweenTabs()) ExitTransition.None else slideOutHorizontally(slide) { it / 3 }
     }
     val popEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        if (betweenTabs()) fadeIn(tween(220)) else slideInHorizontally(tween(MS, easing = ease)) { it / 3 } + fadeIn(tween(MS, easing = ease), initialAlpha = 0.65f)
+        if (betweenTabs()) EnterTransition.None else slideInHorizontally(slide) { it / 3 }
     }
     val popExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        if (betweenTabs()) fadeOut(tween(160)) else slideOutHorizontally(tween(MS, easing = ease)) { -it } + fadeOut(tween(MS / 2, delayMillis = MS / 2))
-    }
-
-    private companion object {
-        const val MS = 420
+        if (betweenTabs()) ExitTransition.None else slideOutHorizontally(slide) { -it }
     }
 }
 

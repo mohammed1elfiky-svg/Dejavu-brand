@@ -46,6 +46,7 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.dejavu.core.ui.theme.page
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -242,7 +243,7 @@ fun DejavuNavHost() {
             popEnterTransition = transitions.popEnter,
             popExitTransition = transitions.popExit,
         ) {
-            composable(Routes.HOME) {
+            page(Routes.HOME) {
                 HomeScreen(
                     openProduct = { nav.navigate(Routes.product(it)) },
                     openProducts = { title, category, query, featured -> nav.navigate(Routes.products(title, category, query, featured)) },
@@ -252,10 +253,10 @@ fun DejavuNavHost() {
                     openWishlist = { nav.navigate(Routes.WISHLIST) },
                 )
             }
-            composable(Routes.CATEGORIES) {
+            page(Routes.CATEGORIES) {
                 CategoriesScreen(openCategory = { title, slug -> nav.navigate(Routes.products(title, category = slug)) })
             }
-            composable(
+            page(
                 Routes.PRODUCTS,
                 arguments = listOf(
                     navArgument("title") { type = NavType.StringType; nullable = true },
@@ -276,7 +277,7 @@ fun DejavuNavHost() {
                     brand = args?.getString("brand")?.ifBlank { null },
                 )
             }
-            composable(Routes.PRODUCT) { entry ->
+            page(Routes.PRODUCT) { entry ->
                 val slug = entry.arguments?.getString("slug").orEmpty()
                 ProductScreen(
                     slug = slug,
@@ -289,10 +290,10 @@ fun DejavuNavHost() {
                     openChat = { nav.navigate(Routes.CHAT) },
                 )
             }
-            composable(Routes.PRODUCT_REVIEWS) { entry ->
+            page(Routes.PRODUCT_REVIEWS) { entry ->
                 AllReviewsScreen(slug = entry.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() })
             }
-            composable(Routes.CART) {
+            page(Routes.CART) {
                 CartScreen(
                     openProduct = { nav.navigate(Routes.product(it)) },
                     checkout = { nav.navigate(Routes.CHECKOUT) },
@@ -300,7 +301,7 @@ fun DejavuNavHost() {
                     shop = { nav.switchTab(Routes.HOME) },
                 )
             }
-            composable(Routes.CHECKOUT) {
+            page(Routes.CHECKOUT) {
                 CheckoutScreen(
                     onBack = { nav.popBackStack() },
                     addAddress = { nav.navigate(Routes.addressForm()) },
@@ -310,10 +311,10 @@ fun DejavuNavHost() {
                     },
                 )
             }
-            composable(Routes.ORDERS) {
+            page(Routes.ORDERS) {
                 OrdersScreen(openOrder = { nav.navigate(Routes.order(it)) }, login = { nav.navigate(Routes.LOGIN) }, shop = { nav.switchTab(Routes.HOME) })
             }
-            composable(Routes.ORDER, arguments = listOf(navArgument("placed") { type = NavType.BoolType; defaultValue = false })) { entry ->
+            page(Routes.ORDER, arguments = listOf(navArgument("placed") { type = NavType.BoolType; defaultValue = false })) { entry ->
                 val number = entry.arguments?.getString("number").orEmpty()
                 OrderDetailScreen(
                     number = number,
@@ -322,7 +323,7 @@ fun DejavuNavHost() {
                     openProduct = { nav.navigate(Routes.product(it)) },
                 )
             }
-            composable(Routes.ACCOUNT) {
+            page(Routes.ACCOUNT) {
                 AccountScreen(
                     login = { nav.navigate(Routes.LOGIN) },
                     register = { nav.navigate(Routes.REGISTER) },
@@ -338,24 +339,24 @@ fun DejavuNavHost() {
                     preOrders = { nav.navigate(Routes.PRE_ORDERS) },
                 )
             }
-            composable(Routes.WISHLIST) {
+            page(Routes.WISHLIST) {
                 WishlistScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
             }
-            composable(Routes.CHAT) {
+            page(Routes.CHAT) {
                 ChatScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
             }
-            composable(Routes.PRE_ORDERS) { PreOrdersScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }) }
-            composable(Routes.ABOUT) { AboutScreen(onBack = { nav.popBackStack() }) }
-            composable(Routes.STOCK_ALERTS) {
+            page(Routes.PRE_ORDERS) { PreOrdersScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }) }
+            page(Routes.ABOUT) { AboutScreen(onBack = { nav.popBackStack() }) }
+            page(Routes.STOCK_ALERTS) {
                 StockAlertsScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) })
             }
-            composable(Routes.ADDRESSES) {
+            page(Routes.ADDRESSES) {
                 AddressesScreen(onBack = { nav.popBackStack() }, edit = { nav.navigate(Routes.addressForm(it)) })
             }
-            composable(Routes.ADDRESS_FORM, arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true })) { entry ->
+            page(Routes.ADDRESS_FORM, arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true })) { entry ->
                 AddressFormScreen(id = entry.arguments?.getString("id")?.ifBlank { null }, onDone = { nav.popBackStack() })
             }
-            composable(Routes.LOGIN) {
+            page(Routes.LOGIN) {
                 LoginScreen(
                     onBack = { if (signInFirst) context.findActivity()?.finish() else nav.popBackStack() },
                     loggedIn = afterSignIn,
@@ -363,7 +364,7 @@ fun DejavuNavHost() {
                     required = signInFirst,
                 )
             }
-            composable(Routes.REGISTER) {
+            page(Routes.REGISTER) {
                 RegisterScreen(
                     onBack = { if (signInFirst) context.findActivity()?.finish() else nav.popBackStack() },
                     registered = afterSignIn,
@@ -371,8 +372,8 @@ fun DejavuNavHost() {
                     required = signInFirst,
                 )
             }
-            composable(Routes.SERVER) { ServerSettingsScreen(onBack = { nav.popBackStack() }) }
-            composable(Routes.NOTIFICATIONS) {
+            page(Routes.SERVER) { ServerSettingsScreen(onBack = { nav.popBackStack() }) }
+            page(Routes.NOTIFICATIONS) {
                 NotificationsScreen(
                     onBack = { nav.popBackStack() },
                     openOrder = { nav.navigate(Routes.order(it)) },
@@ -383,10 +384,10 @@ fun DejavuNavHost() {
                     openCategory = { container.requestCategory(it) },
                 )
             }
-            composable(Routes.WALLET) {
+            page(Routes.WALLET) {
                 WalletScreen(onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.ACCOUNT) }, topUp = { nav.navigate(Routes.TOP_UP) })
             }
-            composable(Routes.TOP_UP) {
+            page(Routes.TOP_UP) {
                 TopUpScreen(
                     onBack = { nav.popBackStack() },
                     // Show the new request (under review) in the wallet.

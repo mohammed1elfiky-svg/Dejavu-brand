@@ -43,7 +43,7 @@ import com.dejavu.core.ui.theme.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import com.dejavu.core.ui.theme.FloatingGlassBar
 import com.dejavu.core.ui.theme.GlassNavItem
-import com.dejavu.core.ui.theme.LiquidTransitions
+import com.dejavu.core.ui.theme.IosTransitions
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -67,6 +67,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.dejavu.core.ui.theme.page
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.dejavu.admin.ui.dashboard.DashboardScreen
@@ -312,16 +313,17 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             }
         },
     ) { padding ->
+        val transitions = remember(visibleTabs) { IosTransitions(visibleTabs.map { it.route }.toSet()) }
         NavHost(
             nav,
             startDestination = visibleTabs.first().route,
             modifier = Modifier.padding(padding),
-            enterTransition = LiquidTransitions.enter,
-            exitTransition = LiquidTransitions.exit,
-            popEnterTransition = LiquidTransitions.popEnter,
-            popExitTransition = LiquidTransitions.popExit,
+            enterTransition = transitions.enter,
+            exitTransition = transitions.exit,
+            popEnterTransition = transitions.popEnter,
+            popExitTransition = transitions.popExit,
         ) {
-            composable(R.DASHBOARD) {
+            page(R.DASHBOARD) {
                 DashboardScreen(
                     session,
                     navigate = { nav.navigate(it) },
@@ -332,17 +334,17 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     openSettlements = { nav.navigate(R.SETTLEMENTS) },
                 )
             }
-            composable(R.ORDERS) {
+            page(R.ORDERS) {
                 OrdersScreen(
                     openOrder = { open(R.ORDER, it) },
                     detailPane = { id, close -> OrderDetailScreen(id, session, close, openReturn = { open(R.RETURN, it) }) },
                 )
             }
-            composable(R.ORDER) { e -> OrderDetailScreen(e.arguments?.getString("id").orEmpty(), session, back, openReturn = { open(R.RETURN, it) }) }
-            composable(R.RETURNS) { ReturnsScreen(back, openReturn = { open(R.RETURN, it) }) }
-            composable(R.RETURN) { e -> ReturnDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.STOCK) { StockScreen(session, openProducts = { nav.navigate(R.PRODUCTS) }, openProduct = { open(R.PRODUCT, it) }) }
-            composable(R.PRODUCTS) {
+            page(R.ORDER) { e -> OrderDetailScreen(e.arguments?.getString("id").orEmpty(), session, back, openReturn = { open(R.RETURN, it) }) }
+            page(R.RETURNS) { ReturnsScreen(back, openReturn = { open(R.RETURN, it) }) }
+            page(R.RETURN) { e -> ReturnDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.STOCK) { StockScreen(session, openProducts = { nav.navigate(R.PRODUCTS) }, openProduct = { open(R.PRODUCT, it) }) }
+            page(R.PRODUCTS) {
                 ProductsScreen(
                     back,
                     openProduct = { open(R.PRODUCT, it) },
@@ -350,14 +352,14 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     detailPane = { id, close -> ProductDetailScreen(id, session, close, edit = { open(R.PRODUCT_EDIT, id) }) },
                 )
             }
-            composable(R.BRANDS) {
+            page(R.BRANDS) {
                 BrandsScreen(
                     canEdit = session.can(Perm.CATEGORIES_WRITE),
                     onBack = back,
                     openProducts = { open(R.BRAND_PRODUCTS, it) },
                 )
             }
-            composable(R.BRAND_PRODUCTS) { e ->
+            page(R.BRAND_PRODUCTS) { e ->
                 ProductsScreen(
                     back,
                     openProduct = { open(R.PRODUCT, it) },
@@ -365,19 +367,19 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     initialBrandId = e.arguments?.getString("id"),
                 )
             }
-            composable(R.PRINTERS) { PrinterSettingsScreen(back) }
-            composable(R.WIPE) { WipeDataScreen(back, done = { nav.switchTab(R.MORE) }) }
-            composable(R.PRODUCT) { e ->
+            page(R.PRINTERS) { PrinterSettingsScreen(back) }
+            page(R.WIPE) { WipeDataScreen(back, done = { nav.switchTab(R.MORE) }) }
+            page(R.PRODUCT) { e ->
                 val id = e.arguments?.getString("id").orEmpty()
                 ProductDetailScreen(id, session, back, edit = { open(R.PRODUCT_EDIT, id) })
             }
-            composable(R.PRODUCT_NEW) {
+            page(R.PRODUCT_NEW) {
                 ProductFormScreen(null, back, saved = { id -> nav.navigate(R.of(R.PRODUCT, id)) { popUpTo(R.PRODUCTS) } })
             }
-            composable(R.PRODUCT_EDIT) { e ->
+            page(R.PRODUCT_EDIT) { e ->
                 ProductFormScreen(e.arguments?.getString("id").orEmpty(), back, saved = { nav.popBackStack() })
             }
-            composable(R.PURCHASING) {
+            page(R.PURCHASING) {
                 PurchasingScreen(
                     back,
                     openOrder = { open(R.PURCHASE, it) },
@@ -386,8 +388,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     newImport = if (session.can(Perm.PRODUCTS_WRITE)) ({ open(R.IMPORT_NEW, "-") }) else null,
                 )
             }
-            composable(R.SUPPLIERS) { SuppliersScreen(session.can("suppliers.manage"), back, openSupplier = { open(R.SUPPLIER, it) }) }
-            composable(R.SUPPLIER) { e ->
+            page(R.SUPPLIERS) { SuppliersScreen(session.can("suppliers.manage"), back, openSupplier = { open(R.SUPPLIER, it) }) }
+            page(R.SUPPLIER) { e ->
                 SupplierScreen(
                     e.arguments?.getString("id").orEmpty(),
                     canManage = session.can("suppliers.manage"),
@@ -398,34 +400,34 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     openAccount = { open(R.SUPPLIER_ACCOUNT, it) },
                 )
             }
-            composable(R.IMPORT_NEW) { e ->
+            page(R.IMPORT_NEW) { e ->
                 NewImportScreen(e.arguments?.getString("id")?.takeIf { it != "-" }, back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.IMPORT_NEW) { inclusive = true } } })
             }
-            composable(R.IMPORT_RECEIVE) { e -> ImportReceiveScreen(e.arguments?.getString("id").orEmpty(), back, done = back) }
-            composable(R.IMPORT_EDIT) { e -> EditImportScreen(e.arguments?.getString("id").orEmpty(), back, saved = back) }
-            composable(R.SUPPLIER_ACCOUNT) { e -> SupplierAccountScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.SMS) { SmsGatewayScreen(back) }
-            composable(R.CATEGORIES) { CategoriesScreen(back) }
-            composable(R.COUPONS) { CouponsScreen(back) }
-            composable(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
-            composable(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }, editImport = { open(R.IMPORT_EDIT, it) }) }
-            composable(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }
-            composable(R.EXPENSE) { e -> ExpenseDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.NEW_EXPENSE) { NewExpenseScreen(back, created = { id -> nav.navigate(R.of(R.EXPENSE, id)) { popUpTo(R.EXPENSES) } }) }
-            composable(R.SETTLEMENTS) { SettlementsScreen(session, back) }
-            composable(R.REPORTS) { ReportsScreen(session, back) }
-            composable(R.CUSTOMERS) {
+            page(R.IMPORT_RECEIVE) { e -> ImportReceiveScreen(e.arguments?.getString("id").orEmpty(), back, done = back) }
+            page(R.IMPORT_EDIT) { e -> EditImportScreen(e.arguments?.getString("id").orEmpty(), back, saved = back) }
+            page(R.SUPPLIER_ACCOUNT) { e -> SupplierAccountScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.SMS) { SmsGatewayScreen(back) }
+            page(R.CATEGORIES) { CategoriesScreen(back) }
+            page(R.COUPONS) { CouponsScreen(back) }
+            page(R.PURCHASE_NEW) { NewPurchaseScreen(back, created = { id -> nav.navigate(R.of(R.PURCHASE, id)) { popUpTo(R.PURCHASING) } }) }
+            page(R.PURCHASE) { e -> PurchaseOrderScreen(e.arguments?.getString("id").orEmpty(), session, back, openImportReceive = { open(R.IMPORT_RECEIVE, it) }, editImport = { open(R.IMPORT_EDIT, it) }) }
+            page(R.EXPENSES) { ExpensesScreen(session, back, openExpense = { open(R.EXPENSE, it) }, newExpense = { nav.navigate(R.NEW_EXPENSE) }) }
+            page(R.EXPENSE) { e -> ExpenseDetailScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.NEW_EXPENSE) { NewExpenseScreen(back, created = { id -> nav.navigate(R.of(R.EXPENSE, id)) { popUpTo(R.EXPENSES) } }) }
+            page(R.SETTLEMENTS) { SettlementsScreen(session, back) }
+            page(R.REPORTS) { ReportsScreen(session, back) }
+            page(R.CUSTOMERS) {
                 CustomersScreen(
                     back,
                     openCustomer = { open(R.CUSTOMER, it) },
                     detailPane = { id, close -> CustomerDetailScreen(id, close, openOrder = { open(R.ORDER, it) }) },
                 )
             }
-            composable(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
-            composable(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
-            composable(R.SERVER) { ServerScreen(back) }
-            composable(R.CURRENCY) { CurrencyScreen(session, back) }
-            composable(R.POS) {
+            page(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
+            page(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
+            page(R.SERVER) { ServerScreen(back) }
+            page(R.CURRENCY) { CurrencyScreen(session, back) }
+            page(R.POS) {
                 PosScreen(
                     session,
                     openBoxes = { nav.navigate(R.CASH_BOXES) },
@@ -435,46 +437,46 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                     openShift = { nav.navigate(R.SHIFT) },
                 )
             }
-            composable(R.SHIFT) { ShiftScreen(session, back) }
-            composable(R.AUDIT) { AuditScreen(back) }
-            composable(R.DEBTORS) { DebtorsScreen(session, back, openCustomer = { open(R.CUSTOMER, it) }) }
-            composable(R.BACKUP) { BackupScreen(back) }
-            composable(R.STOCK_COUNTS) { StockCountsScreen(session, back) }
-            composable(R.DAILY_SUMMARY) { DailySummaryScreen(back) }
-            composable(R.STORE_SETUP) { StoreSetupScreen(back) }
-            composable(R.REVIEWS) { ReviewsScreen(back) }
-            composable(R.SEARCH) { SearchScreen(session, back, navigate = { nav.navigate(it) }) }
-            composable(R.APPEARANCE) { AppearanceScreen(back) }
-            composable(R.LAYAWAYS) { LayawaysScreen(session, back, open = { open(R.LAYAWAY, it) }, newLayaway = { nav.navigate(R.LAYAWAY_NEW) }) }
-            composable(R.LAYAWAY) { e -> LayawayScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.LAYAWAY_NEW) { NewLayawayScreen(back, created = { id -> nav.navigate(R.of(R.LAYAWAY, id)) { popUpTo(R.LAYAWAYS) } }) }
-            composable(R.GIFT_CARDS) { GiftCardsScreen(session, back) }
-            composable(R.DAMAGES) { DamagesScreen(session, back) }
-            composable(R.BULK_PRICE) { BulkPriceScreen(back) }
-            composable(R.OFFERS) { OffersScreen(back, openProduct = { open(R.PRODUCT, it) }) }
-            composable(R.OWNER_ALERTS) { OwnerAlertsScreen(back) }
-            composable(R.EXCEL) { ExcelScreen(session, back) }
-            composable(R.CUSTOMER_APP) { CustomerAppSettingsScreen(back) }
-            composable(R.ASSISTANT) { AssistantScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
-            composable(R.CAMPAIGNS) { CampaignsScreen(back) }
-            composable(R.DEALS) { DealsScreen(back, open = { open(R.DEAL, it) }) }
-            composable(R.DEAL) { e -> DealEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
-            composable(R.PRE_ORDERS) { PreOrdersScreen(session, back, openLayaway = { open(R.LAYAWAY, it) }) }
-            composable(R.WEEKLY) { WeeklySummaryScreen(back) }
-            composable(R.BEHAVIOR) { BehaviorScreen(back, openCustomer = { open(R.CUSTOMER, it) }, openProduct = { open(R.PRODUCT, it) }) }
-            composable(R.POS_RETURNS) { PosReturnScreen(session, back) }
-            composable(R.CASH_BOXES) {
+            page(R.SHIFT) { ShiftScreen(session, back) }
+            page(R.AUDIT) { AuditScreen(back) }
+            page(R.DEBTORS) { DebtorsScreen(session, back, openCustomer = { open(R.CUSTOMER, it) }) }
+            page(R.BACKUP) { BackupScreen(back) }
+            page(R.STOCK_COUNTS) { StockCountsScreen(session, back) }
+            page(R.DAILY_SUMMARY) { DailySummaryScreen(back) }
+            page(R.STORE_SETUP) { StoreSetupScreen(back) }
+            page(R.REVIEWS) { ReviewsScreen(back) }
+            page(R.SEARCH) { SearchScreen(session, back, navigate = { nav.navigate(it) }) }
+            page(R.APPEARANCE) { AppearanceScreen(back) }
+            page(R.LAYAWAYS) { LayawaysScreen(session, back, open = { open(R.LAYAWAY, it) }, newLayaway = { nav.navigate(R.LAYAWAY_NEW) }) }
+            page(R.LAYAWAY) { e -> LayawayScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.LAYAWAY_NEW) { NewLayawayScreen(back, created = { id -> nav.navigate(R.of(R.LAYAWAY, id)) { popUpTo(R.LAYAWAYS) } }) }
+            page(R.GIFT_CARDS) { GiftCardsScreen(session, back) }
+            page(R.DAMAGES) { DamagesScreen(session, back) }
+            page(R.BULK_PRICE) { BulkPriceScreen(back) }
+            page(R.OFFERS) { OffersScreen(back, openProduct = { open(R.PRODUCT, it) }) }
+            page(R.OWNER_ALERTS) { OwnerAlertsScreen(back) }
+            page(R.EXCEL) { ExcelScreen(session, back) }
+            page(R.CUSTOMER_APP) { CustomerAppSettingsScreen(back) }
+            page(R.ASSISTANT) { AssistantScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
+            page(R.CAMPAIGNS) { CampaignsScreen(back) }
+            page(R.DEALS) { DealsScreen(back, open = { open(R.DEAL, it) }) }
+            page(R.DEAL) { e -> DealEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
+            page(R.PRE_ORDERS) { PreOrdersScreen(session, back, openLayaway = { open(R.LAYAWAY, it) }) }
+            page(R.WEEKLY) { WeeklySummaryScreen(back) }
+            page(R.BEHAVIOR) { BehaviorScreen(back, openCustomer = { open(R.CUSTOMER, it) }, openProduct = { open(R.PRODUCT, it) }) }
+            page(R.POS_RETURNS) { PosReturnScreen(session, back) }
+            page(R.CASH_BOXES) {
                 CashBoxesScreen(session, back, openBox = { open(R.CASH_BOX, it) }, openExchange = { nav.navigate(R.EXCHANGE) })
             }
-            composable(R.CASH_BOX) { e -> CashBoxScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.EXCHANGE) { ExchangeScreen(session, back) }
-            composable(R.PROMOTIONS) { PromotionsScreen(session, back, open = { open(R.PROMOTION, it) }) }
-            composable(R.PROMOTION) { e -> PromotionEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
-            composable(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }) }
-            composable(R.TOP_UP) { e -> TopUpScreen(e.arguments?.getString("id").orEmpty(), session, back) }
-            composable(R.BANK_ACCOUNTS) { BankAccountsScreen(session, back) }
-            composable(R.STAFF) { StaffScreen(back, open = { open(R.STAFF_EDIT, it) }) }
-            composable(R.STAFF_EDIT) { e -> StaffEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
+            page(R.CASH_BOX) { e -> CashBoxScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.EXCHANGE) { ExchangeScreen(session, back) }
+            page(R.PROMOTIONS) { PromotionsScreen(session, back, open = { open(R.PROMOTION, it) }) }
+            page(R.PROMOTION) { e -> PromotionEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
+            page(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }) }
+            page(R.TOP_UP) { e -> TopUpScreen(e.arguments?.getString("id").orEmpty(), session, back) }
+            page(R.BANK_ACCOUNTS) { BankAccountsScreen(session, back) }
+            page(R.STAFF) { StaffScreen(back, open = { open(R.STAFF_EDIT, it) }) }
+            page(R.STAFF_EDIT) { e -> StaffEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
         }
     }
     // First sign-in on this device: a short tour of what this employee can do.

@@ -133,7 +133,7 @@ export class CustomerAccountsService {
       merchant: buyer.isMerchant ? { discount: buyer.merchantDiscount, creditLimit: buyer.creditLimit } : null,
       balances: balances.map((b) => ({ currency: b.currency, balance: b.balance.neg(), owed: b.balance.gt(0) ? b.balance : dec(0) })),
       // Shown from the customer's side: + money in, - money out.
-      entries: recent.map((e) => ({ ...e, amount: dec(e.amount).neg(), note: walletNote(e.sourceType) })),
+      entries: recent.map((e) => ({ ...e, amount: dec(e.amount).neg(), note: e.sourceType === 'WALLET_GIFT' && e.note ? e.note : walletNote(e.sourceType) })),
     };
   }
 
@@ -282,6 +282,27 @@ export class CustomerAccountsService {
     });
     return { balances: await this.balances(customerId), smsQueued: !!dto.sendSms };
   }
+
+  /**
+   * Moves wallet money from one customer to another, same currency. Both sides sit on the
+   * customer-accounts ledger account, tagged with each customer; the receiver takes the
+   * sender's book value, so no exchange difference arises.
+   */
+  async transfer(tx: Tx, p: { fromId: string; toId: string; currency: string; amount: Decimal; description: string; userId?: string }) {
+    const rate = await this.currencies.rate(p.currency, tx);
+    const sar = toBase(p.amount, p.currency, rate);
+    const out = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId: p.fromId, currency: p.currency, amount: p.amount, sar, description: p.description });
+    const outSar = out.reduce((sum, l) => sum.add(dec(l.debit ?? 0)).sub(dec(l.credit ?? 0)), dec(0));
+    const inn = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId: p.toId, currency: p.currency, amount: p.amount.neg(), sar: outSar.neg(), description: p.description });
+    const diff = [...out, ...inn].reduce((sum, l) => sum.add(dec(l.debit ?? 0)).sub(dec(l.credit ?? 0)), dec(0));
+    return this.ledger.post(tx, {
+      description: p.description,
+      sourceType: 'WALLET_GIFT',
+      sourceId: p.fromId,
+      userId: p.userId,
+      lines: [...out, ...inn, ...(diff.isZero() ? [] : [diff.gt(0) ? { account: 'FX_DIFFERENCE' as const, credit: diff } : { account: 'FX_DIFFERENCE' as const, debit: diff.neg() }])],
+    });
+  }
 }
 
 /** "رصيدك لدينا: …" / "المتبقي عليك: …" for the customer's balance in [currency] (+ = owes). */
@@ -293,6 +314,7 @@ function balanceLine(balance: Decimal, currency: string) {
 const WALLET_NOTES: Record<string, string> = {
   OPENING_BALANCE: 'رصيد افتتاحي',
   WALLET_TOPUP: 'شحن رصيد',
+  WALLET_GIFT: 'إهداء رصيد',
   CUSTOMER_PAYMENT: 'دفعة / مشتريات',
   SALES_RETURN: 'مرتجع',
 };

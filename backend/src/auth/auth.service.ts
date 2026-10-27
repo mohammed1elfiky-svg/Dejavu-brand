@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SmsService } from '../sms/sms.service';
 import { currencyOfRegion } from '../common/yemen';
 import { CustomerStatus, UserStatus } from '../generated/prisma/client';
@@ -78,13 +78,21 @@ export class AuthService {
 
   // ------------------------------------------------------------- customer ---
 
+  /**
+   * Sign-up. When the store asks for a texted code and none came with the request, the
+   * account is kept as PENDING and the code is sent: the shopper enters it later
+   * (POST auth/customer/verify), or the owner approves them from the admin app.
+   */
   async customerRegister(dto: CustomerRegisterDto) {
     const phone = normalizePhone(dto.phone);
     const email = dto.email?.toLowerCase();
-    const clash = await this.prisma.customer.findFirst({
+    const clashes = await this.prisma.customer.findMany({
       where: { OR: [{ phone }, ...(email ? [{ email }] : [])] },
-      select: { phone: true },
+      select: { id: true, phone: true, status: true },
     });
+    // An unfinished sign-up with this phone is taken over by the new attempt.
+    const pending = clashes.find((c) => c.phone === phone && c.status === CustomerStatus.PENDING);
+    const clash = clashes.find((c) => c !== pending);
     if (clash) {
       throw new ConflictException(clash.phone === phone ? 'Phone number already registered' : 'Email already registered');
     }
@@ -92,20 +100,47 @@ export class AuthService {
     if (dto.governorate === 'تعز' && !dto.area) throw new BadRequestException('Choose الحوبان or المدينة for Taiz');
     const otpRequired = await this.sms.otpRequired();
     const passwordHash = await hashPassword(dto.password);
+    const details = {
+      name: dto.name.trim(),
+      email,
+      passwordHash,
+      governorate: dto.governorate,
+      area: dto.governorate === 'تعز' ? dto.area : null,
+    };
+
+    if (otpRequired && !dto.otp) {
+      if (pending) await this.prisma.customer.update({ where: { id: pending.id }, data: details });
+      else {
+        await this.prisma.$transaction(async (tx) =>
+          tx.customer.create({ data: { ...details, code: await this.sequences.next(tx, 'CUS', { year: 0 }), phone, status: CustomerStatus.PENDING, phoneVerified: false } }),
+        );
+      }
+      const delivery = await this.sms.sendOtp(phone, 'REGISTER').catch((e: unknown) => {
+        // Too many codes: the account still waits; the shopper asks again later.
+        if (e instanceof HttpException && e.getStatus() === HttpStatus.TOO_MANY_REQUESTS) return { sent: false, channel: 'SMS' as const, whatsapp: null, expiresInMinutes: 0 };
+        throw e;
+      });
+      return { pending: true, phone, ...delivery };
+    }
+
     const customer = await this.prisma.$transaction(async (tx) => {
       if (otpRequired) await this.sms.verifyOtp(tx, phone, dto.otp);
+      if (pending) return tx.customer.update({ where: { id: pending.id }, data: { ...details, status: CustomerStatus.ACTIVE, phoneVerified: true } });
       return tx.customer.create({
-        data: {
-          code: await this.sequences.next(tx, 'CUS', { year: 0 }),
-          name: dto.name.trim(),
-          phone,
-          email,
-          passwordHash,
-          phoneVerified: otpRequired,
-          governorate: dto.governorate,
-          area: dto.governorate === 'تعز' ? dto.area : null,
-        },
+        data: { ...details, code: await this.sequences.next(tx, 'CUS', { year: 0 }), phone, phoneVerified: otpRequired },
       });
+    });
+    return this.customerSession(customer.id);
+  }
+
+  /** Finishes a PENDING sign-up with the code sent to the phone (or handed over on WhatsApp). */
+  async verifyCustomer(rawPhone: string, code: string) {
+    const phone = normalizePhone(rawPhone);
+    const customer = await this.prisma.customer.findUnique({ where: { phone }, select: { id: true, status: true } });
+    if (!customer || customer.status !== CustomerStatus.PENDING) throw new BadRequestException('لا يوجد تسجيل بانتظار التحقق لهذا الرقم');
+    await this.prisma.$transaction(async (tx) => {
+      await this.sms.verifyOtp(tx, phone, code);
+      await tx.customer.update({ where: { id: customer.id }, data: { status: CustomerStatus.ACTIVE, phoneVerified: true } });
     });
     return this.customerSession(customer.id);
   }
@@ -114,6 +149,10 @@ export class AuthService {
     const customer = await this.prisma.customer.findUnique({ where: { phone: normalizePhone(dto.phone) } });
     const ok = await verifyPassword(dto.password, customer?.passwordHash);
     if (!customer || !ok) throw new UnauthorizedException(INVALID_CREDENTIALS);
+    if (customer.status === CustomerStatus.PENDING) {
+      // The app then asks for the code (or to request it on WhatsApp).
+      throw new ForbiddenException({ statusCode: 403, code: 'PENDING', message: 'الحساب بانتظار تأكيد رقم الجوال', whatsapp: await this.sms.storeWhatsapp() });
+    }
     if (customer.status !== CustomerStatus.ACTIVE) throw new UnauthorizedException('Account is not active');
     return this.customerSession(customer.id);
   }

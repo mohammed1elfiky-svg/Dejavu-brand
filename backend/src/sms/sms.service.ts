@@ -86,21 +86,50 @@ export class SmsService {
     return (await this.getSetting(REQUIRE_OTP)) === true;
   }
 
-  /** Texts a 6-digit code to a phone number that is about to register. */
+  /**
+   * Texts a 6-digit code to a phone number that is about to register (or reset its password).
+   * The store's phone only texts Yemeni numbers; for others nothing is sent and the answer
+   * says to ask for the code on WhatsApp ([whatsapp] is the store's number), where the owner
+   * gives one from the admin app (see [issueCode]).
+   */
   async sendOtp(rawPhone: string, purpose: OtpPurpose = 'REGISTER') {
     const phone = normalizePhone(rawPhone);
-    const registered = !!(await this.prisma.customer.findUnique({ where: { phone }, select: { id: true } }));
+    const customer = await this.prisma.customer.findUnique({ where: { phone }, select: { status: true } });
+    // A sign-up still waiting for its code may ask again.
+    const registered = !!customer && customer.status !== 'PENDING';
     if (purpose === 'REGISTER' && registered) throw new ConflictException('Phone number already registered');
     if (purpose === 'RESET' && !registered) throw new NotFoundException('No account uses this phone number');
+    if (!isYemeniMobile(phone)) return { sent: false, channel: 'WHATSAPP' as const, whatsapp: await this.storeWhatsapp(), expiresInMinutes: OTP_MINUTES };
     const recent = await this.prisma.phoneOtp.count({ where: { phone, createdAt: { gt: new Date(Date.now() - OTP_MINUTES * 60_000) } } });
     if (recent >= 3) throw new HttpException('Too many codes requested; try again in a few minutes', HttpStatus.TOO_MANY_REQUESTS);
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const what = purpose === 'RESET' ? 'رمز استعادة كلمة المرور' : 'رمز التحقق';
     await this.prisma.$transaction(async (tx) => {
-      await tx.phoneOtp.create({ data: { phone, purpose, codeHash: hash(phone, code), expiresAt: new Date(Date.now() + OTP_MINUTES * 60_000) } });
+      const code = await this.newCode(tx, phone, purpose);
       await this.enqueue(phone, `${what} لتطبيق Dejavu: ${code}\nصالح لمدة ${OTP_MINUTES} دقائق. لا تشاركه مع أحد.`, 'OTP', tx);
     });
-    return { sent: true, expiresInMinutes: OTP_MINUTES };
+    return { sent: true, channel: 'SMS' as const, whatsapp: null, expiresInMinutes: OTP_MINUTES };
+  }
+
+  /** A code the owner hands over themselves (e.g. on WhatsApp); valid like a texted one. */
+  async issueCode(rawPhone: string, purpose: OtpPurpose) {
+    const phone = normalizePhone(rawPhone);
+    const code = await this.prisma.$transaction((tx) => this.newCode(tx, phone, purpose));
+    const what = purpose === 'RESET' ? 'رمز استعادة كلمة المرور' : 'رمز التحقق';
+    return { phone, code, expiresInMinutes: OTP_MINUTES, message: `${what} لتطبيق Dejavu: ${code}\nصالح لمدة ${OTP_MINUTES} دقائق.` };
+  }
+
+  private async newCode(tx: Tx, phone: string, purpose: OtpPurpose) {
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await tx.phoneOtp.create({ data: { phone, purpose, codeHash: hash(phone, code), expiresAt: new Date(Date.now() + OTP_MINUTES * 60_000) } });
+    return code;
+  }
+
+  /** The store's WhatsApp number shoppers write to (store page, else the assistant's). */
+  async storeWhatsapp(): Promise<string | null> {
+    const [about, chat] = await Promise.all([this.getSetting('store.about'), this.getSetting('chat.settings')]);
+    const a = (about ?? {}) as { whatsapp?: string; phones?: string[] };
+    const c = (chat ?? {}) as { whatsapp?: string };
+    return a.whatsapp?.trim() || c.whatsapp?.trim() || a.phones?.[0]?.trim() || null;
   }
 
   /** Checks the code for [phone]; throws when it is wrong, expired or used too often. */
@@ -127,6 +156,9 @@ export class SmsService {
     await this.prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
   }
 }
+
+/** A Yemeni mobile in the stored form (9 digits starting with 7). */
+export const isYemeniMobile = (phone: string) => /^7\d{8}$/.test(phone.replace(/[\s-]/g, ''));
 
 /** Numbers as the phone dials them: Yemeni 9-digit mobiles get +967, the rest stay local. */
 export function dialable(phone: string) {

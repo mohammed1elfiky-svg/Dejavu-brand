@@ -431,6 +431,11 @@ export class CustomersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'PENDING', 'BLOCKED'], description: 'PENDING: signed up without entering the code' })
+  @IsOptional()
+  @IsIn(['ACTIVE', 'PENDING', 'BLOCKED'])
+  status?: 'ACTIVE' | 'PENDING' | 'BLOCKED';
 }
 
 

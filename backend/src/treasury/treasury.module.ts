@@ -1,3 +1,4 @@
+import { StoreWalletGiftController, WalletGiftService } from './wallet-gift';
 import { Global, Module } from '@nestjs/common';
 import { CustomerAccountsService } from './customer-accounts.service';
 import {
@@ -13,8 +14,8 @@ import { WalletService } from './wallet.service';
 
 @Global()
 @Module({
-  controllers: [AdminTreasuryController, AdminDebtorsController, AdminCustomerAccountController, AdminWalletController, StoreBankAccountsController, StoreWalletController],
-  providers: [TreasuryService, CustomerAccountsService, WalletService],
+  controllers: [AdminTreasuryController, AdminDebtorsController, AdminCustomerAccountController, AdminWalletController, StoreBankAccountsController, StoreWalletController, StoreWalletGiftController],
+  providers: [TreasuryService, CustomerAccountsService, WalletService, WalletGiftService],
   exports: [TreasuryService, CustomerAccountsService],
 })
 export class TreasuryModule {}

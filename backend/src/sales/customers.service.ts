@@ -64,9 +64,10 @@ export class CustomersService {
 
   async listCustomers(q: CustomersQueryDto) {
     const contains = q.q ? { contains: q.q, mode: 'insensitive' as const } : undefined;
-    const where: Prisma.CustomerWhereInput = contains
-      ? { OR: [{ name: contains }, { phone: contains }, { email: contains }, { code: contains }] }
-      : {};
+    const where: Prisma.CustomerWhereInput = {
+      ...(contains ? { OR: [{ name: contains }, { phone: contains }, { email: contains }, { code: contains }] } : {}),
+      ...(q.status ? { status: q.status } : { status: { not: 'DELETED' } }),
+    };
     const [items, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,

@@ -76,6 +76,16 @@ export class CustomerLoginDto {
   password: string;
 }
 
+export class CustomerVerifyDto {
+  @ApiProperty({ example: '777123456' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  phone: string;
+
+  @ApiProperty({ example: '123456' })
+  @Matches(/^\d{6}$/, { message: 'code must be 6 digits' })
+  code: string;
+}
+
 export class RefreshTokenDto {
   @ApiProperty()
   @IsString()

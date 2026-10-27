@@ -1,3 +1,4 @@
+import { AdminCustomerAccessController, CustomerAccessService } from './customer-access';
 import { AdminPreOrdersController, StorePreOrdersController } from './preorders.controller';
 import { PreOrdersService } from './preorders.service';
 import { AdminDealsController } from './deals.controller';
@@ -41,6 +42,7 @@ import { StoreSettingsService } from './store-settings.service';
 @Module({
   imports: [InventoryModule],
   controllers: [
+    AdminCustomerAccessController,
     StoreShippingController,
     StoreAddressesController,
     StoreCartController,
@@ -64,6 +66,6 @@ import { StoreSettingsService } from './store-settings.service';
     StorePreOrdersController,
     AdminPreOrdersController,
   ],
-  providers: [CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService, DealsService, PreOrdersService],
+  providers: [CustomerAccessService, CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService, DealsService, PreOrdersService],
 })
 export class SalesModule {}

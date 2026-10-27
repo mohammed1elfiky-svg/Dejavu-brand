@@ -46,6 +46,8 @@ enum CustomerStatus {
   ACTIVE
   BLOCKED
   DELETED
+  /// Signed up but has not entered the texted code yet; the owner may approve them.
+  PENDING
 }
 
 enum Gender {
@@ -233,6 +235,7 @@ enum JournalSourceType {
   CASH_TRANSFER
   WALLET_TOPUP
   GIFT_CARD
+  WALLET_GIFT
 }
 
 enum NotificationType {
@@ -535,6 +538,8 @@ model Product {
   visibility     ProductVisibility @default(ALL)
   taxRateId      String?           @map("tax_rate_id") @db.Uuid
   isFeatured     Boolean           @default(false) @map("is_featured")
+  /// The owner's order in the customer app (1 = first); null = after those, newest first.
+  storePosition  Int?              @map("store_position")
   ratingAvg      Decimal           @default(0) @map("rating_avg") @db.Decimal(3, 2)
   ratingCount    Int               @default(0) @map("rating_count")
   /// Numeric base SKU (100..100000); variants are "<skuNumber>-<variantNo>".

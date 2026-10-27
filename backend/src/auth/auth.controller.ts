@@ -4,7 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthPrincipal, CurrentUser, Public } from '../common/decorators/auth.decorators';
 import { GOVERNORATES } from '../common/yemen';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, PasswordResetDto, RefreshTokenDto, StaffLoginDto } from './dto/auth.dto';
+import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, CustomerVerifyDto, PasswordResetDto, RefreshTokenDto, StaffLoginDto } from './dto/auth.dto';
 
 const authLimit = () => Throttle({ default: { limit: Number(process.env.AUTH_RATE_LIMIT ?? 10), ttl: 60_000 } });
 
@@ -61,6 +61,15 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AuthPrincipal) {
     return user.type === 'staff' ? this.auth.staffProfile(user.id) : this.auth.customerProfile(user.id);
+  }
+
+  /** Finishes a sign-up that waited for its code. */
+  @Public()
+  @authLimit()
+  @Post('customer/verify')
+  @HttpCode(HttpStatus.OK)
+  verify(@Body() dto: CustomerVerifyDto) {
+    return this.auth.verifyCustomer(dto.phone, dto.code);
   }
 
   /** Forgotten password: new password with the code texted to the customer's phone. */

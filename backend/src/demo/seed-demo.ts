@@ -210,6 +210,7 @@ async function main() {
   const shoppers = [];
   for (const c of DEMO_CUSTOMERS) {
     const session = await auth.customerRegister({ name: c.name, phone: c.phone, email: c.email, password: DEMO_PASSWORD });
+    if (!('customer' in session)) throw new Error('Demo customers need sign-up without a texted code');
     const address = await customers.createAddress(session.customer.id, {
       recipient: c.name, phone: c.phone, governorate: c.governorate, city: c.city, street: c.street,
     });

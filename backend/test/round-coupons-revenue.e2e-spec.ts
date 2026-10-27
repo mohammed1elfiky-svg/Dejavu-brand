@@ -57,10 +57,15 @@ describe('Coupons, revenue, opening balances, password reset (e2e)', () => {
   });
 
   it('resets a forgotten password with a texted code', async () => {
-    const c = await customerToken(app, 'نسيت كلمة السر');
+    // Non-Yemeni numbers get no text: the app asks for the code on WhatsApp instead.
+    const abroad = await customerToken(app, 'خارج اليمن');
+    expect((await http.post('/auth/customer/otp/reset', { phone: abroad.phone }).expect(200)).body).toMatchObject({ sent: false, channel: 'WHATSAPP' });
+    const phone = `77${String(Date.now()).slice(-7)}`;
+    await http.post('/auth/customer/register', { name: 'نسيت كلمة السر', phone, password: 'secret123' }).expect(201);
+    const c = { phone };
     await http.post('/auth/customer/otp/reset', { phone: '777000999' }).expect(404);
-    await http.post('/auth/customer/otp/reset', { phone: c.phone }).expect(200);
-    const text = (await prisma.outgoingSms.findFirst({ where: { phone: c.phone }, orderBy: { createdAt: 'desc' } }))!;
+    expect((await http.post('/auth/customer/otp/reset', { phone: c.phone }).expect(200)).body).toMatchObject({ sent: true, channel: 'SMS' });
+    const text = (await prisma.outgoingSms.findFirst({ where: { phone: `+967${c.phone}` }, orderBy: { createdAt: 'desc' } }))!;
     expect(text.body).toContain('استعادة كلمة المرور');
     const code = text.body.match(/\d{6}/)![0];
     await http.post('/auth/customer/password-reset', { phone: c.phone, code: code === '000000' ? '111111' : '000000', newPassword: 'newsecret1' }).expect(400);

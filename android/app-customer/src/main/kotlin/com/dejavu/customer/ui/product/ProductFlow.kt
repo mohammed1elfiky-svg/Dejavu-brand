@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import com.dejavu.core.model.StoreProduct
 import com.dejavu.core.model.StoreVariant
 import com.dejavu.core.ui.ProductImage
+import com.dejavu.core.ui.theme.Backdrop
 import com.dejavu.core.ui.theme.Button
 import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.core.ui.theme.glass
@@ -236,7 +237,7 @@ fun FloatingOptionsSheet(
 
 /** The floating glass cart button; it bumps when something lands in it. */
 @Composable
-fun FloatingCartButton(count: Int, bump: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun FloatingCartButton(count: Int, bump: Int, onClick: () -> Unit, modifier: Modifier = Modifier, backdrop: Backdrop? = null) {
     val scale = remember { Animatable(1f) }
     LaunchedEffect(bump) {
         if (bump > 0) {
@@ -248,7 +249,7 @@ fun FloatingCartButton(count: Int, bump: Int, onClick: () -> Unit, modifier: Mod
         modifier
             .scale(scale.value)
             .size(52.dp)
-            .glass(CircleShape, elevation = 14.dp)
+            .glass(CircleShape, elevation = 14.dp, backdrop = backdrop)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -309,7 +310,7 @@ fun FlyToCart(
 
 /** The confirmation card sliding up from the bottom after adding to the cart. */
 @Composable
-fun AddedCard(visible: Boolean, productName: String, onViewCart: () -> Unit, onContinue: () -> Unit, modifier: Modifier = Modifier) {
+fun AddedCard(visible: Boolean, productName: String, onViewCart: () -> Unit, onContinue: () -> Unit, modifier: Modifier = Modifier, backdrop: Backdrop? = null) {
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
@@ -320,7 +321,7 @@ fun AddedCard(visible: Boolean, productName: String, onViewCart: () -> Unit, onC
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .glass(RoundedCornerShape(24.dp), elevation = 20.dp)
+                .glass(RoundedCornerShape(24.dp), elevation = 20.dp, backdrop = backdrop)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {

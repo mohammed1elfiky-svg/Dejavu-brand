@@ -106,6 +106,8 @@ import com.dejavu.customer.ui.components.BrandChip
 import com.dejavu.customer.ui.components.GlassBottomPanel
 import com.dejavu.customer.ui.components.goldChipColors
 import com.dejavu.core.ui.theme.GlassCard
+import com.dejavu.core.ui.theme.backdropSource
+import com.dejavu.core.ui.theme.rememberBackdrop
 import com.dejavu.core.ui.theme.GlassIconButton
 import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.core.ui.theme.glass
@@ -450,7 +452,9 @@ fun ProductScreen(
             }
         },
     ) { padding ->
+        val backdrop = rememberBackdrop()
         Box(Modifier.fillMaxSize().onGloballyPositioned { layerOrigin = it.positionInRoot() }) {
+        Box(Modifier.fillMaxSize().backdropSource(backdrop)) {
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { p ->
             val variant = vm.selectedVariant()
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -510,6 +514,7 @@ fun ProductScreen(
                 Spacer(Modifier.height(16.dp))
             }
         }
+        }
         val loaded = (state as? Load.Ready)?.value
         if (loaded != null) {
             FloatingCartButton(
@@ -517,6 +522,7 @@ fun ProductScreen(
                 bump = bump,
                 onClick = openCart,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 16.dp).onGloballyPositioned { cartBounds = it.boundsInRoot() },
+                backdrop = backdrop,
             )
             FlyToCart(
                 flight = flight,
@@ -538,6 +544,7 @@ fun ProductScreen(
                 },
                 onContinue = { confirm = false },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+                backdrop = backdrop,
             )
         }
         }

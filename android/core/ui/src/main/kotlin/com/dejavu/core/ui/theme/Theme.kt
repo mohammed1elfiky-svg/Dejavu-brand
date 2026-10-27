@@ -3,6 +3,7 @@ package com.dejavu.core.ui.theme
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -124,9 +125,9 @@ object Liquid {
     val GoldBrush get() = if (LiquidMode.dark) goldDark else goldLight
     val GoldBrushH get() = if (LiquidMode.dark) goldDarkH else goldLightH
 
-    private val fillLight = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.80f), Color.White.copy(alpha = 0.65f)))
+    private val fillLight = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.45f), Color.White.copy(alpha = 0.18f)))
     private val fillDark = Brush.verticalGradient(listOf(Color(0xFF2B2720).copy(alpha = 0.92f), Color(0xFF221F19).copy(alpha = 0.85f)))
-    private val edgeLight = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.8f), Gold.copy(alpha = 0.30f), Color.White.copy(alpha = 0.2f)))
+    private val edgeLight = Brush.linearGradient(listOf(Color.White.copy(alpha = 0.95f), Gold.copy(alpha = 0.40f), Color.White.copy(alpha = 0.30f), Color.White.copy(alpha = 0.85f)))
     private val edgeDark = Brush.linearGradient(listOf(Gold.copy(alpha = 0.35f), Gold.copy(alpha = 0.12f), Color.White.copy(alpha = 0.06f)))
 
     /** Frosted glass fill and its glowing edge. */
@@ -254,11 +255,17 @@ fun LiquidBackdrop(content: @Composable BoxScope.() -> Unit) {
 
 // ---------------------------------------------------------------- glass ---
 
-/** Frosted glass: translucent white fill, glowing hairline edge and a soft floating shadow. */
-fun Modifier.glass(shape: Shape = Liquid.CardShape, elevation: Dp = 12.dp): Modifier =
+/**
+ * Frosted glass: translucent white fill, glowing hairline edge and a soft floating shadow.
+ * With a [backdrop] the content behind is blurred first (floating elements over content);
+ * where blur is not available the glass gets a denser fill so it stays readable.
+ */
+fun Modifier.glass(shape: Shape = Liquid.CardShape, elevation: Dp = 12.dp, backdrop: Backdrop? = null): Modifier =
     this
-        .shadow(elevation, shape, ambientColor = Liquid.Gold.copy(alpha = 0.18f), spotColor = Liquid.GoldDeep.copy(alpha = 0.16f))
+        .shadow(elevation, shape, ambientColor = Color(0xFFD4AF37).copy(alpha = 0.16f), spotColor = Color(0xFFD4AF37).copy(alpha = 0.30f))
         .clip(shape)
+        .then(if (backdrop != null) Modifier.backdropBlur(backdrop, shape) else Modifier)
+        .then(if (backdrop != null && !backdrop.supported) Modifier.background(Liquid.Frost.copy(alpha = 0.88f)) else Modifier)
         .background(Liquid.GlassFill)
         .border(BorderStroke(1.dp, Liquid.GlassEdge), shape)
 
@@ -618,8 +625,9 @@ fun RowScope.GlassNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVec
                 .padding(horizontal = 12.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            val pop by animateFloatAsState(if (selected) 1.16f else 1f, spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessMediumLow), label = "navPop")
             Box {
-                Icon(icon, contentDescription = label, tint = if (selected) Liquid.GoldDeep else Liquid.InkSoft, modifier = Modifier.size(22.dp))
+                Icon(icon, contentDescription = label, tint = if (selected) Liquid.GoldDeep else Liquid.InkSoft, modifier = Modifier.size(22.dp).graphicsLayer { scaleX = pop; scaleY = pop })
                 if (badge > 0) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(start = 14.dp).size(16.dp).clip(RoundedCornerShape(8.dp)).background(Liquid.Danger),
@@ -648,19 +656,40 @@ fun GoldBadge(text: String, modifier: Modifier = Modifier) {
 
 // ---------------------------------------------------------- transitions ---
 
-/** Soft slide + fade between screens (direction-aware for RTL). */
-object LiquidTransitions {
-    private const val MS = 320
+/**
+ * Screen changes like iOS: the new screen slides in over the old one, which drifts away a
+ * third of the way and dims; going back reverses it. Switching between the main tabs only
+ * cross-fades. Everything eases out with the same soft curve.
+ */
+class IosTransitions(private val tabs: Set<String> = emptySet()) {
+    private val ease = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+
+    private fun AnimatedContentTransitionScope<NavBackStackEntry>.betweenTabs() =
+        initialState.destination.route in tabs && targetState.destination.route in tabs
+
     val enter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        fadeIn(tween(MS, easing = FastOutSlowInEasing)) + slideInHorizontally(tween(MS, easing = FastOutSlowInEasing)) { -it / 10 }
+        if (betweenTabs()) fadeIn(tween(220)) else slideInHorizontally(tween(MS, easing = ease)) { -it } + fadeIn(tween(MS / 2))
     }
     val exit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(MS / 2))
+        if (betweenTabs()) fadeOut(tween(160)) else slideOutHorizontally(tween(MS, easing = ease)) { it / 3 } + fadeOut(tween(MS, easing = ease), targetAlpha = 0.65f)
     }
     val popEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        fadeIn(tween(MS, easing = FastOutSlowInEasing)) + slideInHorizontally(tween(MS, easing = FastOutSlowInEasing)) { it / 10 }
+        if (betweenTabs()) fadeIn(tween(220)) else slideInHorizontally(tween(MS, easing = ease)) { it / 3 } + fadeIn(tween(MS, easing = ease), initialAlpha = 0.65f)
     }
     val popExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(MS / 2)) + slideOutHorizontally(tween(MS)) { -it / 10 }
+        if (betweenTabs()) fadeOut(tween(160)) else slideOutHorizontally(tween(MS, easing = ease)) { -it } + fadeOut(tween(MS / 2, delayMillis = MS / 2))
     }
+
+    private companion object {
+        const val MS = 420
+    }
+}
+
+/** The transitions for apps without a tab bar. */
+object LiquidTransitions {
+    private val ios = IosTransitions()
+    val enter get() = ios.enter
+    val exit get() = ios.exit
+    val popEnter get() = ios.popEnter
+    val popExit get() = ios.popExit
 }

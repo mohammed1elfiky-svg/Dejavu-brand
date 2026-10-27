@@ -25,12 +25,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.ui.graphics.Color
 import com.dejavu.core.ui.theme.FloatingGlassBar
 import com.dejavu.core.ui.theme.GlassNavItem
-import com.dejavu.core.ui.theme.LiquidTransitions
+import com.dejavu.core.ui.theme.IosTransitions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -211,6 +212,7 @@ fun DejavuNavHost() {
     // Needed both for push and for the background inbox checks used without Firebase.
     if (session is SessionState.LoggedIn) AskNotificationPermission()
 
+    val transitions = remember { IosTransitions(tabs.map { it.route }.toSet()) }
     Scaffold(
         // Screens draw their own top bars; here only the bottom inset is handled.
         containerColor = Color.Transparent,
@@ -235,10 +237,10 @@ fun DejavuNavHost() {
             nav,
             startDestination = Routes.HOME,
             modifier = Modifier.padding(padding),
-            enterTransition = LiquidTransitions.enter,
-            exitTransition = LiquidTransitions.exit,
-            popEnterTransition = LiquidTransitions.popEnter,
-            popExitTransition = LiquidTransitions.popExit,
+            enterTransition = transitions.enter,
+            exitTransition = transitions.exit,
+            popEnterTransition = transitions.popEnter,
+            popExitTransition = transitions.popExit,
         ) {
             composable(Routes.HOME) {
                 HomeScreen(

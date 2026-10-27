@@ -276,6 +276,10 @@ interface DejavuApi {
     @POST("store/chat/{id}/report")
     suspend fun reportChat(@Path("id") id: String, @Body body: com.dejavu.core.model.ChatReportRequest): com.dejavu.core.model.ChatReportResult
 
+    /** The server addresses the app may use, in order. */
+    @GET("store/servers")
+    suspend fun servers(): com.dejavu.core.model.ServerList
+
     /** Deletes the signed-in customer's account for good. */
     @POST("store/me/delete-account")
     suspend fun deleteAccount(@Body body: com.dejavu.core.model.DeleteAccountRequest): Response<Unit>

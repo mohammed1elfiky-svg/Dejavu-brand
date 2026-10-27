@@ -60,7 +60,7 @@ import kotlinx.coroutines.launch
 
 // ------------------------------------------------------------ entry points ---
 
-/** The store page ("عن المتجر") and sign-in before browsing. */
+/** The store page ("عن المتجر"), sign-in before browsing, and the server addresses. */
 @Composable
 fun CustomerAppSettingsScreen(onBack: () -> Unit) {
     val vm = adminViewModel(key = "customer-app-settings") { CustomerAppSettingsViewModel(it.customerApp) }
@@ -85,6 +85,7 @@ fun CustomerAppSettingsScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 LoginCard(bundle.app.requireLogin, busy = SAVE_LOGIN in saving, onChange = vm::saveLogin)
+                ServersCard()
                 AboutCard(bundle.about, busy = SAVE_ABOUT in saving, onSave = vm::saveAbout)
             }
         }

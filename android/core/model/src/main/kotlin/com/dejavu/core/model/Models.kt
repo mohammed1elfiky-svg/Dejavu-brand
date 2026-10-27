@@ -717,6 +717,10 @@ data class ChatReportRequest(val reason: String? = null)
 @Serializable
 data class ChatReportResult(val reported: Boolean = true)
 
+/** GET store/servers, and the same list in the GitHub "directory" file. */
+@Serializable
+data class ServerList(val servers: List<String> = emptyList(), val updatedAt: String? = null)
+
 /** POST store/me/delete-account: the password, asked again. */
 @Serializable
 data class DeleteAccountRequest(val password: String)

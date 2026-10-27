@@ -56,6 +56,11 @@ class CustomerAppRepository(private val api: AdminApi) {
     suspend fun about() = apiCall { api.storeAbout() }
     suspend fun setAbout(s: StoreAboutSettings) = apiCall { api.setStoreAbout(s) }
 
+    /** The server addresses the customer app tries, in order. */
+    suspend fun appServers() = apiCall { api.appServers() }
+    suspend fun setAppServers(servers: List<String>) = apiCall { api.setAppServers(AppServersRequest(servers)) }
+    suspend fun syncAppServers() = apiCall { api.syncAppServers() }
+
     suspend fun chatSettings() = apiCall { api.chatSettings() }
     suspend fun setChatSettings(s: ChatSettingsRequest) = apiCall { api.setChatSettings(s) }
     suspend fun testChat() = apiCall { api.testChat() }

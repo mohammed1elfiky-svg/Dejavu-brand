@@ -471,3 +471,25 @@ data class ChatTestResult(
     val status: Int? = null,
     val available: List<String> = emptyList(),
 )
+
+// ------------------------------------------------------------ app servers ---
+
+/** GET admin/app-servers: the customer app's server addresses and their copy on GitHub. */
+@Serializable
+data class AppServers(
+    val servers: List<String> = emptyList(),
+    val updatedAt: String? = null,
+    val directory: Directory = Directory(),
+) {
+    @Serializable
+    data class Directory(
+        /** The server has a GitHub token to keep the copy up to date. */
+        val configured: Boolean = false,
+        val url: String = "",
+        val syncedAt: String? = null,
+        val error: String? = null,
+    )
+}
+
+@Serializable
+data class AppServersRequest(val servers: List<String>)

@@ -38,6 +38,14 @@ import java.io.IOException
 /** Hand-wired dependencies for the whole app (small enough not to need a DI framework). */
 class AppContainer(private val context: Context) {
     val settings = SettingsStore(context, BuildConfig.API_BASE_URL)
+
+    /** Moves the app to another server address when this one cannot be reached. */
+    val failover = ServerFailover(
+        context,
+        settings,
+        builtIn = listOf(BuildConfig.API_BASE_URL) + BuildConfig.FALLBACK_SERVERS.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+        directoryUrl = BuildConfig.SERVER_DIRECTORY_URL,
+    )
     private val tokens = SecureTokenStore(context)
 
     /** "Remember me" on the login screen; kept across sign-outs. */
@@ -54,12 +62,23 @@ class AppContainer(private val context: Context) {
         tokens = tokens,
         onSessionExpired = { sessionRef.onSessionExpired() },
         debugLogging = BuildConfig.DEBUG,
-        configure = { addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("X-Device-Id", deviceId).build()) } },
+        configure = {
+            addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("X-Device-Id", deviceId).build()) }
+            addInterceptor(FailoverInterceptor(failover))
+        },
     )
     private val api = apiAndClient.first
 
     /** Same client as [api]: sends the customer's token and refreshes it when it expires. */
     private val http = apiAndClient.second
+
+    /** For pictures: no token, but the store's own files go to the server in use now. */
+    val imageClient: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .addInterceptor(CurrentServerImages(settings))
+            .addInterceptor(FailoverInterceptor(failover))
+            .build()
+    }
 
     /** A private file of the signed-in customer (e.g. the shipping receipt photo of an order), as bytes. */
     suspend fun privateFile(id: String): Result<ByteArray> = apiCall {
@@ -241,6 +260,8 @@ class AppContainer(private val context: Context) {
             }
         }
         appScope.launch { session.restore() }
+        // The owner's current list of server addresses, kept for when this one is blocked.
+        appScope.launch { apiCall { api.servers() }.onSuccess { failover.remember(it.servers) } }
         appScope.launch { currencies.refresh() }
         // The owner's app settings (sign-in rule, ads, assistant).
         appScope.launch { extras.refreshConfig() }

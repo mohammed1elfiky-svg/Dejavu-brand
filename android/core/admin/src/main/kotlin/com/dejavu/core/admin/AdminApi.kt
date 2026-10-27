@@ -313,6 +313,9 @@ interface AdminApi {
     @PUT("admin/store-app") suspend fun setStoreApp(@Body body: StoreAppSettings): StoreAppSettings
     @GET("admin/store-about") suspend fun storeAbout(): StoreAboutSettings
     @PUT("admin/store-about") suspend fun setStoreAbout(@Body body: StoreAboutSettings): StoreAboutSettings
+    @GET("admin/app-servers") suspend fun appServers(): AppServers
+    @PUT("admin/app-servers") suspend fun setAppServers(@Body body: AppServersRequest): AppServers
+    @POST("admin/app-servers/sync") suspend fun syncAppServers(): AppServers
 
     @GET("admin/chat/settings") suspend fun chatSettings(): ChatSettings
     @PUT("admin/chat/settings") suspend fun setChatSettings(@Body body: ChatSettingsRequest): ChatSettings

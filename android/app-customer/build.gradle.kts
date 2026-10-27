@@ -16,6 +16,10 @@ android {
         versionName = providers.gradleProperty("dejavu.versionName").getOrElse("0.1.0")
         val apiBaseUrl = providers.gradleProperty("dejavu.apiBaseUrl").get()
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        // Extra addresses to try when the first does not answer (comma separated), and the
+        // GitHub file with the owner's current list, read when none of them answers.
+        buildConfigField("String", "FALLBACK_SERVERS", "\"${providers.gradleProperty("dejavu.fallbackServers").getOrElse("")}\"")
+        buildConfigField("String", "SERVER_DIRECTORY_URL", "\"${providers.gradleProperty("dejavu.serverDirectoryUrl").getOrElse("")}\"")
         // Push notifications: values of this app in the Firebase console (empty = push off).
         fun prop(name: String) = providers.gradleProperty(name).getOrElse("")
         buildConfigField("String", "FIREBASE_APP_ID", "\"${prop("dejavu.firebase.customerAppId")}\"")

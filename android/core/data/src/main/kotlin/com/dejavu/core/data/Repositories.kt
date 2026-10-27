@@ -6,6 +6,7 @@ import com.dejavu.core.model.AddCartItemRequest
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.AddressRequest
 import com.dejavu.core.model.AuthResponse
+import com.dejavu.core.model.SignUpResult
 import com.dejavu.core.model.CardCheckout
 import com.dejavu.core.model.Cart
 import com.dejavu.core.model.Category
@@ -94,7 +95,9 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }))
     }.map { r ->
         val customer = r.customer
-        if (r.accessToken != null && r.refreshToken != null && customer != null) start(AuthResponse(r.accessToken, r.refreshToken, r.expiresIn, customer))
+        val access = r.accessToken
+        val refresh = r.refreshToken
+        if (access != null && refresh != null && customer != null) start(AuthResponse(access, refresh, r.expiresIn, customer))
         r
     }
 
@@ -107,7 +110,7 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         governorate: String? = null,
         area: String? = null,
         otp: String? = null,
-    ): Result<Customer> = signUp(name, phone, password, email, governorate, area, otp).mapCatching { r ->
+    ): Result<Customer> = signUp(name, phone, password, email, governorate, area, otp).mapCatching { r: SignUpResult ->
         r.customer ?: throw com.dejavu.core.network.ApiException(0, "أدخل رمز التحقق المرسل إلى رقمك")
     }
 

@@ -163,16 +163,16 @@ base64 -w0 dejavu-release.jks    # انسخ الناتج
 | Secret | `ANDROID_KEYSTORE_PASSWORD` | كلمة مرور الملف |
 | Secret | `ANDROID_KEY_ALIAS` | `dejavu` |
 | Secret | `ANDROID_KEY_PASSWORD` | كلمة مرور المفتاح |
-| Variable | `DEJAVU_API_URL` | `https://<نطاقك>/api/v1/` |
+| Variable (اختياري) | `DEJAVU_API_URL` | `https://<نطاقك>/api/v1/`، وبدونه يُستخدم الرابط في `android/gradle.properties` |
 
 ### إصدار نسخة
 ```bash
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
-سيبني workflow **Android release** نسختين موقّعتين:
-- `dejavu-customer-1.0.0.apk`
-- `dejavu-admin-1.0.0.apk`
+سيبني workflow **Android release** نسخاً موقّعة:
+- `dejavu-customer-1.0.0.aab`: ملف تطبيق العملاء الذي يُرفع على Google Play.
+- `dejavu-customer-1.0.0.apk` و`dejavu-admin-1.0.0.apk`: للتثبيت المباشر.
 
 وينشرهما في صفحة **Releases** على GitHub. يمكن تشغيله يدوياً من تبويب Actions أيضاً.
 
@@ -180,6 +180,14 @@ git tag v1.0.0 && git push origin v1.0.0
 - تقبل `https` فقط.
 - مضبوطة على رابط خادمك، ويبقى تغييره ممكناً من شاشة الخادم.
 - رقم الإصدار يُؤخذ من الوسم.
+
+---
+
+### روابط Google Play
+- سياسة الخصوصية: `https://<نطاقك>/api/v1/privacy`
+- حذف الحساب (Data safety ← Account deletion): `https://<نطاقك>/api/v1/delete-account`
+
+العميل يحذف حسابه أيضاً من التطبيق (حسابي ← حذف الحساب). تُمسح بياناته الشخصية، وتبقى فواتيره ومدفوعاته باسم "عميل محذوف".
 
 ---
 

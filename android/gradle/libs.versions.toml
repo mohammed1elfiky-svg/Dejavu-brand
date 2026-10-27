@@ -20,7 +20,6 @@ zxingEmbedded = "4.3.0"
 reorderable = "2.4.3"
 print = "1.0.0"
 exifinterface = "1.3.7"
-playServicesAds = "23.6.0"
 
 [libraries]
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
@@ -57,7 +56,6 @@ zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.re
 reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
 androidx-print = { module = "androidx.print:print", version.ref = "print" }
-play-services-ads = { module = "com.google.android.gms:play-services-ads", version.ref = "playServicesAds" }
 
 [plugins]
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

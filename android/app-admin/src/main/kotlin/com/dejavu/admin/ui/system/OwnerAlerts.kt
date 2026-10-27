@@ -233,5 +233,6 @@ private fun alertIcon(kind: String): Pair<ImageVector, androidx.compose.ui.graph
     "VOID" -> Icons.Filled.Delete to MaterialTheme.colorScheme.error
     "SHORTAGE" -> Icons.Filled.Warning to Warning
     "PRICE" -> Icons.Filled.Edit to Lux.GoldDeep
+    "CHAT_REPORT" -> Icons.Filled.Warning to MaterialTheme.colorScheme.error
     else -> Icons.Filled.Notifications to Lux.GoldDeep
 }

@@ -17,6 +17,7 @@ import { validateEnv } from './config/env';
 import { ExpensesModule } from './expenses/expenses.module';
 import { FilesModule } from './files/files.module';
 import { HealthController } from './health/health.controller';
+import { AccountModule } from './account/account.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
     PrismaModule,
+    AccountModule,
     CommonModule,
     NotificationsModule,
     AuthModule,

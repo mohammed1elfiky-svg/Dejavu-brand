@@ -17,6 +17,14 @@ export class ChatMessageDto {
   imageFileId?: string;
 }
 
+export class ChatReportDto {
+  @ApiPropertyOptional({ description: 'What is wrong with the answer' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 export class ChatSettingsDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(8000) instructions?: string;
@@ -46,6 +54,13 @@ export class StoreChatController {
   @HttpCode(HttpStatus.OK)
   send(@Body() dto: ChatMessageDto, @CurrentUser() u: AuthPrincipal) {
     return this.chat.send(u.id, dto);
+  }
+
+  /** Flags an assistant answer as wrong or offensive. */
+  @Post(':messageId/report')
+  @HttpCode(HttpStatus.OK)
+  report(@Param('messageId', ParseUUIDPipe) messageId: string, @Body() dto: ChatReportDto, @CurrentUser() u: AuthPrincipal) {
+    return this.chat.report(u.id, messageId, dto.reason);
   }
 
   @Delete()

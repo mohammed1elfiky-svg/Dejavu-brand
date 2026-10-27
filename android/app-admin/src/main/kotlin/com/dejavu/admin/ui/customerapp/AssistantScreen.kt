@@ -395,6 +395,7 @@ private fun ConversationCard(c: ChatConversation, onClick: () -> Unit) {
             StatusChip("${c.messages} رسالة", Lux.GoldDeep)
             if (c.images > 0) StatusChip("${c.images} صورة", Lux.GoldDeep)
             if (c.handovers > 0) StatusChip("${c.handovers} تحويل", Warning)
+            if (c.reports > 0) StatusChip("${c.reports} إبلاغ", MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -458,6 +459,7 @@ private fun Bubble(line: ChatLine) {
                     Text("اقترح ${line.productIds.size} منتج", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
                 }
                 if (line.handover) StatusChip("حوّل العميل إلى واتساب", Warning)
+                if (line.reportedAt != null) StatusChip("أبلغ العميل عن هذا الرد" + (line.reportReason?.let { ": $it" } ?: ""), MaterialTheme.colorScheme.error)
             }
         }
         Text(

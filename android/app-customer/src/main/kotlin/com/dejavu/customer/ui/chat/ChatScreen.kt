@@ -3,6 +3,7 @@ package com.dejavu.customer.ui.chat
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -166,6 +168,15 @@ class ChatViewModel(private val extras: StoreExtrasRepository) : BaseViewModel()
         return true
     }
 
+    /** Reports an assistant answer as wrong or offensive. */
+    fun report(messageId: String, reason: String) {
+        viewModelScope.launch {
+            extras.reportChat(messageId, reason).orSay() ?: return@launch
+            update { ui -> ui.copy(entries = ui.entries.map { if (it.message.id == messageId) it.copy(message = it.message.copy(reported = true)) else it }) }
+            say("شكراً، وصلنا بلاغك وسنراجع الرد")
+        }
+    }
+
     fun clear() {
         viewModelScope.launch {
             extras.clearChat().orSay() ?: return@launch
@@ -200,6 +211,7 @@ fun ChatScreen(onBack: () -> Unit, openProduct: (String) -> Unit, login: () -> U
     val uriHandler = LocalUriHandler.current
     var menu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf<String?>(null) }
     val loggedIn = session is SessionState.LoggedIn
     CollectMessages(vm, snackbar)
     LaunchedEffect(loggedIn) { if (loggedIn) vm.load() }
@@ -271,6 +283,7 @@ fun ChatScreen(onBack: () -> Unit, openProduct: (String) -> Unit, login: () -> U
                     typing = typing,
                     openProduct = openProduct,
                     openWhatsApp = openWhatsApp,
+                    onReport = { reporting = it },
                     modifier = Modifier.weight(1f),
                 )
                 InputBar(
@@ -282,6 +295,16 @@ fun ChatScreen(onBack: () -> Unit, openProduct: (String) -> Unit, login: () -> U
                 )
             }
         }
+    }
+
+    reporting?.let { id ->
+        ReportDialog(
+            onDismiss = { reporting = null },
+            onSend = { reason ->
+                reporting = null
+                vm.report(id, reason)
+            },
+        )
     }
 
     if (confirmClear) {
@@ -307,6 +330,7 @@ private fun Conversation(
     typing: Boolean,
     openProduct: (String) -> Unit,
     openWhatsApp: (String) -> Unit,
+    onReport: (String) -> Unit,
     modifier: Modifier,
 ) {
     val list = rememberLazyListState()
@@ -327,7 +351,7 @@ private fun Conversation(
                 UserBubble(entry)
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BotBubble(m.text, time = m.createdAt)
+                    BotBubble(m.text, time = m.createdAt, reported = m.reported, onReport = { onReport(m.id) })
                     if (m.products.isNotEmpty()) ProductsRow(m.products, openProduct)
                     val number = m.whatsapp?.takeIf { it.isNotBlank() } ?: chat.whatsapp
                     if (m.handover && number.isNotBlank()) WhatsAppButton { openWhatsApp(number) }
@@ -368,16 +392,64 @@ private fun UserBubble(entry: ChatEntry) {
 
 /** The assistant's answer: clear glass, on the left. */
 @Composable
-private fun BotBubble(text: String, time: String?) {
+private fun BotBubble(text: String, time: String?, reported: Boolean = false, onReport: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Absolute.Left) {
         Column(
             Modifier.widthIn(max = 300.dp).glass(botShape, elevation = 6.dp).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(text.replace("**", "").trim(), color = Liquid.Ink, style = MaterialTheme.typography.bodyMedium)
-            if (time != null) Text(timeOf(time), color = Liquid.InkSoft, style = MaterialTheme.typography.labelSmall)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (time != null) Text(timeOf(time), color = Liquid.InkSoft, style = MaterialTheme.typography.labelSmall)
+                when {
+                    reported -> Text("تم الإبلاغ", color = Liquid.InkSoft, style = MaterialTheme.typography.labelSmall)
+                    onReport != null -> Text(
+                        "⚑ إبلاغ عن الرد",
+                        color = Liquid.InkSoft,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onReport).padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                }
+            }
         }
     }
+}
+
+private val reportReasons = listOf("معلومة خاطئة", "رد مسيء أو غير لائق", "لا علاقة له بسؤالي")
+
+/** Why the answer is reported: a reason, plus an optional note. */
+@Composable
+private fun ReportDialog(onDismiss: () -> Unit, onSend: (String) -> Unit) {
+    var reason by rememberSaveable { mutableStateOf(reportReasons.first()) }
+    var note by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("الإبلاغ عن رد المساعد") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("سيراجع فريق المتجر هذا الرد.", style = MaterialTheme.typography.bodySmall, color = Liquid.InkSoft)
+                reportReasons.forEach { r ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { reason = r },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = reason == r, onClick = { reason = r })
+                        Text(r, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(300) },
+                    label = { Text("تفاصيل (اختياري)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSend(listOf(reason, note.trim()).filter { it.isNotBlank() }.joinToString(" — ")) }) { Text("إرسال البلاغ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
 }
 
 @Composable

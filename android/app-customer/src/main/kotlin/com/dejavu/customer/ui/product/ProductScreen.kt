@@ -2,9 +2,7 @@
 
 package com.dejavu.customer.ui.product
 
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
@@ -24,9 +22,6 @@ import com.dejavu.core.model.RelatedProducts
 import com.dejavu.core.network.normalizeBaseUrl
 import com.dejavu.core.ui.theme.OutlinedButton
 import com.dejavu.customer.Analytics
-import com.dejavu.customer.ui.ads.AdBanner
-import com.dejavu.customer.ui.ads.AdPlacement
-import com.dejavu.customer.ui.ads.Ads
 import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.components.ProductStrip
 import com.dejavu.customer.ui.components.PromoCountdown
@@ -133,9 +128,6 @@ class ProductViewModel(
     /** The other products of this product's offers (sets and "buy X get Y"). */
     private val _offerProducts = MutableStateFlow<List<StoreProduct>>(emptyList())
     val offerProducts = _offerProducts.asStateFlow()
-
-    /** The full-screen ad counter runs once per opening of this page. */
-    var adCounted = false
 
     private val _product = MutableStateFlow<Load<StoreProduct>>(Load.Loading)
     val product = _product.asStateFlow()
@@ -354,12 +346,6 @@ fun ProductScreen(
             Analytics.productOpened(loadedId)
             onDispose { Analytics.productClosed(loadedId) }
         }
-        LaunchedEffect(loadedId) {
-            if (!vm.adCounted) {
-                vm.adCounted = true
-                context.findActivity()?.let { Ads.onProductOpened(it, container.extras.config.value.ads) }
-            }
-        }
     }
 
     Scaffold(
@@ -526,7 +512,6 @@ fun ProductScreen(
                 }
                 ProductStrip("يناسبه أيضاً", related.similar, openProduct)
                 ProductStrip("اشترت العميلات أيضاً", related.alsoBought, openProduct)
-                AdBanner(AdPlacement.PRODUCT, Modifier.padding(vertical = 8.dp))
                 Spacer(Modifier.height(16.dp))
             }
         }
@@ -585,12 +570,6 @@ private fun shareProduct(context: Context, p: StoreProduct, price: String, baseU
         putExtra(Intent.EXTRA_TEXT, "${p.nameAr}\n${Money.format(price)}\n$link")
     }
     runCatching { context.startActivity(Intent.createChooser(send, "مشاركة المنتج")) }
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }
 
 /** Running promotion: badge, its name and when it ends. */

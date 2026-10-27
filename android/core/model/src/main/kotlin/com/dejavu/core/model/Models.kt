@@ -664,20 +664,7 @@ data class UploadedFile(val id: String, val url: String, val mimeType: String, v
 @Serializable
 data class StoreConfig(
     val requireLogin: Boolean = false,
-    val ads: AdsConfig = AdsConfig(),
     val chat: ChatConfig = ChatConfig(),
-)
-
-@Serializable
-data class AdsConfig(
-    val enabled: Boolean = false,
-    /** AdMob unit ids; empty = Google's test ads. */
-    val bannerUnitId: String = "",
-    val interstitialUnitId: String = "",
-    val homeBanner: Boolean = true,
-    val productBanner: Boolean = true,
-    /** A full-screen ad after every N product pages; 0 = never. */
-    val interstitialEvery: Int = 0,
 )
 
 @Serializable
@@ -719,7 +706,20 @@ data class ChatMessage(
     val products: List<StoreProduct> = emptyList(),
     /** On an answer: the staff WhatsApp number when the assistant handed over. */
     val whatsapp: String? = null,
+    /** The customer already reported this answer. */
+    val reported: Boolean = false,
 )
+
+/** POST store/chat/{id}/report */
+@Serializable
+data class ChatReportRequest(val reason: String? = null)
+
+@Serializable
+data class ChatReportResult(val reported: Boolean = true)
+
+/** POST store/me/delete-account: the password, asked again. */
+@Serializable
+data class DeleteAccountRequest(val password: String)
 
 /** GET store/chat */
 @Serializable

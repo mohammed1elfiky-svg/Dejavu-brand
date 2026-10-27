@@ -1,6 +1,6 @@
 name: Android release
 
-# Signed release APKs of both apps. Runs on a version tag (git tag v1.0.0 && git push --tags)
+# Signed release builds: the customer app as an AAB for Google Play (plus APKs of both apps). Runs on a version tag (git tag v1.0.0 && git push --tags)
 # or by hand from the Actions tab. Setup (secrets & variables) is described in docs/DEPLOY.md.
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
       - name: Check configuration
         run: |
           missing=""
-          case "$API_URL" in https://*) ;; *) missing="$missing DEJAVU_API_URL (variable, https://.../api/v1/)";; esac
+          case "$API_URL" in ""|https://*) ;; *) missing="$missing DEJAVU_API_URL (must start with https://)";; esac
           [ -n "$KEYSTORE_BASE64" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
           [ -n "$DEJAVU_KEYSTORE_PASSWORD" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
           [ -n "$DEJAVU_KEY_ALIAS" ] || missing="$missing ANDROID_KEY_ALIAS"
@@ -48,30 +48,39 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "DEJAVU_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-      - name: Build signed APKs
+      - name: Build signed AAB and APKs
         working-directory: android
         run: |
-          url="${API_URL%/}"
-          case "$url" in */api/v1) ;; *) url="$url/api/v1" ;; esac
-          url="$url/"
+          # Without the DEJAVU_API_URL variable the server address in gradle.properties is used.
+          server=()
+          if [ -n "$API_URL" ]; then
+            url="${API_URL%/}"
+            case "$url" in */api/v1) ;; *) url="$url/api/v1" ;; esac
+            server=("-Pdejavu.apiBaseUrl=$url/")
+          fi
           case "$GITHUB_REF" in refs/tags/v*) version="${GITHUB_REF_NAME#v}" ;; *) version="0.0.${GITHUB_RUN_NUMBER}" ;; esac
-          ./gradlew :app-customer:assembleRelease :app-admin:assembleRelease --console=plain \
-            "-Pdejavu.apiBaseUrl=$url" \
+          ./gradlew :app-customer:bundleRelease :app-customer:assembleRelease :app-admin:assembleRelease --console=plain \
+            "${server[@]}" \
             "-Pdejavu.versionName=$version" "-Pdejavu.versionCode=$GITHUB_RUN_NUMBER" \
             "-Pdejavu.firebase.apiKey=$FIREBASE_API_KEY" "-Pdejavu.firebase.projectId=$FIREBASE_PROJECT_ID" \
             "-Pdejavu.firebase.senderId=$FIREBASE_SENDER_ID" \
             "-Pdejavu.firebase.customerAppId=$FIREBASE_CUSTOMER_APP_ID" "-Pdejavu.firebase.adminAppId=$FIREBASE_ADMIN_APP_ID"
           mkdir -p ../dist
+          cp app-customer/build/outputs/bundle/release/*.aab "../dist/dejavu-customer-$version.aab"
           cp app-customer/build/outputs/apk/release/*.apk "../dist/dejavu-customer-$version.apk"
           cp app-admin/build/outputs/apk/release/*.apk "../dist/dejavu-admin-$version.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: dejavu-release-apks
-          path: dist/*.apk
+          name: dejavu-release
+          path: |
+            dist/*.aab
+            dist/*.apk
           if-no-files-found: error
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.apk
+          files: |
+            dist/*.aab
+            dist/*.apk
           generate_release_notes: true

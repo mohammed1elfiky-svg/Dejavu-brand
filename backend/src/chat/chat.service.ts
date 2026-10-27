@@ -3,6 +3,7 @@ import { ChatRole } from '../generated/prisma/client';
 import { CatalogService } from '../catalog/catalog.service';
 import { StoreProductsQueryDto } from '../catalog/dto/catalog.dto';
 import { formatAmount } from '../common/currency.service';
+import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeminiClient, GeminiContent, GeminiPart, GeminiTool } from './gemini.client';
 
@@ -81,6 +82,7 @@ export class ChatService {
     private readonly prisma: PrismaService,
     private readonly gemini: GeminiClient,
     private readonly catalog: CatalogService,
+    private readonly alerts: OwnerAlertsService,
   ) {}
 
   // ------------------------------------------------------------- settings ---
@@ -118,10 +120,25 @@ export class ChatService {
         text: r.text,
         imageFileId: r.imageFileId,
         handover: r.handover,
+        reported: !!r.reportedAt,
         createdAt: r.createdAt,
         products: r.productIds.map((id) => products.get(id)).filter((p): p is NonNullable<typeof p> => !!p),
       })),
     };
+  }
+
+  /** The customer flags an assistant answer as wrong or offensive; the owner is told. */
+  async report(customerId: string, messageId: string, reason?: string) {
+    const m = await this.prisma.chatMessage.findFirst({ where: { id: messageId, customerId } });
+    if (!m) throw new NotFoundException('الرسالة غير موجودة');
+    if (m.role !== ChatRole.BOT) throw new BadRequestException('يمكن الإبلاغ عن ردود المساعد فقط');
+    if (m.reportedAt) return { reported: true };
+    const why = reason?.trim() || null;
+    await this.prisma.chatMessage.update({ where: { id: m.id }, data: { reportedAt: new Date(), reportReason: why } });
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } });
+    const quote = m.text.length > 200 ? `${m.text.slice(0, 197)}…` : m.text;
+    await this.alerts.raise('CHAT_REPORT', 'إبلاغ عن رد المساعد', `${customer?.name ?? 'عميل'}${why ? `: ${why}` : ''}\n«${quote}»`, { customerId, messageId: m.id });
+    return { reported: true };
   }
 
   async clear(customerId: string) {
@@ -309,10 +326,11 @@ export class ChatService {
 
   /** Customers who chatted, newest first. */
   async conversations(take = 50) {
-    const rows = await this.prisma.$queryRaw<{ customer_id: string; name: string; phone: string; messages: bigint; images: bigint; handovers: bigint; last_at: Date; last_text: string }[]>`
+    const rows = await this.prisma.$queryRaw<{ customer_id: string; name: string; phone: string; messages: bigint; images: bigint; handovers: bigint; reports: bigint; last_at: Date; last_text: string }[]>`
       SELECT m.customer_id::text, c.name, c.phone, COUNT(*) AS messages,
              COUNT(*) FILTER (WHERE m.image_file_id IS NOT NULL) AS images,
              COUNT(*) FILTER (WHERE m.handover) AS handovers,
+             COUNT(*) FILTER (WHERE m.reported_at IS NOT NULL) AS reports,
              MAX(m.created_at) AS last_at,
              (SELECT text FROM chat_messages x WHERE x.customer_id = m.customer_id ORDER BY created_at DESC LIMIT 1) AS last_text
       FROM chat_messages m JOIN customers c ON c.id = m.customer_id
@@ -323,6 +341,7 @@ export class ChatService {
       messages: Number(r.messages),
       images: Number(r.images),
       handovers: Number(r.handovers),
+      reports: Number(r.reports),
       lastAt: r.last_at,
       lastText: r.last_text,
     }));

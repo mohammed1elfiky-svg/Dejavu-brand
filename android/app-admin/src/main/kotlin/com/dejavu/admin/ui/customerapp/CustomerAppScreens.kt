@@ -60,7 +60,7 @@ import kotlinx.coroutines.launch
 
 // ------------------------------------------------------------ entry points ---
 
-/** The store page ("عن المتجر"), sign-in before browsing, Google ads. */
+/** The store page ("عن المتجر") and sign-in before browsing. */
 @Composable
 fun CustomerAppSettingsScreen(onBack: () -> Unit) {
     val vm = adminViewModel(key = "customer-app-settings") { CustomerAppSettingsViewModel(it.customerApp) }
@@ -85,7 +85,6 @@ fun CustomerAppSettingsScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 LoginCard(bundle.app.requireLogin, busy = SAVE_LOGIN in saving, onChange = vm::saveLogin)
-                AdsCard(bundle.app.ads, busy = SAVE_ADS in saving, onSave = vm::saveAds)
                 AboutCard(bundle.about, busy = SAVE_ABOUT in saving, onSave = vm::saveAbout)
             }
         }
@@ -138,7 +137,6 @@ fun CustomerUsageCard(customerId: String) {
 // --------------------------------------------------------------- settings ---
 
 private const val SAVE_LOGIN = "login"
-private const val SAVE_ADS = "ads"
 private const val SAVE_ABOUT = "about"
 
 data class CustomerAppBundle(val app: StoreAppSettings, val about: StoreAboutSettings)
@@ -173,16 +171,6 @@ class CustomerAppSettingsViewModel(private val repo: CustomerAppRepository) : Ba
             repo.setAppSettings(current.app.copy(requireLogin = on)).orSay()?.let { saved ->
                 update { it.copy(app = saved) }
                 say(if (saved.requireLogin) "يجب على العملاء تسجيل الدخول قبل التصفح" else "يمكن للعملاء التصفح بدون تسجيل الدخول")
-            }
-        }
-    }
-
-    fun saveAds(ads: StoreAppSettings.Ads) {
-        val current = (_state.value as? Load.Ready)?.value ?: return
-        saveCard(SAVE_ADS) {
-            repo.setAppSettings(current.app.copy(ads = ads)).orSay()?.let { saved ->
-                update { it.copy(app = saved) }
-                say("تم حفظ إعدادات الإعلانات")
             }
         }
     }
@@ -225,72 +213,6 @@ private fun LoginCard(requireLogin: Boolean, busy: Boolean, onChange: (Boolean) 
             enabled = !busy,
             onChange = onChange,
         )
-    }
-}
-
-private val AD_UNIT = Regex("^ca-app-pub-\\d{10,20}/\\d{6,14}$")
-
-private fun adUnitOk(id: String): Boolean = id.isBlank() || AD_UNIT.matches(id.trim())
-
-@Composable
-private fun AdsCard(saved: StoreAppSettings.Ads, busy: Boolean, onSave: (StoreAppSettings.Ads) -> Unit) {
-    var enabled by remember(saved) { mutableStateOf(saved.enabled) }
-    var banner by remember(saved) { mutableStateOf(saved.bannerUnitId) }
-    var interstitial by remember(saved) { mutableStateOf(saved.interstitialUnitId) }
-    var home by remember(saved) { mutableStateOf(saved.homeBanner) }
-    var product by remember(saved) { mutableStateOf(saved.productBanner) }
-    var every by remember(saved) { mutableStateOf(if (saved.interstitialEvery > 0) saved.interstitialEvery.toString() else "0") }
-    val valid = adUnitOk(banner) && adUnitOk(interstitial) && (every.isBlank() || (every.toIntOrNull() ?: -1) in 0..100)
-
-    GlassCard(Modifier.fillMaxWidth()) {
-        Text("إعلانات جوجل (AdMob)", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "معرّف تطبيق AdMob (App ID) يُضبط عند بناء التطبيق، وهنا تضع معرّفات الوحدات فقط. اترك المعرّف فارغاً لعرض إعلانات تجريبية.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Lux.InkSoft,
-            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
-        )
-        SwitchRow("تفعيل الإعلانات", checked = enabled, enabled = !busy, onChange = { enabled = it })
-        FormField(
-            banner,
-            { banner = it.trim().take(60) },
-            "معرّف وحدة البانر",
-            hint = "ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX",
-            note = if (adUnitOk(banner)) "فارغ = إعلانات تجريبية" else "صيغة المعرّف غير صحيحة",
-            isError = !adUnitOk(banner),
-            enabled = !busy,
-        )
-        FormField(
-            interstitial,
-            { interstitial = it.trim().take(60) },
-            "معرّف وحدة الإعلان الكامل",
-            hint = "ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX",
-            note = if (adUnitOk(interstitial)) "فارغ = إعلانات تجريبية" else "صيغة المعرّف غير صحيحة",
-            isError = !adUnitOk(interstitial),
-            enabled = !busy,
-        )
-        SwitchRow("بانر في الرئيسية", checked = home, enabled = !busy, onChange = { home = it })
-        SwitchRow("بانر في صفحة المنتج", checked = product, enabled = !busy, onChange = { product = it })
-        FormField(
-            every,
-            { every = it.filter(Char::isDigit).take(3) },
-            "إعلان كامل الشاشة كل N منتجات",
-            note = "0 = بدون إعلان كامل الشاشة",
-            number = true,
-            enabled = !busy,
-        )
-        SaveButton(busy = busy, enabled = valid) {
-            onSave(
-                StoreAppSettings.Ads(
-                    enabled = enabled,
-                    bannerUnitId = banner.trim(),
-                    interstitialUnitId = interstitial.trim(),
-                    homeBanner = home,
-                    productBanner = product,
-                    interstitialEvery = (every.toIntOrNull() ?: 0).coerceIn(0, 100),
-                ),
-            )
-        }
     }
 }
 

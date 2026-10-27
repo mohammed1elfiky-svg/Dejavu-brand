@@ -112,6 +112,14 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         _state.value = SessionState.LoggedOut
     }
 
+    /** Deletes the account for good (password asked again); the session ends with it. */
+    suspend fun deleteAccount(password: String): Result<Unit> =
+        apiCall { api.deleteAccount(com.dejavu.core.model.DeleteAccountRequest(password)).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+            .onSuccess {
+                tokens.save(null)
+                _state.value = SessionState.LoggedOut
+            }
+
     /** Called by the HTTP layer when the refresh token was rejected. */
     fun onSessionExpired() {
         tokens.save(null)
@@ -433,6 +441,10 @@ class StoreExtrasRepository(private val api: DejavuApi) {
     suspend fun sendChat(text: String?, imageFileId: String?) = apiCall { api.sendChat(com.dejavu.core.model.ChatSendRequest(text?.takeIf { it.isNotBlank() }, imageFileId)) }
 
     suspend fun clearChat() = apiCall { api.clearChat().let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+
+    /** Reports an assistant answer as wrong or offensive; the store owner is told. */
+    suspend fun reportChat(messageId: String, reason: String?) =
+        apiCall { api.reportChat(messageId, com.dejavu.core.model.ChatReportRequest(reason?.trim()?.ifBlank { null })) }
 
     /** A photo for the assistant (private to the customer). */
     suspend fun uploadPhoto(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {

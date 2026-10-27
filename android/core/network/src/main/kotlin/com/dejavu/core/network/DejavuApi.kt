@@ -272,6 +272,14 @@ interface DejavuApi {
     @DELETE("store/chat")
     suspend fun clearChat(): Response<Unit>
 
+    /** Flags an assistant answer as wrong or offensive. */
+    @POST("store/chat/{id}/report")
+    suspend fun reportChat(@Path("id") id: String, @Body body: com.dejavu.core.model.ChatReportRequest): com.dejavu.core.model.ChatReportResult
+
+    /** Deletes the signed-in customer's account for good. */
+    @POST("store/me/delete-account")
+    suspend fun deleteAccount(@Body body: com.dejavu.core.model.DeleteAccountRequest): Response<Unit>
+
     @POST("store/analytics")
     suspend fun analytics(@Body body: com.dejavu.core.model.AnalyticsBatch): Response<Unit>
 

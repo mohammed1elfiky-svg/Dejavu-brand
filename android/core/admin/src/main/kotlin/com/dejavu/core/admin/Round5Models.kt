@@ -366,6 +366,8 @@ data class ChatConversation(
     val messages: Int,
     val images: Int = 0,
     val handovers: Int = 0,
+    /** Answers the customer reported as wrong or offensive. */
+    val reports: Int = 0,
     val lastAt: String,
     val lastText: String = "",
 ) {
@@ -382,6 +384,9 @@ data class ChatLine(
     val imageFileId: String? = null,
     val productIds: List<String> = emptyList(),
     val handover: Boolean = false,
+    /** When the customer reported this answer (null = not reported). */
+    val reportedAt: String? = null,
+    val reportReason: String? = null,
     val createdAt: String,
 )
 

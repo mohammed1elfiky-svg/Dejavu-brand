@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -80,6 +81,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.LocalUriHandler
+import com.dejavu.core.network.normalizeBaseUrl
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -138,6 +142,9 @@ fun AccountScreen(
     val session by container.session.state.collectAsStateWithLifecycle()
     val config by container.extras.config.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
+    val openPrivacy = { runCatching { uriHandler.openUri(normalizeBaseUrl(container.settings.baseUrl) + "privacy") } }
+    var deleting by remember { mutableStateOf(false) }
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = { GlassTopBar(title = { Text("حسابي") }) }) { padding ->
         Column(
@@ -194,8 +201,10 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Info, "عن المتجر", about)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
-                    MenuRow(Icons.Filled.Settings, "الخادم", server)
+                    if (BuildConfig.DEBUG) MenuRow(Icons.Filled.Settings, "الخادم", server)
+                    MenuRow(Icons.Filled.Lock, "سياسة الخصوصية") { openPrivacy() }
                     MenuRow(Icons.AutoMirrored.Filled.ExitToApp, "تسجيل الخروج") { scope.launch { container.logout() } }
+                    MenuRow(Icons.Filled.Delete, "حذف الحساب") { deleting = true }
                 }
                 SessionState.LoggedOut -> {
                     GlassCard(Modifier.fillMaxWidth(), elevation = 14.dp, contentPadding = 20.dp) {
@@ -212,7 +221,8 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Info, "عن المتجر", about)
                     MenuHeader("الإعدادات")
                     CurrencyRow()
-                    MenuRow(Icons.Filled.Settings, "الخادم", server)
+                    if (BuildConfig.DEBUG) MenuRow(Icons.Filled.Settings, "الخادم", server)
+                    MenuRow(Icons.Filled.Lock, "سياسة الخصوصية") { openPrivacy() }
                 }
             }
             Text(
@@ -224,6 +234,61 @@ fun AccountScreen(
             )
         }
     }
+
+    if (deleting) DeleteAccountDialog(onClose = { deleting = false })
+}
+
+/** Deleting the account for good: what goes, what stays, and the password once more. */
+@Composable
+private fun DeleteAccountDialog(onClose: () -> Unit) {
+    val container = appContainer()
+    val scope = rememberCoroutineScope()
+    var password by rememberSaveable { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onClose() },
+        title = { Text("حذف الحساب نهائياً") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "سيُحذف اسمك ورقم جوالك وعناوينك والسلة والمفضلة والإشعارات ومحادثات المساعد، ويُفقد رصيد المحفظة والنقاط. " +
+                        "تبقى الفواتير السابقة بدون بياناتك لأسباب محاسبية. لا يمكن التراجع عن الحذف.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        error = null
+                    },
+                    label = { Text("كلمة المرور للتأكيد") },
+                    singleLine = true,
+                    enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = error != null,
+                    supportingText = error?.let { e -> { Text(e) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = password.isNotBlank() && !busy,
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        container.session.deleteAccount(password)
+                            .onSuccess { onClose() }
+                            .onFailure { error = it.userMessage() }
+                        busy = false
+                    }
+                },
+            ) { Text(if (busy) "جارٍ الحذف…" else "حذف حسابي", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onClose) { Text("إلغاء") } },
+    )
 }
 
 /** Display currency: the ones the store offers shoppers. Orders already placed keep the currency and rate they were placed with. */

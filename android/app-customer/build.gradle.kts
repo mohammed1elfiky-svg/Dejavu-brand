@@ -16,8 +16,6 @@ android {
         versionName = providers.gradleProperty("dejavu.versionName").getOrElse("0.1.0")
         val apiBaseUrl = providers.gradleProperty("dejavu.apiBaseUrl").get()
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
-        // Google AdMob app id (Google's sample id until the store's own is set).
-        manifestPlaceholders["admobAppId"] = providers.gradleProperty("dejavu.admobAppId").getOrElse("").ifBlank { "ca-app-pub-3940256099942544~3347511713" }
         // Push notifications: values of this app in the Firebase console (empty = push off).
         fun prop(name: String) = providers.gradleProperty(name).getOrElse("")
         buildConfigField("String", "FIREBASE_APP_ID", "\"${prop("dejavu.firebase.customerAppId")}\"")
@@ -84,7 +82,6 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.coil.compose)
-    implementation(libs.play.services.ads)
     implementation(libs.coil.network.okhttp)
 
     testImplementation(libs.junit)

@@ -165,7 +165,7 @@ private val menu = listOf(
     MenuEntry(R.EXCHANGE, "صرف العملات", "شراء وبيع العملات بين الصناديق وأرباح فروق العملة", Icons.Filled.Refresh, listOf(Perm.CASHBOXES_MANAGE), FINANCE),
     MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE), FINANCE),
     MenuEntry(R.STORE_SETUP, "إعدادات تطبيق العملاء", "طرق الدفع والمحافظات والدفع عند الاستلام", Icons.Filled.Settings, listOf(Perm.SETTINGS_MANAGE), STORE),
-    MenuEntry(R.CUSTOMER_APP, "صفحة المتجر والإعلانات", "عن المتجر، تسجيل الدخول قبل التصفح وإعلانات جوجل", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.CUSTOMER_APP, "صفحة المتجر", "عن المتجر وتسجيل الدخول قبل التصفح", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.ASSISTANT, "مساعد الدردشة", "تعليمات البوت ورسالة الترحيب ومحادثات العملاء", Icons.Filled.Email, listOf("chat.manage"), STORE),
     MenuEntry(R.CAMPAIGNS, "إرسال إشعار أو رسالة للعملاء", "إشعار بصورة ورابط لمنتج أو قسم، لكل العملاء أو فئة منهم", Icons.Filled.Notifications, listOf("notifications.send"), STORE),
     MenuEntry(R.WEEKLY, "ملخص الأسبوع الذكي", "ماذا حدث في المبيعات ولماذا، مع اقتراحات", Icons.Filled.Info, listOf("dashboard.view"), STORE),

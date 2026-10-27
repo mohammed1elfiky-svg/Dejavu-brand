@@ -1901,6 +1901,9 @@ model ChatMessage {
   productIds  String[] @default([]) @map("product_ids")
   /// The assistant suggested talking to staff (WhatsApp).
   handover    Boolean  @default(false)
+  /// The customer reported this answer as wrong or offensive.
+  reportedAt   DateTime? @map("reported_at")
+  reportReason String?   @map("report_reason")
   createdAt   DateTime @default(now()) @map("created_at")
 
   customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)

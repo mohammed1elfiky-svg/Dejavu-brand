@@ -28,8 +28,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
-import com.dejavu.customer.ui.ads.AdBanner
-import com.dejavu.customer.ui.ads.AdPlacement
 import com.dejavu.customer.ui.catalog.RecentSearches
 import com.dejavu.customer.ui.catalog.SearchSuggestions
 import androidx.compose.material3.Badge
@@ -197,7 +195,6 @@ fun HomeScreen(
                     item { SectionTitle("عروض القطع 🎁") }
                     item { ProductRow(offers, openProduct) }
                 }
-                item { AdBanner(AdPlacement.HOME, Modifier.padding(vertical = 8.dp)) }
                 item { SectionTitle("وصل حديثاً", "عرض الكل") { openProducts("وصل حديثاً", null, null, false) } }
                 item { ProductRow(data.newest, openProduct) }
                 item { Spacer(Modifier.height(72.dp)) }

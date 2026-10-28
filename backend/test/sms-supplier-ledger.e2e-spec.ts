@@ -51,11 +51,11 @@ describe('SMS, governorates and supplier account (e2e)', () => {
     await http.post('/auth/customer/register', { ...form, otp: code }).expect(400); // Taiz needs the area
     const res = await http.post('/auth/customer/register', { ...form, otp: code, area: 'الحوبان' }).expect(201);
     const me = (await http.get('/auth/me', res.body.accessToken).expect(200)).body;
-    expect(me).toMatchObject({ governorate: 'تعز', area: 'الحوبان', preferredCurrency: 'YER', phoneVerified: true });
+    expect(me).toMatchObject({ governorate: 'تعز', area: 'الحوبان', preferredCurrency: 'SAR', phoneVerified: true });
 
     await http.put('/admin/sms/settings', { requirePhoneOtp: false }, admin).expect(200);
     const aden = await http.post('/auth/customer/register', { name: 'عميل عدن', phone: yemeni(), password: 'secret123', governorate: 'عدن' }).expect(201);
-    expect((await http.get('/auth/me', aden.body.accessToken).expect(200)).body.preferredCurrency).toBe('YEQ');
+    expect((await http.get('/auth/me', aden.body.accessToken).expect(200)).body.preferredCurrency).toBe('SAR') // every new account starts in Saudi riyals;
     expect((await http.get('/auth/governorates').expect(200)).body.find((g: { name: string }) => g.name === 'تعز').areas).toHaveLength(2);
   });
 

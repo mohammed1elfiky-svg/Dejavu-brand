@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { API, api, createApp, customerToken, staffToken } from './helpers';
+import { API, api, createApp, customerToken, staffToken, uniquePng } from './helpers';
 
 /** Till sales in several currencies, cashier drawers, customer accounts, wallet top-ups and promotions. */
 describe('POS, treasury & wallet (e2e)', () => {
@@ -397,7 +397,7 @@ describe('POS, treasury & wallet (e2e)', () => {
     const upload = await request(app.getHttpServer())
       .post(`${API}/store/me/files`)
       .set('Authorization', `Bearer ${shopper.token}`)
-      .attach('file', PNG, { filename: 'slip.png', contentType: 'image/png' })
+      .attach('file', uniquePng(), { filename: 'slip.png', contentType: 'image/png' })
       .expect(201);
     // Receipts are private: not on the public URL, but staff can open them.
     await http.get(`/files/${upload.body.id}`).expect(404);
@@ -406,16 +406,27 @@ describe('POS, treasury & wallet (e2e)', () => {
     const topUp = await http
       .post('/store/me/wallet/top-ups', { currency: 'YER', amount: '28000', receiptFileId: upload.body.id, bankAccountId: bank.body.id, reference: 'TRX-1' }, shopper.token)
       .expect(201);
-    expect(topUp.body.status).toBe('PENDING');
-    const pending = await http.get('/admin/wallet/top-ups?status=PENDING', admin).expect(200);
-    expect(pending.body.items.map((t: { id: string }) => t.id)).toContain(topUp.body.id);
-
+    // Credited at once into the YER bank box; staff check it afterwards.
+    expect(topUp.body).toMatchObject({ status: 'APPROVED', autoApproved: true, verifiedAt: null, reference: 'TRX1' });
+    const toCheck = await http.get('/admin/wallet/top-ups?toVerify=true', admin).expect(200);
+    expect(toCheck.body.items.map((t: { id: string }) => t.id)).toContain(topUp.body.id);
     const yerBank = (await http.get('/admin/cash-boxes?kind=BANK&currency=YER', admin).expect(200)).body[0];
-    const sarBank = (await http.get('/admin/cash-boxes?kind=BANK&currency=SAR', admin).expect(200)).body[0];
-    await http.post(`/admin/wallet/top-ups/${topUp.body.id}/approve`, { cashBoxId: sarBank.id }, admin).expect(422);
-    const approved = await http.post(`/admin/wallet/top-ups/${topUp.body.id}/approve`, { cashBoxId: yerBank.id }, admin).expect(200);
-    expect(approved.body).toMatchObject({ status: 'APPROVED', baseAmount: '200' });
+    const credited = await http.get(`/admin/wallet/top-ups/${topUp.body.id}`, admin).expect(200);
+    expect(credited.body).toMatchObject({ status: 'APPROVED', baseAmount: '200', cashBox: { id: yerBank.id } });
+    await http.post(`/admin/wallet/top-ups/${topUp.body.id}/approve`, { cashBoxId: yerBank.id }, admin).expect(409);
     await http.post(`/admin/wallet/top-ups/${topUp.body.id}/reject`, { reason: 'late' }, admin).expect(409);
+    await http.post(`/admin/wallet/top-ups/${topUp.body.id}/verify`, {}, admin).expect(200);
+    await http.post(`/admin/wallet/top-ups/${topUp.body.id}/verify`, {}, admin).expect(409);
+    // The same transfer cannot be used again.
+    const again = await request(app.getHttpServer())
+      .post(`${API}/store/me/files`)
+      .set('Authorization', `Bearer ${shopper.token}`)
+      .attach('file', uniquePng(), { filename: 'slip2.png', contentType: 'image/png' })
+      .expect(201);
+    const dup = await http
+      .post('/store/me/wallet/top-ups', { currency: 'YER', amount: '28000', receiptFileId: again.body.id, bankAccountId: bank.body.id, reference: 'trx-1' }, shopper.token)
+      .expect(409);
+    expect(dup.body.message).toContain('TRX1');
 
     const wallet = await http.get('/store/me/wallet', shopper.token).expect(200);
     expect(wallet.body.balances).toEqual([expect.objectContaining({ currency: 'YER', balance: '28000' })]);
@@ -441,7 +452,7 @@ describe('POS, treasury & wallet (e2e)', () => {
     const up = await request(app.getHttpServer())
       .post(`${API}/admin/files`)
       .set('Authorization', `Bearer ${admin}`)
-      .attach('file', PNG, { filename: 'p.png', contentType: 'image/png' })
+      .attach('file', uniquePng(), { filename: 'p.png', contentType: 'image/png' })
       .expect(201);
     await http.get(`/files/${up.body.id}`).expect(200).expect('Content-Type', 'image/png');
     const images = [{ url: up.body.url }, { url: up.body.url, color: 'أسود' }];

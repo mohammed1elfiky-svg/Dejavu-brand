@@ -130,7 +130,13 @@ describe('Staff access & merchants (e2e)', () => {
     await http.patch(`/admin/customers/${shopper.customerId}`, { isMerchant: true, creditLimit: '100' }, admin).expect(200);
     const first = await order();
     expect(first.status).toBe(201);
-    expect(first.body).toMatchObject({ paymentStatus: 'PAID', grandTotal: '70' });
+    // The owner approves each order on credit first.
+    expect(first.body).toMatchObject({ status: 'PENDING', paymentStatus: 'UNPAID', grandTotal: '70', needsApproval: true });
+    const waiting = await http.get('/admin/orders?awaitingApproval=true', admin).expect(200);
+    expect(waiting.body.items.map((o: { id: string }) => o.id)).toContain(first.body.id);
+    await http.post(`/admin/orders/${first.body.id}/status`, { status: 'CONFIRMED' }, admin).expect(422);
+    const approved = await http.post(`/admin/orders/${first.body.id}/approve`, {}, admin).expect(200);
+    expect(approved.body).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID' });
     const wallet = await http.get('/store/me/wallet', shopper.token).expect(200);
     expect(wallet.body.merchant).toMatchObject({ creditLimit: '100' });
     expect(wallet.body.balances[0]).toMatchObject({ currency: 'SAR', owed: '70' });

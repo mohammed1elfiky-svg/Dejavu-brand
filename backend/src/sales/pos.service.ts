@@ -3,6 +3,7 @@ import { applyDeals } from './deals';
 import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
+  Coupon,
   CouponType,
   OrderChannel,
   OrderStatus,
@@ -23,6 +24,8 @@ import { Decimal, dec, money, sum, ZERO } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from '../treasury/treasury.service';
+import { normalizeReference, TransfersService } from '../treasury/transfers.service';
+import { checkCoupon, liveCoupons } from './coupons';
 import { PosFreeReturnDto, PosReturnDto, PosSaleDto, PosProductsQueryDto } from './dto/pos.dto';
 import { ReturnsService } from './returns.service';
 import { ShiftService } from './shift.service';
@@ -89,6 +92,7 @@ export class PosService {
     private readonly returns: ReturnsService,
     private readonly shifts: ShiftService,
     private readonly ownerAlerts: OwnerAlertsService,
+    private readonly transfers: TransfersService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -146,6 +150,10 @@ export class PosService {
     return { arranged: productIds.length };
   }
 
+  async couponsAvailable() {
+    return { available: (await liveCoupons(this.prisma)) > 0 };
+  }
+
   // ----------------------------------------------------------------- sale ---
 
   async sell(dto: PosSaleDto, cashierId: string) {
@@ -158,8 +166,17 @@ export class PosService {
       }
     }
     await this.treasury.ensureCashierBoxes(cashierId);
-    const orderId = await this.prisma.$transaction((tx) => this.sellIn(tx, dto, cashierId));
+    const slip = await this.readSlip(dto);
+    const orderId = await this.prisma.$transaction((tx) => this.sellIn(tx, slip, cashierId));
     return this.receipt(orderId);
+  }
+
+  /** A transfer paid with a slip photo: its reference number is read off the photo (Gemini). */
+  private async readSlip<T extends PosSaleDto>(dto: T): Promise<T & { referenceExtracted?: boolean }> {
+    const byTransfer = dto.paymentMethod === 'BANK_TRANSFER' || (dto.payments ?? []).some((p) => p.method === 'BANK_TRANSFER');
+    if (!byTransfer || (!dto.slipFileId && !dto.reference)) return dto;
+    const r = await this.transfers.referenceOf(dto.slipFileId, dto.reference);
+    return { ...dto, reference: r.extracted ? r.reference! : dto.reference, referenceExtracted: r.extracted };
   }
 
   /**
@@ -194,7 +211,7 @@ export class PosService {
   }
 
   /** Rings up a sale inside the caller's transaction; returns the new order's id. */
-  async sellIn(tx: Tx, dto: PosSaleDto & { fromAccountMax?: Decimal }, cashierId: string): Promise<string> {
+  async sellIn(tx: Tx, dto: PosSaleDto & { fromAccountMax?: Decimal; referenceExtracted?: boolean }, cashierId: string): Promise<string> {
     {
       const invoiceCurrency = await this.currencies.requireActive(dto.currency ?? BASE_CURRENCY, tx);
       const customerId = await this.customerFor(tx, dto);
@@ -235,7 +252,17 @@ export class PosService {
               basket.map((b) => ({ productId: variants.find((v) => v.id === b.variantId)!.product.id, quantity: b.quantity, unitPrice: b.unitPrice })),
               await activeDeals(tx, variants.map((v) => v.product.id), 'pos'),
             );
-      const pricing = priceOrder({ lines: basket, lineDiscounts: offers?.lineDiscounts, coupon: discount, shippingFee: 0, pricesIncludeTax });
+      // A coupon code (only when the store has live coupons) instead of a typed discount.
+      let coupon: Coupon | null = null;
+      if (dto.couponCode?.trim()) {
+        if (discount) throw new BadRequestException('Use either a coupon or a manual discount');
+        const walkIn = customerId === (await this.walkInId(tx));
+        const subtotalSar = money(sum(basket.map((b) => dec(b.unitPrice).mul(b.quantity))));
+        const check = await checkCoupon(tx, dto.couponCode.trim(), walkIn ? null : customerId, subtotalSar.toString());
+        if (typeof check === 'string') throw new UnprocessableEntityException(check);
+        coupon = check;
+      }
+      const pricing = priceOrder({ lines: basket, lineDiscounts: offers?.lineDiscounts, coupon: coupon ?? discount, shippingFee: 0, pricesIncludeTax });
       const total = pricing.grandTotal;
 
       // ---- the money handed over (first any credit the customer holds, e.g. from a return) ----
@@ -297,6 +324,7 @@ export class PosService {
           currency: invoiceCurrency.code,
           exchangeRate: rate,
           shippingAddress: { channel: 'POS' },
+          couponId: coupon?.id,
           subtotal: pricing.subtotal,
           discountTotal: pricing.discountTotal,
           shippingFee: 0,
@@ -380,6 +408,28 @@ export class PosService {
           ...(t.method === PaymentMethod.BANK_TRANSFER && (dto.reference || dto.slipFileId)
             ? { gatewayPayload: { ...(dto.reference && { reference: dto.reference }), ...(dto.slipFileId && { slipFileId: dto.slipFileId }) } }
             : {}),
+        });
+      }
+      if (coupon) {
+        const claimed = await tx.$executeRaw`
+          UPDATE coupons SET used_count = used_count + 1
+          WHERE id = ${coupon.id}::uuid AND (usage_limit IS NULL OR used_count < usage_limit)`;
+        if (!claimed) throw new UnprocessableEntityException('Coupon usage limit reached');
+        await tx.couponUsage.create({ data: { couponId: coupon.id, customerId, orderId: order.id } });
+      }
+      // A transfer goes on the register: the same reference (or slip photo) is refused next time.
+      const byTransfer = tenders.filter((t) => t.method === PaymentMethod.BANK_TRANSFER);
+      if (byTransfer.length && (dto.reference || dto.slipFileId)) {
+        await this.transfers.register(tx, {
+          reference: normalizeReference(dto.reference),
+          extracted: dto.referenceExtracted,
+          source: 'POS',
+          customerId,
+          currency: byTransfer[0].currency,
+          amount: byTransfer.length === 1 ? byTransfer[0].amount : null,
+          fileId: dto.slipFileId,
+          orderId: order.id,
+          userId: cashierId,
         });
       }
       if (change.gt(0)) {
@@ -721,9 +771,10 @@ export class PosService {
   /** Corrects a till sale: the old invoice is deleted and the corrected one rung up in its place. */
   async editSale(id: string, dto: PosSaleDto, user: { id: string; permissions: string[] }) {
     await this.treasury.ensureCashierBoxes(user.id);
+    const slip = await this.readSlip(dto);
     const newId = await this.prisma.$transaction(async (tx) => {
       const old = await this.voidIn(tx, id, 'تعديل الفاتورة', user);
-      const created = await this.sellIn(tx, { ...dto, clientRef: undefined, soldAt: undefined }, old.cashierId ?? user.id);
+      const created = await this.sellIn(tx, { ...slip, clientRef: undefined, soldAt: undefined }, old.cashierId ?? user.id);
       const replacement = await tx.order.findUniqueOrThrow({ where: { id: created }, select: { number: true } });
       await tx.order.update({ where: { id }, data: { cancelReason: `عُدّلت بالفاتورة ${replacement.number}` } });
       await tx.order.update({ where: { id: created }, data: { internalNote: [`بدل الفاتورة ${old.number}`, dto.note].filter(Boolean).join(' — ') } });
@@ -763,6 +814,11 @@ export class PosService {
       });
     }
     await tx.payment.updateMany({ where: { orderId: id }, data: { status: TransactionStatus.CANCELLED } });
+    await this.transfers.release(tx, { orderId: id });
+    if (order.couponId) {
+      await tx.couponUsage.deleteMany({ where: { orderId: id } });
+      await tx.coupon.update({ where: { id: order.couponId }, data: { usedCount: { decrement: 1 } } });
+    }
     await tx.order.update({
       where: { id },
       data: {

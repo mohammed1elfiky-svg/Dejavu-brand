@@ -82,3 +82,7 @@ export async function createProduct(app: INestApplication, token: string, slug: 
     .expect(201);
   return product.body.variants.map((v: { id: string }) => v.id) as string[];
 }
+
+/** A tiny PNG with random bytes after it, so each upload is a different file (slips are checked for reuse). */
+export const uniquePng = () =>
+  Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'), Buffer.from(Math.random().toString(36))]);

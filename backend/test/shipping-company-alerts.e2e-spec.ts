@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EngagementService } from '../src/sales/engagement.service';
-import { API, api, createApp, customerToken, ledgerBalances, staffToken } from './helpers';
+import { API, api, createApp, customerToken, ledgerBalances, staffToken, uniquePng } from './helpers';
 
 /** Bank accounts in several currencies, shipping companies on imports, shipping receipts, cart reminders, back-in-stock alerts, staff report. */
 describe('Shipping companies, alerts and staff report (e2e)', () => {
@@ -29,7 +29,7 @@ describe('Shipping companies, alerts and staff report (e2e)', () => {
     ).body;
     expect(acc).toMatchObject({ currency: 'YER', currencies: ['YER', 'SAR', 'YEQ'], imageUrl: 'https://cdn.example.com/k.png' });
     const c = await customerToken(app, 'شاحن رصيد');
-    const slip = (await request(app.getHttpServer()).post(`${API}/store/me/files`).set('Authorization', `Bearer ${c.token}`).attach('file', PNG, 'slip.png').expect(201)).body;
+    const slip = (await request(app.getHttpServer()).post(`${API}/store/me/files`).set('Authorization', `Bearer ${c.token}`).attach('file', uniquePng(), 'slip.png').expect(201)).body;
     await http.post('/store/me/wallet/top-ups', { currency: 'SAR', amount: '100', receiptFileId: slip.id, bankAccountId: acc.id }, c.token).expect(201);
     await http.post('/store/me/wallet/top-ups', { currency: 'USD', amount: '10', receiptFileId: slip.id, bankAccountId: acc.id }, c.token).expect(422);
   });
@@ -82,7 +82,7 @@ describe('Shipping companies, alerts and staff report (e2e)', () => {
     await http.post('/store/cart/items', { variantId: p.variants[0].id, quantity: 1 }, c.token).expect(201);
     const order = (await http.post('/store/orders', { addressId: addr.id, paymentMethod: 'CASH_ON_DELIVERY' }, c.token).expect(201)).body;
 
-    const res = await request(app.getHttpServer()).post(`${API}/admin/orders/${order.id}/shipping-receipt`).set('Authorization', `Bearer ${admin}`).attach('file', PNG, 'receipt.png');
+    const res = await request(app.getHttpServer()).post(`${API}/admin/orders/${order.id}/shipping-receipt`).set('Authorization', `Bearer ${admin}`).attach('file', uniquePng(), 'receipt.png');
     expect(res.status).toBe(200);
     const seen = (await http.get(`/store/orders/${order.number}`, c.token).expect(200)).body;
     expect(seen.shippingReceiptFileId).toBeTruthy();

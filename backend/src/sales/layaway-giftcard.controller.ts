@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsDateString, IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsDateString, IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from 'class-validator';
 import { GiftCardStatus, LayawayStatus } from '../generated/prisma/client';
 import { AuthPrincipal, CurrentUser, CustomerOnly, RequirePermissions } from '../common/decorators/auth.decorators';
 import { IsAmount, IsCurrencyCode } from '../common/decorators/validation.decorators';
@@ -56,6 +56,11 @@ export class CancelDto {
 export class LayawaysQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: LayawayStatus }) @IsOptional() @IsEnum(LayawayStatus) status?: LayawayStatus;
   @ApiPropertyOptional() @IsOptional() @IsUUID() customerId?: string;
+  @ApiPropertyOptional({ description: 'Only open reservations nobody put aside yet' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  toHold?: boolean;
 }
 
 export class IssueGiftCardDto {
@@ -113,6 +118,13 @@ export class AdminLayawaysController {
   @HttpCode(HttpStatus.OK)
   cancel(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelDto, @CurrentUser() u: AuthPrincipal) {
     return this.layaways.cancel(id, dto.reason, u);
+  }
+
+  /** "تم حجز القطع": the pieces are on the reservation shelf. */
+  @Post(':id/hold')
+  @HttpCode(HttpStatus.OK)
+  hold(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.layaways.hold(id, u);
   }
 }
 

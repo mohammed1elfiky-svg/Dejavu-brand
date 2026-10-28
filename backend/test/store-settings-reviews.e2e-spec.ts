@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { API, api, createApp, customerToken, staffToken } from './helpers';
+import { API, api, createApp, customerToken, staffToken, uniquePng } from './helpers';
 
 /** Payment methods and cash on delivery per governorate, Yemeni addresses, shipping paid to the courier, bank account delete, reviews with photos. */
 describe('Store settings and reviews (e2e)', () => {
@@ -62,7 +62,7 @@ describe('Store settings and reviews (e2e)', () => {
 
     const used = (await http.post('/admin/bank-accounts', { bankName: 'الكريمي', accountName: 'ديجافو', accountNumber: `2${run}`, currency: 'SAR' }, admin).expect(201)).body;
     const c = await customerToken(app, 'شاحنة');
-    const slip = (await request(app.getHttpServer()).post(`${API}/store/me/files`).set('Authorization', `Bearer ${c.token}`).attach('file', PNG, 'slip.png').expect(201)).body;
+    const slip = (await request(app.getHttpServer()).post(`${API}/store/me/files`).set('Authorization', `Bearer ${c.token}`).attach('file', uniquePng(), 'slip.png').expect(201)).body;
     await http.post('/store/me/wallet/top-ups', { currency: 'SAR', amount: '50', receiptFileId: slip.id, bankAccountId: used.id }, c.token).expect(201);
     expect((await http.delete(`/admin/bank-accounts/${used.id}`, admin).expect(200)).body).toEqual({ deleted: false, hidden: true });
     expect((await http.get('/store/bank-accounts').expect(200)).body.some((b: { id: string }) => b.id === used.id)).toBe(false);
@@ -77,7 +77,7 @@ describe('Store settings and reviews (e2e)', () => {
 
     // Bought at the till by this customer (completed = received).
     await http.post('/admin/pos/sales', { items: [{ variantId: p.variants[0].id, quantity: 1 }], customerId: c.customerId, saleType: 'CASH', payments: [{ currency: 'SAR', amount: '90' }] }, admin).expect(201);
-    const photo = (await request(app.getHttpServer()).post(`${API}/store/me/review-photos`).set('Authorization', `Bearer ${c.token}`).attach('file', PNG, 'me.png').expect(201)).body;
+    const photo = (await request(app.getHttpServer()).post(`${API}/store/me/review-photos`).set('Authorization', `Bearer ${c.token}`).attach('file', uniquePng(), 'me.png').expect(201)).body;
     const review = (await http.put(`/store/products/heel-rev-${run}/my-review`, { rating: 4, comment: 'مريح وجميل', images: [photo.url] }, c.token).expect(200)).body;
     expect(review.isApproved).toBe(false);
     expect((await http.get(`/store/products/heel-rev-${run}/reviews`).expect(200)).body.total).toBe(0);

@@ -226,7 +226,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         : [],
       can('wallet.manage')
         ? this.prisma.walletTopUp.findMany({
-            where: { status: 'PENDING', createdAt: { gt: from } },
+            where: { OR: [{ status: 'PENDING' }, { autoApproved: true, verifiedAt: null, status: 'APPROVED' }], createdAt: { gt: from } },
             orderBy: { createdAt: 'desc' },
             take: 20,
             select: { id: true, number: true, amount: true, currency: true, createdAt: true, customer: { select: { name: true } } },
@@ -251,6 +251,44 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         at: t.createdAt,
       })),
     ].sort((a, b) => b.at.getTime() - a.at.getTime());
+    // Reservations to put aside, merchants' orders waiting for approval.
+    const [layaways, approvals] = await Promise.all([
+      can('layaways.manage')
+        ? this.prisma.layaway.findMany({
+            where: { status: 'OPEN', heldAt: null, createdAt: { gt: from } },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+            select: { id: true, number: true, createdAt: true, customer: { select: { name: true } } },
+          })
+        : [],
+      can('orders.update_status')
+        ? this.prisma.order.findMany({
+            where: { needsApproval: true, approvedAt: null, status: 'PENDING', placedAt: { gt: from } },
+            orderBy: { placedAt: 'desc' },
+            take: 20,
+            select: { id: true, number: true, placedAt: true, customer: { select: { name: true } } },
+          })
+        : [],
+    ]);
+    alerts.push(
+      ...layaways.map((l) => ({
+        id: `layaway:${l.id}`,
+        kind: 'ORDER' as const,
+        title: 'حجز جديد بانتظار التجهيز 📌',
+        body: `${l.number} · ${l.customer.name}`,
+        data: { layawayId: l.id },
+        at: l.createdAt,
+      })),
+      ...approvals.map((o) => ({
+        id: `approve:${o.id}`,
+        kind: 'ORDER' as const,
+        title: 'طلب تاجر بالآجل بانتظار موافقتك',
+        body: `${o.number} من ${o.customer.name}`,
+        data: { orderId: o.id },
+        at: o.placedAt,
+      })),
+    );
+    alerts.sort((a, b) => b.at.getTime() - a.at.getTime());
     if (can('settings.manage')) {
       const owner = await this.prisma.ownerAlert.findMany({ where: { createdAt: { gt: from } }, orderBy: { createdAt: 'desc' }, take: 20 });
       alerts.push(

@@ -1,6 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SmsService } from '../sms/sms.service';
-import { currencyOfRegion } from '../common/yemen';
 import { CustomerStatus, UserStatus } from '../generated/prisma/client';
 import { AuditService } from '../common/audit.service';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
@@ -115,7 +114,7 @@ export class AuthService {
           tx.customer.create({ data: { ...details, code: await this.sequences.next(tx, 'CUS', { year: 0 }), phone, status: CustomerStatus.PENDING, phoneVerified: false } }),
         );
       }
-      const delivery = await this.sms.sendOtp(phone, 'REGISTER').catch((e: unknown) => {
+      const delivery = await this.sms.sendOtp(phone, 'REGISTER', dto.otpChannel).catch((e: unknown) => {
         // Too many codes: the account still waits; the shopper asks again later.
         if (e instanceof HttpException && e.getStatus() === HttpStatus.TOO_MANY_REQUESTS) return { sent: false, channel: 'SMS' as const, whatsapp: null, expiresInMinutes: 0 };
         throw e;
@@ -177,8 +176,8 @@ export class AuthService {
         area: true,
       },
     });
-    /** The rial the customer's region uses (old notes YER or new notes YEQ). */
-    return { ...c, preferredCurrency: currencyOfRegion(c.governorate, c.area) };
+    // Every shopper starts in Saudi riyals and picks another currency in the app if they like.
+    return { ...c, preferredCurrency: 'SAR' };
   }
 
   private async customerSession(customerId: string) {

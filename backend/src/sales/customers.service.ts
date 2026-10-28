@@ -95,7 +95,7 @@ export class CustomersService {
 
   /** A customer added by staff (no app login yet; they can register later with the same phone). */
   async quickCreate(dto: { name: string; phone: string }, userId: string) {
-    if (!PHONE_REGEX.test(dto.phone)) throw new BadRequestException('Enter a valid Yemeni, Saudi or Egyptian mobile number');
+    if (!PHONE_REGEX.test(dto.phone)) throw new BadRequestException('Enter a valid mobile number (+country code for countries other than Yemen, Saudi Arabia and Egypt)');
     const phone = normalizePhone(dto.phone);
     if (await this.prisma.customer.findUnique({ where: { phone } })) throw new ConflictException('A customer with this phone already exists');
     const customer = await this.prisma.$transaction(async (tx) =>

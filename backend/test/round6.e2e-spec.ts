@@ -111,7 +111,7 @@ describe('Round 6 (e2e)', () => {
     expect(await preOrders.checkArrivals()).toBe(0);
     await http.post(`/admin/purchase-orders/${po.id}/import-receive`, { items: [{ itemId: po.items[0].id, quantity: 3 }], totalCbm: '1', cbmRateUsd: '10' }, admin).expect(200);
     expect(await preOrders.checkArrivals()).toBe(1);
-    expect(await prisma.notification.count({ where: { customerId: c.customerId, title: 'وصلت قطعتك المحجوزة 🎉' } })).toBe(1);
+    expect(await prisma.notification.count({ where: { customerId: c.customerId, title: 'وصل طلبك المسبق 🎉' } })).toBe(1);
     expect(await preOrders.checkArrivals()).toBe(0);
 
     const done = (await http.post(`/admin/pre-orders/${mine.id}/convert`, {}, admin).expect(200)).body;

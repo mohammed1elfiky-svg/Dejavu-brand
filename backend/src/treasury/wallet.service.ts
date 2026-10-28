@@ -1,5 +1,6 @@
-import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { NotificationType, Prisma, TopUpStatus } from '../generated/prisma/client';
+import { ConflictException, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { CashBoxKind, NotificationType, Prisma, TopUpStatus } from '../generated/prisma/client';
+import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
 import { CurrencyService, formatIn, inCurrency } from '../common/currency.service';
 import { paginated, PaginationQueryDto } from '../common/dto/pagination.dto';
@@ -8,6 +9,9 @@ import { dec } from '../common/utils/money';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAccountsService } from './customer-accounts.service';
+import { TransfersService } from './transfers.service';
+
+const AUTO_KEY = 'wallet.autoApproveTopUps';
 
 const topUpSelect = {
   id: true,
@@ -19,6 +23,8 @@ const topUpSelect = {
   status: true,
   receiptFileId: true,
   rejectReason: true,
+  autoApproved: true,
+  verifiedAt: true,
   createdAt: true,
   reviewedAt: true,
   bankAccount: { select: { id: true, bankName: true, accountNumber: true, currency: true } },
@@ -50,7 +56,11 @@ export class WalletService {
     private readonly sequences: SequenceService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    private readonly transfers: TransfersService,
+    private readonly ledger: LedgerService,
   ) {}
+
+  private readonly log = new Logger('Wallet');
 
   // --------------------------------------------------------- bank accounts ---
 
@@ -103,6 +113,41 @@ export class WalletService {
 
   // ------------------------------------------------------------- customer ---
 
+  /** Whether top-ups are credited at once (the owner can switch it off: then staff approve each). */
+  async autoApproves(db: Prisma.TransactionClient | PrismaService = this.prisma) {
+    const row = await db.setting.findUnique({ where: { key: AUTO_KEY } });
+    return row ? row.value === true : true;
+  }
+
+  async settings() {
+    return { autoApprove: await this.autoApproves() };
+  }
+
+  async setSettings(dto: { autoApprove: boolean }, userId: string) {
+    await this.prisma.setting.upsert({ where: { key: AUTO_KEY }, update: { value: dto.autoApprove }, create: { key: AUTO_KEY, value: dto.autoApprove } });
+    await this.audit.log({ userId, action: 'UPDATE', entityType: 'Setting', entityId: AUTO_KEY, after: dto });
+    return this.settings();
+  }
+
+  /** What the slip photo says (reference number, amount), to fill the form before sending. */
+  async scanSlip(customerId: string, fileId: string) {
+    const file = await this.prisma.storedFile.findUnique({ where: { id: fileId }, select: { customerId: true } });
+    if (!file || file.customerId !== customerId) throw new NotFoundException('Upload the deposit receipt first');
+    const { reference, reading } = await this.transfers.referenceOf(fileId, null);
+    let duplicate: string | null = null;
+    try {
+      await this.transfers.assertNew(this.prisma, reference, fileId);
+    } catch (e) {
+      duplicate = ((e as ConflictException).getResponse() as { message?: string }).message ?? 'هذه الحوالة مستخدمة سابقاً';
+    }
+    return { ...reading, reference: reading.reference, duplicate };
+  }
+
+  /**
+   * A top-up request. The slip's reference number goes on the transfer register (the same
+   * transfer is refused a second time), and the money is credited at once into the bank box
+   * of that currency; staff then check it arrived (list "للتحقق") and can reverse it.
+   */
   async request(
     customerId: string,
     dto: { currency: string; amount: string; receiptFileId: string; bankAccountId?: string; reference?: string; note?: string },
@@ -112,28 +157,53 @@ export class WalletService {
     if (!amount.gt(0)) throw new UnprocessableEntityException('Amount must be greater than zero');
     const file = await this.prisma.storedFile.findUnique({ where: { id: dto.receiptFileId }, select: { customerId: true } });
     if (!file || file.customerId !== customerId) throw new NotFoundException('Upload the deposit receipt first');
+    let bankName: string | null = null;
     if (dto.bankAccountId) {
       const bank = await this.prisma.storeBankAccount.findUnique({ where: { id: dto.bankAccountId } });
       if (!bank || !bank.isActive) throw new NotFoundException('Bank account not found');
       const takes = bank.currencies.length ? bank.currencies : [bank.currency];
       if (!takes.includes(dto.currency)) throw new UnprocessableEntityException(`${bank.bankName} does not take ${dto.currency}`);
+      bankName = bank.bankName;
     }
     if (await this.prisma.walletTopUp.count({ where: { customerId, status: TopUpStatus.PENDING } }) >= 5) {
       throw new ConflictException('You already have several requests under review');
     }
-    const topUp = await this.prisma.$transaction(async (tx) =>
-      tx.walletTopUp.create({
-        data: { ...dto, amount, customerId, number: await this.sequences.next(tx, 'TOP') },
+    const { reference, extracted, reading } = await this.transfers.referenceOf(dto.receiptFileId, dto.reference);
+    // The slip shows less than asked for: a person looks before anything is credited.
+    const slipAmount = reading.amount && (!reading.currency || reading.currency === dto.currency) ? inCurrency(reading.amount, dto.currency) : null;
+    const amountDoubtful = !!slipAmount && amount.gt(slipAmount);
+    const topUp = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.walletTopUp.create({
+        data: { ...dto, reference: reference ?? dto.reference ?? null, amount, customerId, number: await this.sequences.next(tx, 'TOP') },
         select: topUpSelect,
-      }),
-    );
+      });
+      await this.transfers.register(tx, {
+        reference,
+        extracted,
+        source: 'TOP_UP',
+        customerId,
+        currency: dto.currency,
+        amount,
+        bankName: reading.bankName ?? bankName,
+        fileId: dto.receiptFileId,
+        topUpId: created.id,
+      });
+      if (amountDoubtful || !(await this.autoApproves(tx))) return created;
+      const box =
+        (await tx.cashBox.findFirst({ where: { kind: CashBoxKind.BANK, currency: dto.currency, isActive: true }, orderBy: { createdAt: 'asc' } })) ??
+        (await tx.cashBox.findFirst({ where: { kind: CashBoxKind.VAULT, currency: dto.currency, isActive: true }, orderBy: { createdAt: 'asc' } }));
+      if (!box) return created;
+      await this.approveIn(tx, created.id, { cashBoxId: box.id }, null);
+      return created;
+    });
+    const row = await this.prisma.walletTopUp.findUniqueOrThrow({ where: { id: topUp.id }, select: topUpSelect });
     void this.notifications.notifyStaff('wallet.manage', {
       type: NotificationType.WALLET,
-      title: 'طلب شحن رصيد جديد',
-      body: `${topUp.number} · ${formatIn(amount, dto.currency)}`,
-      data: { topUpId: topUp.id },
+      title: row.status === TopUpStatus.APPROVED ? 'شحن رصيد تلقائي — للتحقق' : 'طلب شحن رصيد جديد',
+      body: `${row.number} · ${formatIn(amount, dto.currency)}${reference ? ` · مرجع ${reference}` : ''}${amountDoubtful ? ' · المبلغ أكبر من الإشعار' : ''}`,
+      data: { topUpId: row.id },
     });
-    return topUp;
+    return row;
   }
 
   /** The customer corrects a request still under review (amount, slip, bank…). */
@@ -157,20 +227,41 @@ export class WalletService {
       const takes = bank.currencies.length ? bank.currencies : [bank.currency];
       if (!takes.includes(currency)) throw new UnprocessableEntityException(`${bank.bankName} does not take ${currency}`);
     }
-    // Still pending at write time (staff may be reviewing it right now).
-    const res = await this.prisma.walletTopUp.updateMany({
-      where: { id, customerId, status: TopUpStatus.PENDING },
-      data: { ...dto, currency, amount },
+    // A new slip replaces the old one on the transfer register.
+    const slip = dto.receiptFileId && dto.receiptFileId !== t.receiptFileId ? await this.transfers.referenceOf(dto.receiptFileId, dto.reference) : null;
+    await this.prisma.$transaction(async (tx) => {
+      // Still pending at write time (staff may be reviewing it right now).
+      const res = await tx.walletTopUp.updateMany({
+        where: { id, customerId, status: TopUpStatus.PENDING },
+        data: { ...dto, currency, amount, ...(slip && { reference: slip.reference ?? dto.reference ?? null }) },
+      });
+      if (!res.count) throw new ConflictException('This request was already reviewed');
+      if (slip) {
+        await this.transfers.release(tx, { topUpId: id });
+        await this.transfers.register(tx, {
+          reference: slip.reference,
+          extracted: slip.extracted,
+          source: 'TOP_UP',
+          customerId,
+          currency,
+          amount,
+          bankName: slip.reading.bankName,
+          fileId: dto.receiptFileId,
+          topUpId: id,
+        });
+      }
     });
-    if (!res.count) throw new ConflictException('This request was already reviewed');
     return this.prisma.walletTopUp.findUniqueOrThrow({ where: { id }, select: topUpSelect });
   }
 
   /** The customer withdraws a request still under review. */
   async deleteRequest(customerId: string, id: string) {
     await this.pendingOf(customerId, id);
-    const res = await this.prisma.walletTopUp.deleteMany({ where: { id, customerId, status: TopUpStatus.PENDING } });
-    if (!res.count) throw new ConflictException('This request was already reviewed');
+    await this.prisma.$transaction(async (tx) => {
+      const res = await tx.walletTopUp.deleteMany({ where: { id, customerId, status: TopUpStatus.PENDING } });
+      if (!res.count) throw new ConflictException('This request was already reviewed');
+      await this.transfers.release(tx, { topUpId: id });
+    });
   }
 
   private async pendingOf(customerId: string, id: string) {
@@ -186,8 +277,8 @@ export class WalletService {
 
   // ---------------------------------------------------------------- staff ---
 
-  async list(q: PaginationQueryDto & { status?: TopUpStatus }) {
-    const where: Prisma.WalletTopUpWhereInput = { status: q.status };
+  async list(q: PaginationQueryDto & { status?: TopUpStatus; toVerify?: boolean }) {
+    const where: Prisma.WalletTopUpWhereInput = q.toVerify ? { status: TopUpStatus.APPROVED, autoApproved: true, verifiedAt: null } : { status: q.status };
     const [items, total] = await Promise.all([
       this.prisma.walletTopUp.findMany({
         where,
@@ -222,7 +313,13 @@ export class WalletService {
    * [cashBoxId] (the bank or safe it landed in):  Dr box  —  Cr customer accounts.
    */
   async approve(id: string, dto: { cashBoxId: string; amount?: string }, userId: string) {
-    const topUp = await this.prisma.$transaction(async (tx) => {
+    const topUp = await this.prisma.$transaction((tx) => this.approveIn(tx, id, dto, userId));
+    return this.get(topUp.id);
+  }
+
+  /** [userId] null: credited automatically on request (still to be verified by staff). */
+  private async approveIn(tx: Prisma.TransactionClient, id: string, dto: { cashBoxId: string; amount?: string }, userId: string | null) {
+    {
       await tx.$queryRaw`SELECT id FROM wallet_top_ups WHERE id = ${id}::uuid FOR UPDATE`;
       const t = await tx.walletTopUp.findUnique({ where: { id } });
       if (!t) throw new NotFoundException('Top-up request not found');
@@ -250,6 +347,10 @@ export class WalletService {
           exchangeRate: rate,
           reviewedById: userId,
           reviewedAt: new Date(),
+          autoApproved: userId === null,
+          // Approved by a person = checked by a person.
+          verifiedAt: userId ? new Date() : null,
+          verifiedById: userId,
         },
       });
       await this.notifications.notifyCustomer(tx, t.customerId, {
@@ -260,8 +361,43 @@ export class WalletService {
       });
       await this.audit.log({ userId, action: 'APPROVE', entityType: 'WalletTopUp', entityId: id, after: updated }, tx);
       return updated;
+    }
+  }
+
+  /** Staff saw the money in the bank: the automatic top-up leaves the "للتحقق" list. */
+  async verify(id: string, userId: string) {
+    const res = await this.prisma.walletTopUp.updateMany({ where: { id, status: TopUpStatus.APPROVED, verifiedAt: null }, data: { verifiedAt: new Date(), verifiedById: userId } });
+    if (!res.count) throw new ConflictException('Already checked, or not credited');
+    await this.audit.log({ userId, action: 'APPROVE', entityType: 'WalletTopUp', entityId: id, after: { verified: true } });
+    return this.get(id);
+  }
+
+  /**
+   * The money never arrived: takes the credit back out of the customer's wallet (it may go
+   * below zero if they already spent it) and out of the box. The reference stays on the
+   * register, so the same slip cannot be sent again.
+   */
+  async reverse(id: string, reason: string, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM wallet_top_ups WHERE id = ${id}::uuid FOR UPDATE`;
+      const t = await tx.walletTopUp.findUnique({ where: { id } });
+      if (!t) throw new NotFoundException('Top-up request not found');
+      if (t.status !== TopUpStatus.APPROVED) throw new ConflictException('Only credited top-ups can be reversed');
+      const entry = await tx.journalEntry.findFirst({ where: { sourceType: 'WALLET_TOPUP', sourceId: id, status: 'POSTED' } });
+      if (entry) await this.ledger.reverse(tx, entry.id, userId, `Top-up ${t.number} reversed: ${reason}`);
+      await tx.walletTopUp.update({
+        where: { id },
+        data: { status: TopUpStatus.REJECTED, rejectReason: reason, reviewedById: userId, reviewedAt: new Date(), verifiedAt: new Date(), verifiedById: userId },
+      });
+      await this.notifications.notifyCustomer(tx, t.customerId, {
+        type: NotificationType.WALLET,
+        title: 'أُلغي شحن الرصيد',
+        body: `الطلب ${t.number}: ${reason}. خُصم ${formatIn(dec(t.amount), t.currency)} من رصيدك.`,
+        data: { topUp: t.number },
+      });
+      await this.audit.log({ userId, action: 'REVERSE', entityType: 'WalletTopUp', entityId: id, after: { reason } }, tx);
     });
-    return this.get(topUp.id);
+    return this.get(id);
   }
 
   async reject(id: string, reason: string, userId: string) {
@@ -274,6 +410,8 @@ export class WalletService {
         where: { id },
         data: { status: TopUpStatus.REJECTED, rejectReason: reason, reviewedById: userId, reviewedAt: new Date() },
       });
+      // The customer may send the same transfer again with the right details.
+      await this.transfers.release(tx, { topUpId: id });
       await this.notifications.notifyCustomer(tx, t.customerId, {
         type: NotificationType.WALLET,
         title: 'تعذّر قبول طلب الشحن',

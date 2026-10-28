@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
-import { CashBoxKind, TopUpStatus } from '../generated/prisma/client';
+import { CashBoxKind, TopUpStatus, TransferSource } from '../generated/prisma/client';
 import { IsAmount, IsCurrencyCode } from '../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 
@@ -154,6 +154,17 @@ export class CustomerReceiptDto {
   @IsOptional()
   @IsBoolean()
   sendSms?: boolean;
+
+  @ApiPropertyOptional({ description: 'Bank transfer reference (checked against transfers already used)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  reference?: string;
+
+  @ApiPropertyOptional({ description: 'Photo of the transfer slip (POST admin/files/private); its reference is read off it' })
+  @IsOptional()
+  @IsUUID()
+  slipFileId?: string;
 }
 
 /** Converts part of a customer's balance from one currency to another. */
@@ -294,6 +305,21 @@ export class TopUpsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(TopUpStatus)
   status?: TopUpStatus;
+
+  @ApiPropertyOptional({ description: 'Credited automatically and not checked yet' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  toVerify?: boolean;
+}
+
+export class ScanSlipDto {
+  @ApiProperty() @IsUUID() receiptFileId: string;
+}
+
+export class BankTransfersQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ description: 'Reference number or bank' }) @IsOptional() @IsString() @MaxLength(60) q?: string;
+  @ApiPropertyOptional({ enum: TransferSource }) @IsOptional() @IsEnum(TransferSource) source?: TransferSource;
 }
 
 export class ApproveTopUpDto {
@@ -350,4 +376,8 @@ export class DebtRemindersDto {
   @ArrayMinSize(1)
   @ArrayMaxSize(500)
   customerIds: string[];
+}
+
+export class WalletSettingsDto {
+  @ApiProperty({ description: 'Credit top-ups at once and check them afterwards' }) @IsBoolean() autoApprove: boolean;
 }

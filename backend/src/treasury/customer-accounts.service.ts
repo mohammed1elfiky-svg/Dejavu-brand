@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { LedgerService } from '../accounting/ledger.service';
 import { AuditService } from '../common/audit.service';
-import { BASE_CURRENCY, CurrencyService, formatIn, inCurrency, toBase } from '../common/currency.service';
+import { BASE_CURRENCY, CurrencyService, currencyDecimals, formatIn, inCurrency, toBase } from '../common/currency.service';
 import { SmsService } from '../sms/sms.service';
 import { paginated, PaginationQueryDto } from '../common/dto/pagination.dto';
 import { Decimal, dec, money } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { TreasuryService } from './treasury.service';
+import { TransfersService } from './transfers.service';
 
 /**
  * Each customer's running account per currency. Positive: the customer owes the store
@@ -22,6 +23,7 @@ export class CustomerAccountsService {
     private readonly currencies: CurrencyService,
     private readonly audit: AuditService,
     private readonly sms: SmsService,
+    private readonly transfers: TransfersService,
   ) {}
 
   async balances(customerId: string, tx: Tx | PrismaService = this.prisma) {
@@ -144,7 +146,7 @@ export class CustomerAccountsService {
    */
   async credit(
     tx: Tx,
-    p: { customerId: string; currency: string; amount: Decimal; boxId: string; sourceType: 'CUSTOMER_PAYMENT' | 'WALLET_TOPUP'; sourceId?: string; description: string; userId: string },
+    p: { customerId: string; currency: string; amount: Decimal; boxId: string; sourceType: 'CUSTOMER_PAYMENT' | 'WALLET_TOPUP'; sourceId?: string; description: string; userId: string | null },
   ) {
     const box = await tx.cashBox.findUnique({ where: { id: p.boxId } });
     if (!box || !box.isActive) throw new NotFoundException('Cash box not found');
@@ -208,14 +210,28 @@ export class CustomerAccountsService {
   /** Staff take money from a customer at the till (debt repayment or a cash top-up). */
   async receipt(
     customerId: string,
-    dto: { currency: string; amount: string; cashBoxId?: string; note?: string; sendSms?: boolean },
+    dto: { currency: string; amount: string; cashBoxId?: string; note?: string; sendSms?: boolean; reference?: string; slipFileId?: string },
     user: { id: string; permissions: string[] },
   ) {
     const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true, phone: true } });
     if (!customer) throw new NotFoundException('Customer not found');
     const currency = dto.currency ?? BASE_CURRENCY;
     await this.currencies.requireActive(currency);
+    const slip = dto.reference || dto.slipFileId ? await this.transfers.referenceOf(dto.slipFileId, dto.reference) : null;
     await this.prisma.$transaction(async (tx) => {
+      if (slip) {
+        await this.transfers.register(tx, {
+          reference: slip.reference,
+          extracted: slip.extracted,
+          source: 'RECEIPT',
+          customerId,
+          currency,
+          amount: inCurrency(dto.amount, currency),
+          bankName: slip.reading.bankName,
+          fileId: dto.slipFileId,
+          userId: user.id,
+        });
+      }
       const box = dto.cashBoxId ? await this.treasury.visibleBox(dto.cashBoxId, user) : await this.treasury.defaultBox(tx, currency, { userId: user.id });
       const { entry } = await this.credit(tx, {
         customerId,
@@ -257,17 +273,7 @@ export class CustomerAccountsService {
     const toSar = toBase(toAmount, to.code, to.rate);
     await this.prisma.$transaction(async (tx) => {
       const description = `Exchange in ${customer.name}'s account: ${amount.toFixed()} ${from.code} → ${toAmount.toFixed()} ${to.code}${dto.note ? ` — ${dto.note}` : ''}`;
-      // Giving up [amount] of credit = owing that much more in that currency.
-      const out = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId, currency: from.code, amount, sar: fromSar, description });
-      const inn = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId, currency: to.code, amount: toAmount.neg(), sar: toSar.neg(), description });
-      const fx = fromSar.sub(toSar);
-      const entry = await this.ledger.post(tx, {
-        description,
-        sourceType: 'CUSTOMER_PAYMENT',
-        sourceId: customerId,
-        userId,
-        lines: [...out, ...inn, ...(fx.isZero() ? [] : [fx.gt(0) ? { account: 'FX_DIFFERENCE' as const, credit: fx } : { account: 'FX_DIFFERENCE' as const, debit: fx.neg() }])],
-      });
+      const entry = await this.exchangeIn(tx, { customerId, from: from.code, amount, fromSar, to: to.code, toAmount, toSar, description, userId });
       await this.audit.log({ userId, action: 'CREATE', entityType: 'CustomerExchange', entityId: entry.id, after: { customerId, ...dto } }, tx);
       if (dto.sendSms) {
         const balances = await this.balances(customerId, tx);
@@ -281,6 +287,70 @@ export class CustomerAccountsService {
       }
     });
     return { balances: await this.balances(customerId), smsQueued: !!dto.sendSms };
+  }
+
+  /** Books [amount] of [from] out of the customer's account and [toAmount] of [to] into it. */
+  private async exchangeIn(
+    tx: Tx,
+    p: { customerId: string; from: string; amount: Decimal; fromSar: Decimal; to: string; toAmount: Decimal; toSar: Decimal; description: string; userId?: string | null },
+  ) {
+    // Giving up [amount] of credit = owing that much more in that currency.
+    const out = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId: p.customerId, currency: p.from, amount: p.amount, sar: p.fromSar, description: p.description });
+    const inn = await this.treasury.moneyLines(tx, {
+      account: 'CUSTOMER_ACCOUNTS',
+      customerId: p.customerId,
+      currency: p.to,
+      amount: p.toAmount.neg(),
+      sar: p.toSar.neg(),
+      description: p.description,
+    });
+    const fx = [...out, ...inn].reduce((t, l) => t.add(dec(l.debit ?? 0)).sub(dec(l.credit ?? 0)), dec(0));
+    return this.ledger.post(tx, {
+      description: p.description,
+      sourceType: 'CUSTOMER_PAYMENT',
+      sourceId: p.customerId,
+      userId: p.userId ?? undefined,
+      lines: [...out, ...inn, ...(fx.isZero() ? [] : [fx.gt(0) ? { account: 'FX_DIFFERENCE' as const, credit: fx } : { account: 'FX_DIFFERENCE' as const, debit: fx.neg() }])],
+    });
+  }
+
+  /**
+   * Makes sure the wallet holds [needed] in [currency], changing the customer's credit in
+   * other currencies (SAR first) at today's rates when that currency alone is short. So a
+   * shopper with SAR credit can pay a YER order. Throws when all of it together is not enough.
+   */
+  async cover(tx: Tx, customerId: string, currency: string, needed: Decimal, label: string, userId?: string | null) {
+    const own = await this.treasury.balanceOf(tx, { customerId, currency });
+    let short = inCurrency(needed.add(own.amount), currency); // own.amount < 0 = credit
+    if (!short.gt(0)) return;
+    const target = await this.currencies.requireActive(currency, tx);
+    const others = (await this.balances(customerId, tx))
+      .filter((b) => b.currency !== currency && b.available.gt(0))
+      .sort((a, b) => (a.currency === BASE_CURRENCY ? -1 : b.currency === BASE_CURRENCY ? 1 : 0));
+    for (const b of others) {
+      if (!short.gt(0)) break;
+      const src = await this.currencies.requireActive(b.currency, tx);
+      const shortSar = dec(short).div(dec(target.rate));
+      // Enough of [b] to make up the shortfall, rounded up to its smallest unit.
+      const want = shortSar.mul(dec(src.rate)).toDecimalPlaces(currencyDecimals(b.currency), Decimal.ROUND_UP);
+      const take = Decimal.min(want, b.available);
+      const takeSar = toBase(take, b.currency, src.rate);
+      const gives = take.eq(want) ? short : takeSar.mul(dec(target.rate)).toDecimalPlaces(currencyDecimals(currency), Decimal.ROUND_DOWN);
+      if (!gives.gt(0)) continue;
+      await this.exchangeIn(tx, {
+        customerId,
+        from: b.currency,
+        amount: take,
+        fromSar: takeSar,
+        to: currency,
+        toAmount: gives,
+        toSar: toBase(gives, currency, target.rate),
+        description: `${label}: ${take.toFixed()} ${b.currency} → ${gives.toFixed()} ${currency}`,
+        userId,
+      });
+      short = short.sub(gives);
+    }
+    if (short.gt(0)) throw new UnprocessableEntityException('رصيد المحفظة لا يكفي لهذا الطلب');
   }
 
   /**

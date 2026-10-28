@@ -2,9 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { GOVERNORATE_NAMES } from '../../common/yemen';
 
-/** Egyptian mobile numbers in local (01xxxxxxxxx) or international (+201xxxxxxxxx) form. */
-/** Mobile numbers of Yemen (7xxxxxxxx), Saudi Arabia (05xxxxxxxx) and Egypt (01xxxxxxxxx). */
-export const PHONE_REGEX = /^(?:(?:\+967|00967)?7[01378]\d{7}|(?:\+966|0)5\d{8}|(?:\+20|0)1[0125]\d{8})$/;
+/**
+ * Mobile numbers of Yemen (7xxxxxxxx), Saudi Arabia (05xxxxxxxx) and Egypt (01xxxxxxxxx), local
+ * or international, and any other country in international form (+971501234567 or 00971…).
+ */
+export const PHONE_REGEX = /^(?:(?:\+967|00967)?7[01378]\d{7}|(?:\+966|00966|0)5\d{8}|(?:\+20|0020|0)1[0125]\d{8}|(?:\+|00)(?!967|966|20)[1-9]\d{6,14})$/;
 
 export class StaffLoginDto {
   @ApiPropertyOptional({ example: '777123456', description: 'Mobile number (or username) the employee signs in with' })
@@ -35,7 +37,7 @@ export class CustomerRegisterDto {
   name: string;
 
   @ApiProperty({ example: '01012345678' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
 
   @ApiPropertyOptional()
@@ -59,6 +61,11 @@ export class CustomerRegisterDto {
   @IsIn(['الحوبان', 'المدينة'])
   area?: string;
 
+  @ApiPropertyOptional({ enum: ['SMS', 'WHATSAPP'], default: 'SMS', description: 'How the sign-up code is sent' })
+  @IsOptional()
+  @IsIn(['SMS', 'WHATSAPP'])
+  otpChannel?: 'SMS' | 'WHATSAPP';
+
   @ApiPropertyOptional({ example: '123456', description: 'Code texted by POST auth/customer/otp, when sign-up requires it' })
   @IsOptional()
   @Matches(/^\d{6}$/, { message: 'otp must be 6 digits' })
@@ -67,7 +74,7 @@ export class CustomerRegisterDto {
 
 export class CustomerLoginDto {
   @ApiProperty({ example: '01012345678' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
 
   @ApiProperty()
@@ -78,7 +85,7 @@ export class CustomerLoginDto {
 
 export class CustomerVerifyDto {
   @ApiProperty({ example: '777123456' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
 
   @ApiProperty({ example: '123456' })
@@ -109,7 +116,7 @@ export class ChangePasswordDto {
 /** Forgotten password: the code texted by POST auth/customer/otp/reset and the new password. */
 export class PasswordResetDto {
   @ApiProperty({ example: '777123456' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
 
   @ApiProperty({ example: '123456' })
@@ -123,6 +130,14 @@ export class PasswordResetDto {
   newPassword: string;
 }
 
-/** Normalises to the local 01xxxxxxxxx form so a number is stored only one way. */
+/**
+ * Stores a number only one way: Yemen 7xxxxxxxx, Saudi 05xxxxxxxx, Egypt 01xxxxxxxxx, and any
+ * other country in full international form (+971501234567).
+ */
 export const normalizePhone = (phone: string) =>
-  phone.replace(/^\+20/, '0').replace(/^\+966/, '0').replace(/^(\+967|00967)/, '');
+  phone
+    .replace(/[\s-]/g, '')
+    .replace(/^00/, '+')
+    .replace(/^\+20/, '0')
+    .replace(/^\+966/, '0')
+    .replace(/^\+967/, '');

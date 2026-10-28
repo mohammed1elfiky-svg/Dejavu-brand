@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { API, api, createApp, customerToken, staffToken } from './helpers';
+import { API, api, createApp, customerToken, staffToken, uniquePng } from './helpers';
 
 /** Staff alerts (polled by the admin app) and customers changing top-up requests under review. */
 describe('Staff alerts & top-up requests (e2e)', () => {
@@ -21,11 +21,13 @@ describe('Staff alerts & top-up requests (e2e)', () => {
       await request(app.getHttpServer())
         .post(`${API}/store/me/files`)
         .set('Authorization', `Bearer ${token}`)
-        .attach('file', PNG, { filename: 'slip.png', contentType: 'image/png' })
+        .attach('file', uniquePng(), { filename: 'slip.png', contentType: 'image/png' })
         .expect(201)
     ).body.id as string;
 
   it('alerts staff about new top-up requests, and lets the customer edit or withdraw them while pending', async () => {
+    // Staff approve each request themselves (no automatic credit).
+    await http.put('/admin/wallet/settings', { autoApprove: false }, admin).expect(200);
     const since = new Date().toISOString();
     const shopper = await customerToken(app, 'عميل الشحن');
     const t = (await http.post('/store/me/wallet/top-ups', { currency: 'SAR', amount: '100', receiptFileId: await slip(shopper.token) }, shopper.token).expect(201)).body;
@@ -50,5 +52,6 @@ describe('Staff alerts & top-up requests (e2e)', () => {
     await http.delete(`/store/me/wallet/top-ups/${t2.id}`, shopper.token).expect(409);
     const inbox = (await http.get('/store/notifications', shopper.token).expect(200)).body;
     expect(inbox.items.some((n: { type: string }) => n.type === 'WALLET')).toBe(true);
+    await http.put('/admin/wallet/settings', { autoApprove: true }, admin).expect(200);
   });
 });

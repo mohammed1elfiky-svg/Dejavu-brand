@@ -7,6 +7,9 @@ import {
   AccountStatementQueryDto,
   ApproveTopUpDto,
   BankAccountDto,
+  BankTransfersQueryDto,
+  WalletSettingsDto,
+  ScanSlipDto,
   CancelTransferDto,
   CashBoxesQueryDto,
   CashTransferDto,
@@ -26,6 +29,7 @@ import {
 } from './treasury.dto';
 import { TreasuryService } from './treasury.service';
 import { WalletService } from './wallet.service';
+import { TransfersService } from './transfers.service';
 
 @ApiTags('Admin · Cash boxes')
 @Controller('admin')
@@ -160,7 +164,10 @@ export class AdminCustomerAccountController {
 @ApiTags('Admin · Wallet top-ups')
 @Controller('admin')
 export class AdminWalletController {
-  constructor(private readonly wallet: WalletService) {}
+  constructor(
+    private readonly wallet: WalletService,
+    private readonly transfers: TransfersService,
+  ) {}
 
   @RequirePermissions('wallet.manage')
   @Get('wallet/top-ups')
@@ -186,6 +193,42 @@ export class AdminWalletController {
   @HttpCode(HttpStatus.OK)
   reject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectTopUpDto, @CurrentUser() u: AuthPrincipal) {
     return this.wallet.reject(id, dto.reason, u.id);
+  }
+
+  @RequirePermissions('wallet.manage')
+  @Get('wallet/settings')
+  walletSettings() {
+    return this.wallet.settings();
+  }
+
+  /** autoApprove: credit top-ups at once (staff verify afterwards), or wait for staff. */
+  @RequirePermissions('settings.manage')
+  @Put('wallet/settings')
+  setWalletSettings(@Body() dto: WalletSettingsDto, @CurrentUser() u: AuthPrincipal) {
+    return this.wallet.setSettings(dto, u.id);
+  }
+
+  /** "وصل المبلغ": an automatically credited top-up was checked against the bank. */
+  @RequirePermissions('wallet.manage')
+  @Post('wallet/top-ups/:id/verify')
+  @HttpCode(HttpStatus.OK)
+  verify(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.wallet.verify(id, u.id);
+  }
+
+  /** The money never arrived: take the credit back. */
+  @RequirePermissions('wallet.manage')
+  @Post('wallet/top-ups/:id/reverse')
+  @HttpCode(HttpStatus.OK)
+  reverse(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectTopUpDto, @CurrentUser() u: AuthPrincipal) {
+    return this.wallet.reverse(id, dto.reason, u.id);
+  }
+
+  /** Every accepted transfer by reference number (app top-ups and till sales). */
+  @RequirePermissions('wallet.manage')
+  @Get('bank-transfers')
+  transfersList(@Query() q: BankTransfersQueryDto) {
+    return this.transfers.list(q);
   }
 
   @StaffOnly()
@@ -246,6 +289,13 @@ export class StoreWalletController {
   @Get('top-ups')
   topUps(@CurrentUser() u: AuthPrincipal) {
     return this.wallet.customerRequests(u.id);
+  }
+
+  /** Reads the reference number and amount off an uploaded slip, and says if it was used before. */
+  @Post('top-ups/scan')
+  @HttpCode(HttpStatus.OK)
+  scan(@CurrentUser() u: AuthPrincipal, @Body() dto: ScanSlipDto) {
+    return this.wallet.scanSlip(u.id, dto.receiptFileId);
   }
 
   @Post('top-ups')

@@ -90,16 +90,17 @@ export class SmsService {
    * Texts a 6-digit code to a phone number that is about to register (or reset its password).
    * The store's phone only texts Yemeni numbers; for others nothing is sent and the answer
    * says to ask for the code on WhatsApp ([whatsapp] is the store's number), where the owner
-   * gives one from the admin app (see [issueCode]).
+   * gives one from the admin app (see [issueCode]). A Yemeni number may choose WhatsApp too.
    */
-  async sendOtp(rawPhone: string, purpose: OtpPurpose = 'REGISTER') {
+  async sendOtp(rawPhone: string, purpose: OtpPurpose = 'REGISTER', channel: 'SMS' | 'WHATSAPP' = 'SMS') {
     const phone = normalizePhone(rawPhone);
     const customer = await this.prisma.customer.findUnique({ where: { phone }, select: { status: true } });
     // A sign-up still waiting for its code may ask again.
     const registered = !!customer && customer.status !== 'PENDING';
     if (purpose === 'REGISTER' && registered) throw new ConflictException('Phone number already registered');
     if (purpose === 'RESET' && !registered) throw new NotFoundException('No account uses this phone number');
-    if (!isYemeniMobile(phone)) return { sent: false, channel: 'WHATSAPP' as const, whatsapp: await this.storeWhatsapp(), expiresInMinutes: OTP_MINUTES };
+    // The customer's choice; texts only reach Yemeni numbers.
+    if (channel === 'WHATSAPP' || !isYemeniMobile(phone)) return { sent: false, channel: 'WHATSAPP' as const, whatsapp: await this.storeWhatsapp(), expiresInMinutes: OTP_MINUTES };
     const recent = await this.prisma.phoneOtp.count({ where: { phone, createdAt: { gt: new Date(Date.now() - OTP_MINUTES * 60_000) } } });
     if (recent >= 3) throw new HttpException('Too many codes requested; try again in a few minutes', HttpStatus.TOO_MANY_REQUESTS);
     const what = purpose === 'RESET' ? 'رمز استعادة كلمة المرور' : 'رمز التحقق';

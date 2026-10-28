@@ -64,6 +64,10 @@ export class AnalyticsService {
         .filter((x) => known.has(x.v.productId))
         .map((x) => ({ productId: x.v.productId, deviceId, customerId: customerId ?? null, seconds: Math.min(Math.max(0, Math.round(x.v.seconds)), MAX_VIEW_SECONDS), viewedAt: x.at }));
       stored = (await this.prisma.productView.createMany({ data: rows })).count;
+      // The store lists the most visited products first.
+      const perProduct = new Map<string, number>();
+      for (const r of rows) perProduct.set(r.productId, (perProduct.get(r.productId) ?? 0) + 1);
+      for (const [id, n] of perProduct) await this.prisma.product.update({ where: { id }, data: { viewCount: { increment: n } } });
     }
     // Signed in now: what this phone did before signing in becomes this customer's.
     if (customerId) {

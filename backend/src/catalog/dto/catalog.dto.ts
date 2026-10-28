@@ -398,10 +398,10 @@ export class StoreProductsQueryDto extends PaginationQueryDto {
   @IsBoolean()
   featured?: boolean;
 
-  @ApiPropertyOptional({ enum: ['newest', 'price_asc', 'price_desc'] })
+  @ApiPropertyOptional({ enum: ['newest', 'popular', 'price_asc', 'price_desc'], description: "None: the owner's order, then the most visited" })
   @IsOptional()
-  @IsIn(['newest', 'price_asc', 'price_desc'])
-  sort?: 'newest' | 'price_asc' | 'price_desc';
+  @IsIn(['newest', 'popular', 'price_asc', 'price_desc'])
+  sort?: 'newest' | 'popular' | 'price_asc' | 'price_desc';
 }
 
 export class PromotionDto {

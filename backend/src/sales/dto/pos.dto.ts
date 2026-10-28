@@ -87,6 +87,12 @@ export class PosSaleDto {
   @ArrayMaxSize(10)
   payments?: PosTenderDto[];
 
+  @ApiPropertyOptional({ example: 'EID10', description: 'Coupon code (instead of a typed discount)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  couponCode?: string;
+
   @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER'], default: 'CASH', description: 'Cash into the drawer, or a bank transfer / deposit slip' })
   @IsOptional()
   @IsIn(['CASH', 'BANK_TRANSFER'])

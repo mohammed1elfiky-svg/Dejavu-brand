@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -26,7 +27,7 @@ export class FilesService {
     if (!IMAGE_TYPES.includes(file.mimetype)) throw new BadRequestException('Only JPEG, PNG or WebP images are accepted');
     if (file.size > MAX_FILE_BYTES) throw new PayloadTooLargeException('Images must be 5 MB or smaller');
     const row = await this.prisma.storedFile.create({
-      data: { mimeType: file.mimetype, size: file.size, data: new Uint8Array(file.buffer), ...owner },
+      data: { mimeType: file.mimetype, size: file.size, data: new Uint8Array(file.buffer), sha256: createHash('sha256').update(file.buffer).digest('hex'), ...owner },
       select: { id: true, mimeType: true, size: true, createdAt: true },
     });
     return row;

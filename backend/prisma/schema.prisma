@@ -305,6 +305,7 @@ model User {
   topUpsReviewed        WalletTopUp[]
   cashBoxAccess         CashBoxAccess[]
   shifts                CashierShift[]
+  layawaysHeld          Layaway[]            @relation("LayawayHeldBy")
 
   @@map("users")
 }
@@ -540,6 +541,8 @@ model Product {
   isFeatured     Boolean           @default(false) @map("is_featured")
   /// The owner's order in the customer app (1 = first); null = after those, newest first.
   storePosition  Int?              @map("store_position")
+  /// How often shoppers opened the product (the store lists the most visited first).
+  viewCount      Int               @default(0) @map("view_count")
   ratingAvg      Decimal           @default(0) @map("rating_avg") @db.Decimal(3, 2)
   ratingCount    Int               @default(0) @map("rating_count")
   /// Numeric base SKU (100..100000); variants are "<skuNumber>-<variantNo>".
@@ -890,6 +893,10 @@ model Order {
   shippingReceiptFileId String?       @map("shipping_receipt_file_id") @db.Uuid
   /// When the customer was asked to review the delivered items.
   reviewPromptedAt      DateTime?     @map("review_prompted_at")
+  /// A merchant's order on credit waits for the owner (approve, edit quantities or reject).
+  needsApproval         Boolean       @default(false) @map("needs_approval")
+  approvedAt            DateTime?     @map("approved_at")
+  approvedById          String?       @map("approved_by_id") @db.Uuid
   updatedAt             DateTime      @updatedAt @map("updated_at")
 
   customer      Customer             @relation(fields: [customerId], references: [id])
@@ -1644,6 +1651,10 @@ model WalletTopUp {
   reviewedById  String?     @map("reviewed_by_id") @db.Uuid
   reviewedAt    DateTime?   @map("reviewed_at")
   rejectReason  String?     @map("reject_reason")
+  /// Credited at once on request; staff then check the money really arrived.
+  autoApproved  Boolean     @default(false) @map("auto_approved")
+  verifiedAt    DateTime?   @map("verified_at")
+  verifiedById  String?     @map("verified_by_id") @db.Uuid
   createdAt     DateTime    @default(now()) @map("created_at")
 
   customer     Customer          @relation(fields: [customerId], references: [id])
@@ -1700,10 +1711,13 @@ model StoredFile {
   isPublic   Boolean  @default(false) @map("is_public")
   userId     String?  @map("user_id") @db.Uuid
   customerId String?  @map("customer_id") @db.Uuid
+  /// SHA-256 of [data], to spot the same receipt sent twice.
+  sha256     String?
   createdAt  DateTime @default(now()) @map("created_at")
 
   topUps WalletTopUp[]
 
+  @@index([sha256])
   @@map("stored_files")
 }
 
@@ -1896,20 +1910,20 @@ enum ChatRole {
 
 /// The shopping assistant conversation of one customer (Gemini answers on the server).
 model ChatMessage {
-  id          String   @id @default(uuid()) @db.Uuid
-  customerId  String   @map("customer_id") @db.Uuid
-  role        ChatRole
-  text        String
+  id           String    @id @default(uuid()) @db.Uuid
+  customerId   String    @map("customer_id") @db.Uuid
+  role         ChatRole
+  text         String
   /// Photo the customer sent (private stored file).
-  imageFileId String?  @map("image_file_id") @db.Uuid
+  imageFileId  String?   @map("image_file_id") @db.Uuid
   /// Products the assistant showed with this answer.
-  productIds  String[] @default([]) @map("product_ids")
+  productIds   String[]  @default([]) @map("product_ids")
   /// The assistant suggested talking to staff (WhatsApp).
-  handover    Boolean  @default(false)
+  handover     Boolean   @default(false)
   /// The customer reported this answer as wrong or offensive.
   reportedAt   DateTime? @map("reported_at")
   reportReason String?   @map("report_reason")
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   currency     Currency? @relation(fields: [currencyCode], references: [code])
@@ -2040,6 +2054,10 @@ model Layaway {
   expiresAt   DateTime?     @map("expires_at")
   note        String?
   saleOrderId String?       @map("sale_order_id") @db.Uuid
+  /// When an employee physically put the pieces aside.
+  heldAt      DateTime?     @map("held_at")
+  heldById    String?       @map("held_by_id") @db.Uuid
+  heldBy      User?         @relation("LayawayHeldBy", fields: [heldById], references: [id])
   createdById String?       @map("created_by_id") @db.Uuid
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
@@ -2157,24 +2175,63 @@ enum PreOrderStatus {
 
 /// A customer's claim on pieces still on their way (an open purchase / import order).
 model PreOrder {
-  id         String         @id @default(uuid()) @db.Uuid
-  number     String         @unique
-  customerId String         @map("customer_id") @db.Uuid
-  variantId  String         @map("variant_id") @db.Uuid
-  quantity   Int
-  status     PreOrderStatus @default(WAITING)
-  note       String?
-  layawayId  String?        @map("layaway_id") @db.Uuid
-  createdAt  DateTime       @default(now()) @map("created_at")
-  notifiedAt DateTime?      @map("notified_at")
-  closedAt   DateTime?      @map("closed_at")
+  id          String         @id @default(uuid()) @db.Uuid
+  number      String         @unique
+  customerId  String         @map("customer_id") @db.Uuid
+  /// Null for a piece not in the catalogue yet (described by [itemName]); linked once it is added.
+  variantId   String?        @map("variant_id") @db.Uuid
+  itemName    String?        @map("item_name")
+  itemSize    String?        @map("item_size")
+  itemColor   String?        @map("item_color")
+  /// Agreed price per piece, SAR.
+  unitPrice   Decimal?       @map("unit_price") @db.Decimal(14, 2)
+  /// Staff member who took it (no confirmation asked on arrival), null = the customer in the app.
+  createdById String?        @map("created_by_id") @db.Uuid
+  confirmedAt DateTime?      @map("confirmed_at")
+  quantity    Int
+  status      PreOrderStatus @default(WAITING)
+  note        String?
+  layawayId   String?        @map("layaway_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at")
+  notifiedAt  DateTime?      @map("notified_at")
+  closedAt    DateTime?      @map("closed_at")
 
-  customer     Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  currency     Currency?      @relation(fields: [currencyCode], references: [code])
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  currency     Currency?       @relation(fields: [currencyCode], references: [code])
   currencyCode String?
 
   @@index([status, variantId])
   @@index([customerId])
   @@map("pre_orders")
+}
+
+enum TransferSource {
+  TOP_UP
+  POS
+  RECEIPT
+}
+
+/// Every bank transfer / deposit slip the store accepted, by its reference number, so the
+/// same transfer cannot be used twice (in the app or at the till).
+model BankTransfer {
+  id          String         @id @default(uuid()) @db.Uuid
+  /// Reference as printed, digits and letters only, upper case (null: only the slip photo is known).
+  reference   String?        @unique
+  source      TransferSource
+  customerId  String?        @map("customer_id") @db.Uuid
+  currency    String?
+  amount      Decimal?       @db.Decimal(18, 2)
+  bankName    String?        @map("bank_name")
+  /// Read from the slip photo (not typed).
+  extracted   Boolean        @default(false)
+  fileId      String?        @map("file_id") @db.Uuid
+  topUpId     String?        @map("top_up_id") @db.Uuid
+  orderId     String?        @map("order_id") @db.Uuid
+  createdById String?        @map("created_by_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([customerId])
+  @@map("bank_transfers")
 }

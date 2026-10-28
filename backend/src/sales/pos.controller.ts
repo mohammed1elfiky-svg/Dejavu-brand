@@ -43,6 +43,13 @@ export class AdminPosController {
     return this.pos.products(q);
   }
 
+  /** Whether any coupon code can be used now (the till shows the coupon field only then). */
+  @RequirePermissions('pos.sell')
+  @Get('coupons-available')
+  couponsAvailable() {
+    return this.pos.couponsAvailable();
+  }
+
   /** Resolves a scanned barcode: variant SKU (100-2), factory barcode, or product SKU (100). */
   @RequirePermissions('pos.sell')
   @Get('lookup')

@@ -30,6 +30,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { FilesService, UploadedPart } from '../files/files.service';
 import { StoreSettingsService } from './store-settings.service';
+import { CustomerAccountsService } from '../treasury/customer-accounts.service';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
 import { balanceDue, PaymentsService } from './payments.service';
@@ -71,6 +72,9 @@ const customerOrderSelect = {
   returnedTotal: true,
   customerNote: true,
   shippingReceiptFileId: true,
+  /** A merchant's order on credit waiting for the owner. */
+  needsApproval: true,
+  approvedAt: true,
   placedAt: true,
   confirmedAt: true,
   deliveredAt: true,
@@ -120,6 +124,7 @@ export class OrdersService {
     private readonly currencies: CurrencyService,
     private readonly files: FilesService,
     private readonly storeSettings: StoreSettingsService,
+    private readonly accounts: CustomerAccountsService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
@@ -150,6 +155,9 @@ export class OrdersService {
 
       const p = quote.pricing;
       const currency = dto.currency ?? BASE_CURRENCY;
+      const buyer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { isMerchant: true, creditLimit: true } });
+      // A merchant allowed to buy on credit: the owner approves (or edits) each order first.
+      const needsApproval = buyer.isMerchant && buyer.creditLimit !== null;
       const { rate: exchangeRate } = await this.currencies.requireActive(currency, tx, { customerApp: true });
       const order = await tx.order.create({
         data: {
@@ -168,6 +176,7 @@ export class OrdersService {
           taxTotal: p.taxTotal,
           grandTotal: p.grandTotal,
           customerNote: dto.customerNote,
+          needsApproval,
           items: {
             create: quote.lines.map((l, i) => ({
               variantId: l.variantId,
@@ -195,19 +204,24 @@ export class OrdersService {
       const cart = await tx.cart.findUniqueOrThrow({ where: { customerId } });
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
-      if (dto.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT) {
-        // Paid from the wallet balance in the order's currency; merchants may also buy on credit.
-        const buyer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { isMerchant: true, creditLimit: true } });
-        if (buyer.isMerchant && buyer.creditLimit !== null) {
-          const owed = await tx.customerAccountEntry.aggregate({ where: { customerId }, _sum: { baseAmount: true } });
-          if (dec(owed._sum.baseAmount).add(order.grandTotal).gt(buyer.creditLimit)) {
-            throw new UnprocessableEntityException('This order exceeds your credit limit');
-          }
+      if (needsApproval) {
+        const owed = await tx.customerAccountEntry.aggregate({ where: { customerId }, _sum: { baseAmount: true } });
+        // Orders still waiting for approval count against the limit too.
+        const waiting = await tx.order.aggregate({
+          where: { customerId, needsApproval: true, approvedAt: null, status: OrderStatus.PENDING, id: { not: order.id } },
+          _sum: { grandTotal: true },
+        });
+        if (dec(owed._sum.baseAmount).add(dec(waiting._sum.grandTotal)).add(order.grandTotal).gt(buyer.creditLimit!)) {
+          throw new UnprocessableEntityException('This order exceeds your credit limit');
         }
+      } else if (dto.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT) {
+        // Paid from the wallet; credit in other currencies is changed into the order's currency.
+        const due = toCurrency(order.grandTotal, currency, exchangeRate);
+        if (!buyer.isMerchant) await this.accounts.cover(tx, customerId, currency, due, `دفع الطلب ${order.number}`);
         const { order: paid } = await this.payments.receive(
           tx,
           order,
-          { method: PaymentMethod.CUSTOMER_ACCOUNT, currency, amount: toCurrency(order.grandTotal, currency, exchangeRate) },
+          { method: PaymentMethod.CUSTOMER_ACCOUNT, currency, amount: due },
           null,
           { allowCredit: buyer.isMerchant },
         );
@@ -217,7 +231,7 @@ export class OrdersService {
     });
     void this.notifications.notifyStaff('orders.update_status', {
       type: 'ORDER_STATUS',
-      title: 'طلب جديد 🛍️',
+      title: placed.needsApproval ? 'طلب تاجر بالآجل بانتظار موافقتك' : 'طلب جديد 🛍️',
       body: `${placed.number} · ${orderAmount(placed, placed.grandTotal)}`,
       data: { orderId: placed.id, order: placed.number },
     });
@@ -287,6 +301,7 @@ export class OrdersService {
       paymentStatus: q.paymentStatus,
       channel: q.channel,
       cashierId: q.cashierId,
+      ...(q.awaitingApproval && { needsApproval: true, approvedAt: null, status: OrderStatus.PENDING }),
       placedAt: {
         gte: q.from ? parseDateOnly(q.from) : undefined,
         lt: q.to ? new Date(parseDateOnly(q.to).getTime() + 86_400_000) : undefined,
@@ -357,6 +372,9 @@ export class OrdersService {
   async changeStatus(id: string, dto: ChangeOrderStatusDto, userId: string) {
     await this.prisma.$transaction(async (tx) => {
       const order = await this.lockOrder(tx, id);
+      if (order.needsApproval && !order.approvedAt && dto.status !== OrderStatus.CANCELLED) {
+        throw new UnprocessableEntityException('وافق على طلب التاجر أولاً');
+      }
       if (!TRANSITIONS[order.status].includes(dto.status)) {
         throw new UnprocessableEntityException(`Cannot change order from ${order.status} to ${dto.status}`);
       }
@@ -393,6 +411,94 @@ export class OrdersService {
       await this.payments.refund(tx, order, dto, userId);
     });
     return this.adminGet(id);
+  }
+
+  // ------------------------------------------------ merchant approvals ---
+
+  /**
+   * The owner approves a merchant's order on credit: it is charged to the merchant's account
+   * (paid from their wallet first, the rest owed) and confirmed.
+   */
+  async approve(id: string, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.pendingApproval(tx, id);
+      await tx.order.update({ where: { id }, data: { approvedAt: new Date(), approvedById: userId } });
+      let current = await tx.order.findUniqueOrThrow({ where: { id } });
+      if (order.paymentMethod === PaymentMethod.CUSTOMER_ACCOUNT) {
+        current = (
+          await this.payments.receive(
+            tx,
+            current,
+            { method: PaymentMethod.CUSTOMER_ACCOUNT, currency: order.currency, amount: toCurrency(balanceDue(order), order.currency, order.exchangeRate) },
+            userId,
+            { allowCredit: true },
+          )
+        ).order;
+      }
+      await this.transition(tx, current, OrderStatus.CONFIRMED, 'وافق المالك على طلب التاجر', userId, { confirmedAt: new Date() });
+      await this.audit.log({ userId, action: 'APPROVE', entityType: 'Order', entityId: id }, tx);
+    });
+    return this.adminGet(id);
+  }
+
+  async reject(id: string, reason: string | undefined, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.pendingApproval(tx, id);
+      await this.cancel(tx, order, reason?.trim() || 'رفض المالك الطلب', userId);
+    });
+    return this.adminGet(id);
+  }
+
+  /**
+   * Changes quantities (0 removes a line) before approving. Stock reserved follows; each line
+   * keeps its price and its per-piece discount, and the totals are worked out again.
+   */
+  async editItems(id: string, lines: { itemId: string; quantity: number }[], userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.pendingApproval(tx, id);
+      const items = await tx.orderItem.findMany({ where: { orderId: id }, orderBy: { variantId: 'asc' } });
+      const wanted = new Map(lines.map((l) => [l.itemId, l.quantity]));
+      for (const l of lines) if (!items.some((i) => i.id === l.itemId)) throw new NotFoundException('Order line not found');
+      if (items.every((i) => (wanted.get(i.id) ?? i.quantity) === 0)) throw new UnprocessableEntityException('Keep at least one piece, or reject the order');
+      for (const i of items) {
+        const q = wanted.get(i.id);
+        if (q === undefined || q === i.quantity) continue;
+        if (q > i.quantity) await this.stock.reserve(tx, i.variantId, order.warehouseId, q - i.quantity);
+        else await this.stock.release(tx, i.variantId, order.warehouseId, i.quantity - q);
+        if (q === 0) {
+          await tx.orderItem.delete({ where: { id: i.id } });
+          continue;
+        }
+        const per = (v: Prisma.Decimal) => dec(v).div(i.quantity).mul(q);
+        await tx.orderItem.update({
+          where: { id: i.id },
+          data: { quantity: q, discount: money(per(i.discount)), taxAmount: money(per(i.taxAmount)), lineTotal: money(per(i.lineTotal)) },
+        });
+      }
+      const now = await tx.orderItem.findMany({ where: { orderId: id } });
+      const subtotal = money(now.reduce((t, i) => t.add(dec(i.unitPrice).mul(i.quantity)), dec(0)));
+      const lineDiscounts = now.reduce((t, i) => t.add(dec(i.discount)), dec(0));
+      const taxTotal = money(now.reduce((t, i) => t.add(dec(i.taxAmount)), dec(0)));
+      const linesTotal = now.reduce((t, i) => t.add(dec(i.lineTotal)), dec(0));
+      const before = items.reduce((t, i) => t.add(dec(i.lineTotal)), dec(0));
+      // An order-wide discount (coupon) shrinks with the order.
+      const orderDiscount = dec(order.discountTotal).sub(items.reduce((t, i) => t.add(dec(i.discount)), dec(0)));
+      const scaledOrderDiscount = before.gt(0) && orderDiscount.gt(0) ? money(orderDiscount.mul(linesTotal).div(before)) : dec(0);
+      const grandTotal = money(linesTotal.sub(scaledOrderDiscount).add(order.shippingFee));
+      await tx.order.update({
+        where: { id },
+        data: { subtotal, discountTotal: money(lineDiscounts.add(scaledOrderDiscount)), taxTotal, grandTotal },
+      });
+      await this.audit.log({ userId, action: 'UPDATE', entityType: 'Order', entityId: id, before: { grandTotal: order.grandTotal }, after: { lines, grandTotal } }, tx);
+    });
+    return this.adminGet(id);
+  }
+
+  private async pendingApproval(tx: Tx, id: string) {
+    const order = await this.lockOrder(tx, id);
+    if (!order.needsApproval || order.approvedAt) throw new UnprocessableEntityException('This order is not waiting for approval');
+    if (order.status !== OrderStatus.PENDING) throw new UnprocessableEntityException(`Order is ${order.status.toLowerCase()}`);
+    return order;
   }
 
   // -------------------------------------------------------- card payments ---

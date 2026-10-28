@@ -2,6 +2,7 @@ import { activeDeals } from './deals.db';
 import { AppliedDeal, applyDeals } from './deals';
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Coupon, ProductStatus } from '../generated/prisma/client';
+import { checkCoupon, liveCoupons } from './coupons';
 import { dec } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { AddCartItemDto } from './dto/sales.dto';
@@ -198,7 +199,7 @@ export class CartService {
     let couponProblem: string | undefined;
     if (couponCode) {
       const subtotal = priceOrder({ lines: pricingLines, lineDiscounts, shippingFee: 0, pricesIncludeTax }).subtotal;
-      const check = await this.checkCoupon(tx, couponCode, customerId, subtotal.toString());
+      const check = await checkCoupon(tx, couponCode, customerId, subtotal.toString());
       if (typeof check === 'string') couponProblem = check;
       else coupon = check;
     }
@@ -206,23 +207,6 @@ export class CartService {
 
     const pricing = priceOrder({ lines: pricingLines, lineDiscounts, coupon, shippingFee: shipping?.fee ?? 0, pricesIncludeTax });
     return { lines, pricing, coupon, couponCode, couponProblem, shipping, shippingProblem, problems, deals: offers.applied };
-  }
-
-  /** Returns the coupon when it can be applied, otherwise a reason. */
-  private async checkCoupon(tx: Tx, code: string, customerId: string, subtotal: string): Promise<Coupon | string> {
-    const coupon = await tx.coupon.findUnique({ where: { code } });
-    const now = new Date();
-    if (!coupon || !coupon.isActive) return 'Coupon code is not valid';
-    if (coupon.startsAt > now || (coupon.endsAt && coupon.endsAt < now)) return 'Coupon has expired';
-    if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) return 'Coupon usage limit reached';
-    if (coupon.minOrderAmount && dec(subtotal).lessThan(coupon.minOrderAmount)) {
-      return `Minimum order for this coupon is ${coupon.minOrderAmount}`;
-    }
-    if (coupon.perCustomerLimit !== null) {
-      const used = await tx.couponUsage.count({ where: { couponId: coupon.id, customerId } });
-      if (used >= coupon.perCustomerLimit) return 'You have already used this coupon';
-    }
-    return coupon;
   }
 
   async view(customerId: string, addressId?: string) {
@@ -236,6 +220,8 @@ export class CartService {
       })),
       couponCode: q.couponCode,
       couponProblem: q.couponProblem ?? null,
+      /** Whether any coupon can be used now: the app shows the code field only then. */
+      couponsAvailable: (await liveCoupons(this.prisma)) > 0,
       deals: q.deals,
       shipping: q.shipping,
       shippingProblem: q.shippingProblem ?? null,

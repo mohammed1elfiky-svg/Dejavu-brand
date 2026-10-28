@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { LayawayStatus, Prisma, ProductStatus } from '../generated/prisma/client';
+import { LayawayStatus, NotificationType, Prisma, ProductStatus } from '../generated/prisma/client';
 import { activePromotions, promotedPrice } from '../catalog/promotions';
 import { AuditService } from '../common/audit.service';
 import { CurrencyService, inCurrency } from '../common/currency.service';
@@ -7,6 +7,7 @@ import { SequenceService } from '../common/sequence.service';
 import { paginated, PaginationQueryDto } from '../common/dto/pagination.dto';
 import { Decimal, dec, money, sum } from '../common/utils/money';
 import { StockService } from '../inventory/stock.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
 import { CustomerAccountsService } from '../treasury/customer-accounts.service';
 import { TreasuryService } from '../treasury/treasury.service';
@@ -25,6 +26,7 @@ export interface DepositInput {
 
 const include = {
   customer: { select: { id: true, name: true, phone: true, code: true } },
+  heldBy: { select: { id: true, name: true } },
   payments: { orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.LayawayInclude;
 
@@ -45,9 +47,18 @@ export class LayawayService {
     private readonly sequences: SequenceService,
     private readonly audit: AuditService,
     private readonly pos: PosService,
+    private readonly notifications: NotificationsService,
   ) {}
 
-  async create(dto: { customerId: string; items: { variantId: string; quantity: number }[]; deposit?: DepositInput; expiresAt?: string; note?: string }, user: User) {
+  /**
+   * [opts.anyProduct] lets a pre-order taken by staff for a piece not shown in the app yet be
+   * put aside; [opts.prices] (SAR per piece, by variant) keeps the price agreed then.
+   */
+  async create(
+    dto: { customerId: string; items: { variantId: string; quantity: number }[]; deposit?: DepositInput; expiresAt?: string; note?: string },
+    user: User | null,
+    opts: { anyProduct?: boolean; prices?: Map<string, string> } = {},
+  ) {
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, select: { id: true, name: true, code: true } });
     if (!customer) throw new NotFoundException('Customer not found');
     if (customer.code === 'CUS-WALKIN') throw new BadRequestException('Pick a named customer');
@@ -58,13 +69,13 @@ export class LayawayService {
       select: { id: true, sku: true, isActive: true, price: true, product: { select: { id: true, basePrice: true, status: true } } },
     });
     if (variants.length !== quantities.size) throw new NotFoundException('Some items were not found');
-    const bad = variants.find((v) => !v.isActive || v.product.status !== ProductStatus.ACTIVE);
+    const bad = variants.find((v) => !v.isActive || (!opts.anyProduct && v.product.status !== ProductStatus.ACTIVE));
     if (bad) throw new UnprocessableEntityException(`${bad.sku} is not for sale`);
     const promos = await activePromotions(this.prisma, variants.map((v) => v.product.id));
     const items: LayawayItem[] = variants.map((v) => ({
       variantId: v.id,
       quantity: quantities.get(v.id)!,
-      unitPrice: promotedPrice(v.price ?? v.product.basePrice, promos.get(v.product.id)).toFixed(2),
+      unitPrice: opts.prices?.get(v.id) ?? promotedPrice(v.price ?? v.product.basePrice, promos.get(v.product.id)).toFixed(2),
     }));
     const total = money(sum(items.map((i) => dec(i.unitPrice).mul(i.quantity))));
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
@@ -83,12 +94,31 @@ export class LayawayService {
           total,
           expiresAt,
           note: dto.note,
-          createdById: user.id,
+          createdById: user?.id ?? null,
         },
       });
-      if (dto.deposit) await this.depositIn(tx, lay.id, customer, dto.deposit, user);
-      await this.audit.log({ userId: user.id, action: 'CREATE', entityType: 'Layaway', entityId: lay.id, after: dto }, tx);
+      if (dto.deposit && user) await this.depositIn(tx, lay.id, customer, dto.deposit, user);
+      await this.audit.log({ userId: user?.id ?? null, action: 'CREATE', entityType: 'Layaway', entityId: lay.id, after: dto }, tx);
       return lay.id;
+    });
+    const made = await this.get(id);
+    // Shown with the orders until someone puts the pieces aside.
+    void this.notifications.notifyStaff('layaways.manage', {
+      type: NotificationType.ORDER_STATUS,
+      title: 'حجز جديد بانتظار التجهيز 📌',
+      body: `${made.number} · ${customer.name} · ${made.items.map((i) => `${i.name}${i.size ? ` (${i.size})` : ''} × ${i.quantity}`).join('، ')}`,
+      data: { layawayId: id, layaway: made.number },
+    });
+    return made;
+  }
+
+  /** An employee put the pieces aside on the shelf: the reservation leaves the to-do list. */
+  async hold(id: string, user: User) {
+    await this.prisma.$transaction(async (tx) => {
+      const lay = await this.lockOpen(tx, id);
+      if (lay.heldAt) throw new UnprocessableEntityException('Already put aside');
+      await tx.layaway.update({ where: { id }, data: { heldAt: new Date(), heldById: user.id } });
+      await this.audit.log({ userId: user.id, action: 'UPDATE', entityType: 'Layaway', entityId: id, after: { held: true } }, tx);
     });
     return this.get(id);
   }
@@ -174,8 +204,10 @@ export class LayawayService {
     return this.get(id);
   }
 
-  async list(q: PaginationQueryDto & { status?: LayawayStatus; customerId?: string }) {
-    const where: Prisma.LayawayWhereInput = { status: q.status, customerId: q.customerId };
+  async list(q: PaginationQueryDto & { status?: LayawayStatus; customerId?: string; toHold?: boolean }) {
+    const where: Prisma.LayawayWhereInput = q.toHold
+      ? { status: LayawayStatus.OPEN, heldAt: null, customerId: q.customerId }
+      : { status: q.status, customerId: q.customerId };
     const [rows, total] = await Promise.all([
       this.prisma.layaway.findMany({ where, include, orderBy: { createdAt: 'desc' }, skip: q.skip, take: q.pageSize }),
       this.prisma.layaway.count({ where }),
@@ -218,6 +250,8 @@ export class LayawayService {
           expiresAt: r.expiresAt,
           expired: r.status === LayawayStatus.OPEN && !!r.expiresAt && r.expiresAt < now,
           note: r.note,
+          heldAt: r.heldAt,
+          heldBy: r.heldBy?.name ?? null,
           saleOrderId: r.saleOrderId,
           createdAt: r.createdAt,
           closedAt: r.closedAt,

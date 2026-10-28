@@ -27,6 +27,8 @@ import {
   ShippingZoneDto,
   UpdateCouponDto,
   UpdateCustomerDto,
+  EditOrderItemsDto,
+  RejectOrderDto,
 } from './dto/sales.dto';
 import { OrdersService } from './orders.service';
 import { ReturnsService } from './returns.service';
@@ -69,6 +71,28 @@ export class AdminOrdersController {
       throw new ForbiddenException('Missing permission: orders.cancel');
     }
     return this.orders.changeStatus(id, dto, u.id);
+  }
+
+  /** A merchant's order on credit: approve it (charged to their account and confirmed). */
+  @RequirePermissions('orders.update_status')
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  approve(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() u: AuthPrincipal) {
+    return this.orders.approve(id, u.id);
+  }
+
+  @RequirePermissions('orders.update_status')
+  @Post(':id/reject')
+  @HttpCode(HttpStatus.OK)
+  reject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectOrderDto, @CurrentUser() u: AuthPrincipal) {
+    return this.orders.reject(id, dto.reason, u.id);
+  }
+
+  /** Change quantities of a merchant's order before approving it. */
+  @RequirePermissions('orders.update_status')
+  @Put(':id/items')
+  editItems(@Param('id', ParseUUIDPipe) id: string, @Body() dto: EditOrderItemsDto, @CurrentUser() u: AuthPrincipal) {
+    return this.orders.editItems(id, dto.lines, u.id);
   }
 
   @RequirePermissions('payments.record')

@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../src/prisma/prisma.service';
 import request from 'supertest';
-import { API, api, createApp, ledgerBalances, staffToken } from './helpers';
+import { API, api, createApp, ledgerBalances, staffToken, uniquePng } from './helpers';
 
 /** Cashier shifts, deleting / correcting today's sales, offline re-sends, slip photos, the employee's till layout. */
 describe('POS shifts, void & edit (e2e)', () => {
@@ -90,7 +90,7 @@ describe('POS shifts, void & edit (e2e)', () => {
   });
 
   it('books a sale sent twice from the offline queue only once, and keeps the slip photo', async () => {
-    const slip = (await request(app.getHttpServer()).post(`${API}/admin/files/private`).set('Authorization', `Bearer ${cashier}`).attach('file', PNG, { filename: 'slip.png', contentType: 'image/png' }).expect(201)).body;
+    const slip = (await request(app.getHttpServer()).post(`${API}/admin/files/private`).set('Authorization', `Bearer ${cashier}`).attach('file', uniquePng(), { filename: 'slip.png', contentType: 'image/png' }).expect(201)).body;
     const body = {
       items: [{ variantId: variant, quantity: 1 }],
       saleType: 'CASH',

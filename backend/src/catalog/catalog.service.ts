@@ -523,7 +523,7 @@ export class CatalogService {
       isFeatured: q.featured || undefined,
       ...(q.q && this.searchFilter(q.q)),
     };
-    // Without a sort: the owner's order first (see admin/store-order), then the newest.
+    // Without a sort: the owner's order first (see admin/store-order), then the most visited, then the newest.
     const orderBy: Prisma.ProductOrderByWithRelationInput[] =
       q.sort === 'price_asc'
         ? [{ basePrice: 'asc' }]
@@ -531,7 +531,9 @@ export class CatalogService {
           ? [{ basePrice: 'desc' }]
           : q.sort === 'newest'
             ? [{ createdAt: 'desc' }]
-            : [{ storePosition: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }];
+            : q.sort === 'popular'
+              ? [{ viewCount: 'desc' }, { createdAt: 'desc' }]
+              : [{ storePosition: { sort: 'asc', nulls: 'last' } }, { viewCount: 'desc' }, { createdAt: 'desc' }];
 
     const [rows, total] = await Promise.all([
       this.prisma.product.findMany({ where, select: storeProductSelect, orderBy, skip: q.skip, take: q.pageSize }),

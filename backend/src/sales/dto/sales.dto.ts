@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsBoolean,
   IsDateString,
@@ -44,7 +45,7 @@ export class AddressDto {
   recipient: string;
 
   @ApiProperty({ example: '01012345678' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
 
   @ApiProperty({ example: 'القاهرة' })
@@ -217,6 +218,12 @@ export class AdminOrdersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @ApiPropertyOptional({ description: "Only merchants' orders on credit waiting for approval" })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  awaitingApproval?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -576,4 +583,22 @@ export class UpdateCustomerDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+}
+
+export class OrderLineQuantityDto {
+  @ApiProperty() @IsUUID() itemId: string;
+  @ApiProperty({ minimum: 0, maximum: 500, description: '0 removes the line' }) @IsInt() @Min(0) @Max(500) quantity: number;
+}
+
+export class EditOrderItemsDto {
+  @ApiProperty({ type: [OrderLineQuantityDto] })
+  @ValidateNested({ each: true })
+  @Type(() => OrderLineQuantityDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  lines: OrderLineQuantityDto[];
+}
+
+export class RejectOrderDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) reason?: string;
 }

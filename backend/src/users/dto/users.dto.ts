@@ -33,7 +33,7 @@ export class CreateUserDto {
   @ApiPropertyOptional({ example: '777123456', description: 'Mobile number the employee signs in with' })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.replace(/[\s-]/g, '') : value))
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone?: string;
 
   @ApiPropertyOptional({ example: 'ahmed', description: 'Short login name (lowercase letters, digits, . _ -)' })
@@ -86,7 +86,7 @@ export class UpdateUserDto {
   @ApiPropertyOptional({ example: '777123456' })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.replace(/[\s-]/g, '') : value))
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone?: string;
 
   @ApiPropertyOptional({ example: 'ahmed', description: 'Short login name (lowercase letters, digits, . _ -)' })

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SmsStatus } from '../generated/prisma/client';
 import { Public, RequirePermissions } from '../common/decorators/auth.decorators';
@@ -45,8 +45,13 @@ class SmsListQueryDto {
 
 export class OtpRequestDto {
   @ApiProperty({ example: '777123456' })
-  @Matches(PHONE_REGEX, { message: 'phone must be a valid Yemeni, Saudi or Egyptian mobile number' })
+  @Matches(PHONE_REGEX, { message: 'phone must be a valid mobile number (international form +country code for other countries)' })
   phone: string;
+
+  @ApiPropertyOptional({ enum: ['SMS', 'WHATSAPP'], default: 'SMS', description: 'How the customer wants the code (WhatsApp: they ask the store for it)' })
+  @IsOptional()
+  @IsIn(['SMS', 'WHATSAPP'])
+  channel?: 'SMS' | 'WHATSAPP';
 }
 
 /** The store phone that sends texts (admin app with the gateway switched on). */
@@ -104,13 +109,13 @@ export class OtpController {
   @Post()
   @HttpCode(HttpStatus.OK)
   send(@Body() dto: OtpRequestDto) {
-    return this.sms.sendOtp(dto.phone);
+    return this.sms.sendOtp(dto.phone, 'REGISTER', dto.channel);
   }
 
   /** Forgotten password: texts a reset code to a registered number. */
   @Post('reset')
   @HttpCode(HttpStatus.OK)
   sendReset(@Body() dto: OtpRequestDto) {
-    return this.sms.sendOtp(dto.phone, 'RESET');
+    return this.sms.sendOtp(dto.phone, 'RESET', dto.channel);
   }
 }

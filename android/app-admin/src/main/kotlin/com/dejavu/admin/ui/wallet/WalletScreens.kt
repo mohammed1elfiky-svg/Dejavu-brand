@@ -1175,8 +1175,10 @@ fun BankTransfersScreen(onBack: () -> Unit, openTopUp: (String) -> Unit) {
                                         Text(listOfNotNull(where, t.bankName, t.customer?.name).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                                         Text(formatDateTime(t.createdAt) + if (t.extracted) " · قُرئ من الصورة" else "", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
                                     }
-                                    if (t.amount != null && t.currency != null) {
-                                        Text(amountIn(t.amount, Currency.of(t.currency)), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                                    val amount = t.amount
+                                    val code = t.currency
+                                    if (amount != null && code != null) {
+                                        Text(amountIn(amount, Currency.of(code)), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
                                     }
                                 }
                             }

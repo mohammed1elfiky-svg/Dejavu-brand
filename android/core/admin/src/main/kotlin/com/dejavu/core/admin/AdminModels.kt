@@ -108,7 +108,12 @@ data class AdminOrderSummary(
     @SerialName("_count") val count: ItemCount? = null,
     val currency: Currency = Currency.SAR,
     val exchangeRate: String = "1",
+    /** A merchant's order on credit waiting for the owner's approval. */
+    val needsApproval: Boolean = false,
+    val approvedAt: String? = null,
 ) {
+    val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
+
     /** "18,000 ر.ي" for a YER order, the SAR amount otherwise. */
     val totalShown: String
         get() = if (currency == Currency.SAR) Money.format(grandTotal) else Money.format(grandTotal, currency, exchangeRate)
@@ -251,7 +256,12 @@ data class AdminOrderDetail(
     val currency: Currency = Currency.SAR,
     /** Units of [currency] per 1 SAR, locked at checkout. */
     val exchangeRate: String = "1",
+    /** A merchant's order on credit waiting for the owner: approve, change quantities or reject. */
+    val needsApproval: Boolean = false,
+    val approvedAt: String? = null,
 ) {
+    val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
+
     val isForeign: Boolean get() = currency != Currency.SAR
 
     /** Currencies money for this order can be entered in: its own first, then SAR. */
@@ -340,6 +350,15 @@ data class AdminReturnDetail(
 
 @Serializable
 data class ReasonBody(val reason: String)
+
+@Serializable
+data class OrderLineQuantity(val itemId: String, val quantity: Int)
+
+@Serializable
+data class EditOrderItemsRequest(val lines: List<OrderLineQuantity>)
+
+@Serializable
+data class OptionalReason(val reason: String? = null)
 
 @Serializable
 data class ReceiveReturnRequest(val items: List<Restock>) {
@@ -523,7 +542,14 @@ data class CreateCategoryRequest(val nameAr: String, val nameEn: String, val slu
 
 /** PATCH admin/categories/{id}: rename, show/hide in the customer app; null leaves a field as is. */
 @Serializable
-data class UpdateCategoryRequest(val nameAr: String? = null, val nameEn: String? = null, val isActive: Boolean? = null, val sortOrder: Int? = null)
+data class UpdateCategoryRequest(
+    val nameAr: String? = null,
+    val nameEn: String? = null,
+    val isActive: Boolean? = null,
+    val sortOrder: Int? = null,
+    /** Picture / icon shown with the category in the customer app; "" removes it. */
+    val imageUrl: String? = null,
+)
 
 @Serializable
 data class NewVariantRequest(

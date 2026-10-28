@@ -519,9 +519,41 @@ class PosViewModel(
     /** Id of this checkout: sending the same sale again (retry, offline queue) books it once. */
     private var clientRef = UUID.randomUUID().toString()
 
+    /** The coupon field shows only while the store has a coupon that can be used. */
+    var couponsAvailable by mutableStateOf(false)
+        private set
+    var couponText by mutableStateOf("")
+    /** The coupon applied to this sale (instead of a typed discount). */
+    var coupon by mutableStateOf<com.dejavu.core.admin.PosCoupon?>(null)
+        private set
+
+    fun refreshCoupons() {
+        viewModelScope.launch { pos.couponsAvailable().getOrNull()?.let { couponsAvailable = it.available } }
+    }
+
+    fun applyCoupon() {
+        val code = couponText.trim()
+        if (code.isEmpty() || busy) return
+        viewModelScope.launch {
+            pos.checkCoupon(code, customer?.id).orSay()?.let {
+                coupon = it
+                discountValue = ""
+                receivedText = null
+                checkoutError = null
+                say("تم تطبيق الكوبون ${it.code}")
+            }
+        }
+    }
+
+    fun removeCoupon() {
+        coupon = null
+        couponText = ""
+    }
+
     init {
         load()
         loadCurrencies()
+        refreshCoupons()
         viewModelScope.launch {
             banks = treasury.safes().getOrNull().orEmpty().filter { it.kind == CashBoxKind.BANK && it.isActive }
         }
@@ -597,7 +629,18 @@ class PosViewModel(
 
     /** Totals with only the typed (%/amount) discount and nothing paid. */
     private val beforePayment: PosTotals
-        get() = computeTotals(cart, currency, rates, discountType, discountValue, emptyList(), currency, customer, offerDiscount)
+        get() {
+            val c = coupon?.let(::couponDiscount)
+            return if (c != null) {
+                computeTotals(cart, currency, rates, c.first, c.second.toPlainString(), emptyList(), currency, customer, offerDiscount)
+            } else {
+                computeTotals(cart, currency, rates, discountType, discountValue, emptyList(), currency, customer, offerDiscount)
+            }
+        }
+
+    /** The invoice before any discount (offers only): what a coupon is worked out on. */
+    private val beforeDiscount: PosTotals
+        get() = computeTotals(cart, currency, rates, discountType, "", emptyList(), currency, customer, offerDiscount)
 
     /** What the customer has to pay, in the invoice currency. */
     val dueInInvoice: BigDecimal
@@ -630,9 +673,23 @@ class PosViewModel(
                 val amount = subtotal.subtract(received)
                 return if (amount.signum() > 0) DiscountType.AMOUNT to amount else null
             }
+            coupon?.let { c -> return couponDiscount(c) }
             val typed = discountValue.trim().toBigDecimalOrNull()?.takeIf { it.signum() > 0 } ?: return null
             return discountType to typed
         }
+
+    /** The coupon as the till shows it; the server works out the same discount on the sale. */
+    private fun couponDiscount(c: com.dejavu.core.admin.PosCoupon): Pair<DiscountType, BigDecimal>? {
+        val value = c.value.toBigDecimalOrNull()?.takeIf { it.signum() > 0 } ?: return null
+        val cap = c.maxDiscount?.toBigDecimalOrNull()
+        if (c.type == "PERCENTAGE" && cap == null) return DiscountType.PERCENT to value
+        val b = beforeDiscount
+        val base = b.subtotal.subtract(b.offers)
+        var sar = if (c.type == "PERCENTAGE") base.multiply(value).divide(BigDecimal(100), 2, RoundingMode.HALF_UP) else value
+        if (cap != null && sar > cap) sar = cap
+        if (sar > base) sar = base
+        return DiscountType.AMOUNT to Money.convert(sar, currency, invoiceRate)
+    }
 
     /** What was handed over: the one received amount, or the per-currency fields. */
     private val paidTenders: List<TenderInput>
@@ -997,8 +1054,9 @@ class PosViewModel(
             saleType = saleType,
             currency = currency,
             customerId = customer?.id,
-            discountType = discount?.first,
-            discountValue = discount?.second?.stripTrailingZeros()?.toPlainString(),
+            couponCode = coupon?.code,
+            discountType = discount?.first?.takeIf { coupon == null },
+            discountValue = discount?.second?.stripTrailingZeros()?.toPlainString()?.takeIf { coupon == null },
             payments = paidTenders.mapNotNull { x ->
                 validAmount(x.amount, x.currency)?.let {
                     PosTender(
@@ -1141,6 +1199,9 @@ class PosViewModel(
         customerQuery = ""
         customerResults = emptyList()
         discountValue = ""
+        coupon = null
+        couponText = ""
+        refreshCoupons()
         receivedText = null
         multiCurrency = false
         saleType = SaleType.CASH
@@ -2035,6 +2096,32 @@ private fun CurrencySection(vm: PosViewModel, canEditRates: Boolean, onEditRates
 /** The typed invoice discount (% or amount). */
 @Composable
 private fun DiscountSection(vm: PosViewModel, valid: Boolean) {
+    // A coupon code, only while the store has a live coupon.
+    if (vm.couponsAvailable || vm.coupon != null) {
+        Section {
+            val c = vm.coupon
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("كوبون", style = MaterialTheme.typography.labelLarge)
+                if (c != null) {
+                    Text(
+                        "${c.code} · " + if (c.type == "PERCENTAGE") "${c.value}%" else Money.formatBase(c.value),
+                        Modifier.weight(1f),
+                        color = Success,
+                    )
+                    SmallLink("إزالة", onClick = vm::removeCoupon)
+                } else {
+                    CompactField(
+                        value = vm.couponText,
+                        onValueChange = { vm.couponText = it.uppercase().take(40) },
+                        placeholder = "كود الخصم",
+                        modifier = Modifier.weight(1f),
+                    )
+                    SmallLink("تطبيق", onClick = vm::applyCoupon)
+                }
+            }
+        }
+    }
+    if (vm.coupon != null) return
     Section {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("خصم", style = MaterialTheme.typography.labelLarge)

@@ -200,7 +200,8 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, suggestion
                             IconButton(onClick = vm::removeCoupon) { Icon(Icons.Filled.Close, contentDescription = "إزالة الكود") }
                         }
                         cart.couponProblem?.let { Text(ServerMessages.translate(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    } else {
+                    } else if (cart.couponsAvailable) {
+                        // Only while the store has a coupon that can be used.
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = coupon,
@@ -213,7 +214,9 @@ private fun CartContent(cart: Cart, busy: Boolean, vm: CartViewModel, suggestion
                             OutlinedButton(onClick = { vm.applyCoupon(coupon) }, enabled = coupon.isNotBlank() && !busy) { Text("تطبيق") }
                         }
                     }
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Liquid.Gold.copy(alpha = 0.25f))
+                    if (cart.couponCode != null || cart.couponsAvailable) {
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Liquid.Gold.copy(alpha = 0.25f))
+                    }
                     val t = cart.totals
                     SummaryRow("المجموع", Money.format(t.subtotal))
                     if (!Money.isZero(t.discountTotal)) SummaryRow("الخصم", "- ${Money.format(t.discountTotal)}", valueColor = Success)

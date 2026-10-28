@@ -36,6 +36,10 @@ class ManagementRepository(private val api: AdminApi) {
 /** Layaways (حجز بعربون) and gift cards. */
 class SalesExtrasRepository(private val api: AdminApi) {
     suspend fun layaways(status: String? = null, customerId: String? = null, page: Int = 1) = apiCall { api.layaways(status, customerId, page) }
+
+    /** Open reservations nobody put aside yet (shown with the orders), and "تم حجز القطع". */
+    suspend fun layawaysToHold() = apiCall { api.layaways(page = 1, pageSize = 100, toHold = true) }
+    suspend fun holdLayaway(id: String) = apiCall { api.holdLayaway(id) }
     suspend fun layaway(id: String) = apiCall { api.layaway(id) }
     suspend fun createLayaway(request: CreateLayawayRequest) = apiCall { api.createLayaway(request) }
     suspend fun payLayaway(id: String, deposit: LayawayDeposit) = apiCall { api.payLayaway(id, deposit) }
@@ -90,6 +94,9 @@ class OffersRepository(private val api: AdminApi) {
     suspend fun createPreOrder(request: CreatePreOrderRequest) = apiCall { api.createPreOrder(request) }
     suspend fun cancelPreOrder(id: String) = apiCall { api.cancelPreOrder(id) }
     suspend fun convertPreOrder(id: String) = apiCall { api.convertPreOrder(id) }
+    suspend fun updatePreOrder(id: String, request: UpdatePreOrderRequest) = apiCall { api.updatePreOrder(id, request) }
+    suspend fun preOrderArrived(id: String) = apiCall { api.preOrderArrived(id) }
+    suspend fun checkArrivals() = apiCall { api.checkPreOrderArrivals() }
 
     suspend fun productDraft(imageFileId: String) = apiCall { api.productDraft(ProductDraftRequest(imageFileId)) }
     suspend fun marketingText(idea: String, channel: String) = apiCall { api.marketingText(MarketingTextRequest(idea.trim(), channel)) }

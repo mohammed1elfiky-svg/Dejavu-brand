@@ -23,6 +23,8 @@ data class RegisterRequest(
     val area: String? = null,
     /** Code texted to the phone, when sign-up asks for one. */
     val otp: String? = null,
+    /** How the customer wants the code: SMS or WHATSAPP (they ask the store for it). */
+    val otpChannel: String? = null,
 )
 
 /** GET auth/governorates: Yemeni governorates and the rial each uses (Taiz is split in areas). */
@@ -35,7 +37,7 @@ data class Governorate(val name: String, val currency: String, val areas: List<A
 data class OtpRequired(val required: Boolean = false)
 
 @Serializable
-data class OtpRequest(val phone: String)
+data class OtpRequest(val phone: String, val channel: String? = null)
 
 /** Forgotten password: the texted code and the new password. */
 @Serializable
@@ -359,6 +361,8 @@ data class Cart(
     val problems: List<String> = emptyList(),
     /** Quantity offers that applied (their discount is in totals.discountTotal). */
     val deals: List<AppliedDeal> = emptyList(),
+    /** Whether any coupon can be used now: the code field shows only then. */
+    val couponsAvailable: Boolean = true,
 ) {
     val itemCount: Int get() = items.sumOf { it.quantity }
 }
@@ -476,9 +480,14 @@ data class OrderDetail(
     val shipments: List<Shipment> = emptyList(),
     val currency: Currency = Currency.SAR,
     val exchangeRate: String = "1",
+    /** A merchant's order on credit waiting for the store's approval. */
+    val needsApproval: Boolean = false,
+    val approvedAt: String? = null,
 ) {
     /** A SAR amount of this order in its own currency, at the rate locked at checkout. */
     fun format(amountSar: String?): String = Money.format(amountSar, currency, exchangeRate)
+
+    val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
 
     val canCancel: Boolean get() = status == OrderStatus.PENDING || status == OrderStatus.CONFIRMED
 
@@ -681,7 +690,23 @@ data class TopUp(
     val createdAt: String,
     val reviewedAt: String? = null,
     val bankAccount: BankRef? = null,
+    /** Credited at once (staff check the bank afterwards). */
+    val autoApproved: Boolean = false,
 )
+
+/** What could be read off a slip photo before sending it. */
+@Serializable
+data class SlipScan(
+    val reference: String? = null,
+    val amount: String? = null,
+    val currency: String? = null,
+    val bankName: String? = null,
+    /** Set when this transfer (or photo) was already used. */
+    val duplicate: String? = null,
+)
+
+@Serializable
+data class ScanSlipRequest(val receiptFileId: String)
 
 @Serializable
 data class TopUpRequest(
@@ -819,17 +844,23 @@ data class PreOrder(
     val note: String? = null,
     val createdAt: String,
     val notifiedAt: String? = null,
-    val variantId: String,
-    val sku: String = "",
+    val variantId: String? = null,
+    val sku: String? = null,
     val size: String? = null,
     val color: String? = null,
-    val productId: String,
+    val productId: String? = null,
     val name: String,
-    val slug: String,
+    val slug: String? = null,
     val imageUrl: String? = null,
     val inStock: Int = 0,
     val expectedDate: String? = null,
+    /** Arrived: the customer confirms to have it put aside and prepared. */
+    val awaitingConfirmation: Boolean = false,
+    val layawayId: String? = null,
 )
+
+@Serializable
+data class PreOrderConfirmed(val preOrder: PreOrder)
 
 @Serializable
 data class PreOrderRequest(val variantId: String, val quantity: Int, val note: String? = null)

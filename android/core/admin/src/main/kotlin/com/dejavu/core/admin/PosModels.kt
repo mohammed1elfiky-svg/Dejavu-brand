@@ -81,6 +81,8 @@ enum class DiscountType { PERCENT, AMOUNT }
 data class PosSaleRequest(
     val items: List<PosItem>,
     val saleType: SaleType,
+    /** A coupon code instead of a typed discount (the server works the discount out). */
+    val couponCode: String? = null,
     /** Invoice currency (its current rate is locked in). */
     val currency: Currency? = null,
     val customerId: String? = null,
@@ -397,9 +399,34 @@ data class AdminTopUp(
     val cashBox: BoxRef? = null,
     val reviewedBy: NameRef? = null,
     val balances: List<AccountBalance> = emptyList(),
+    /** Credited at once on request; [verifiedAt] is set once staff saw the money in the bank. */
+    val autoApproved: Boolean = false,
+    val verifiedAt: String? = null,
 ) {
     val shownAmount: String get() = Money.plain(Money.parse(amount), currency)
+    val toVerify: Boolean get() = status == TopUpStatus.APPROVED && autoApproved && verifiedAt == null
 }
+
+/** A bank transfer on the register (app top-up, till sale or till receipt), by its reference number. */
+@Serializable
+data class BankTransferRow(
+    val id: String,
+    val reference: String? = null,
+    /** TOP_UP, POS or RECEIPT. */
+    val source: String,
+    val currency: String? = null,
+    val amount: String? = null,
+    val bankName: String? = null,
+    /** Read off the slip photo rather than typed. */
+    val extracted: Boolean = false,
+    val topUpId: String? = null,
+    val orderId: String? = null,
+    val createdAt: String,
+    val customer: PersonRef? = null,
+)
+
+@Serializable
+data class WalletSettings(val autoApprove: Boolean = true)
 
 @Serializable
 data class ApproveTopUpRequest(val cashBoxId: String, val amount: String? = null)
@@ -780,3 +807,17 @@ data class CreateSupplierRequest(
     /** SUPPLIER (goods, yuan) or SHIPPING_COMPANY (freight & customs, dollars). */
     val kind: SupplierKind? = null,
 )
+
+/** GET admin/pos/coupons/check: the coupon the cashier typed. [value]: percent, or SAR for a fixed amount. */
+@Serializable
+data class PosCoupon(
+    val code: String,
+    /** PERCENTAGE or FIXED_AMOUNT. */
+    val type: String,
+    val value: String,
+    val maxDiscount: String? = null,
+    val minOrderAmount: String? = null,
+)
+
+@Serializable
+data class CouponsAvailable(val available: Boolean = false)

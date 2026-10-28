@@ -99,6 +99,8 @@ data class AuthForm(
     val whatsapp: String? = null,
     /** Signing in to an account still waiting for its code. */
     val pendingLogin: Boolean = false,
+    /** How the code reaches the customer: SMS (default) or WHATSAPP (asked for from the store). */
+    val otpChannel: String = "SMS",
     val submitted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
@@ -186,8 +188,11 @@ class AuthViewModel(
         Validators.password(f.password)?.let { put("password", it) }
         if (registering) {
             Validators.name(f.name)?.let { put("name", it) }
-            if (f.governorate == null) put("governorate", "اختر المحافظة")
-            if (f.area == null && areasOf(selectedGovernorate(f)).isNotEmpty()) put("area", "اختر مكان سكنك")
+            // Only Yemeni customers pick their governorate.
+            if (f.country == Country.YE) {
+                if (f.governorate == null) put("governorate", "اختر المحافظة")
+                if (f.area == null && areasOf(selectedGovernorate(f)).isNotEmpty()) put("area", "اختر مكان سكنك")
+            }
         }
     }
 
@@ -265,7 +270,7 @@ class AuthViewModel(
 
     /** Texts the code (sign-up or password reset) to the phone and shows the code step. */
     private suspend fun sendCode(f: AuthForm) {
-        (if (f.reset) session.sendResetCode(f.full) else session.sendOtp(f.full))
+        (if (f.reset) session.sendResetCode(f.full, f.otpChannel) else session.sendOtp(f.full, f.otpChannel))
             .onSuccess { sent ->
                 _form.value = _form.value.copy(otpStep = true, otp = "", error = null, whatsapp = if (sent.byWhatsapp) sent.whatsapp.orEmpty() else null)
                 if (!sent.byWhatsapp) startCountdown()
@@ -324,7 +329,16 @@ class AuthViewModel(
     /** Sign-up: signs in at once, or (the store asks for a code) waits for the code step. */
     private suspend fun register(f: AuthForm) {
         // Phone + password only: no email is collected.
-        session.signUp(f.name, f.full, f.password, null, governorate = f.governorate, area = f.area)
+        val yemen = f.country == Country.YE
+        session.signUp(
+            f.name,
+            f.full,
+            f.password,
+            null,
+            governorate = f.governorate.takeIf { yemen },
+            area = f.area.takeIf { yemen },
+            otpChannel = f.otpChannel,
+        )
             .onSuccess { r ->
                 val c = r.customer
                 if (r.pending || c == null) {
@@ -427,7 +441,8 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                     PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
                     Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
                     if (registering) {
-                        RegionFields(vm, form, errors)
+                        if (form.country == Country.YE) RegionFields(vm, form, errors)
+                        CodeChannel(form) { c -> vm.update { copy(otpChannel = c) } }
                     }
                     if (!registering) {
                         Row(
@@ -442,8 +457,9 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                             Spacer(Modifier.width(8.dp))
                             Text("تذكرني (حفظ رقم الجوال وكلمة المرور)", style = MaterialTheme.typography.bodyMedium)
                         }
-                        TextButton(onClick = vm::startReset, enabled = !form.busy) {
-                            Text("نسيت كلمة المرور؟", color = Liquid.GoldDeep)
+                        // Forgotten password: a code by SMS or WhatsApp, then a new password.
+                        OutlinedButton(onClick = vm::startReset, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
+                            Text("نسيت كلمة المرور؟ استعادة كلمة المرور", color = Liquid.GoldDeep)
                         }
                     }
 
@@ -554,6 +570,31 @@ private fun RegionFields(vm: AuthViewModel, form: AuthForm, errors: Map<String, 
     }
 }
 
+/** "How should the code reach you?": a text message (default) or WhatsApp. Texts reach Yemeni numbers only. */
+@Composable
+private fun CodeChannel(form: AuthForm, onChange: (String) -> Unit) {
+    if (form.country != Country.YE) {
+        Text(
+            "يصلك رمز التحقق عبر واتساب المتجر لأرقام ${form.country.nameAr}.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("طريقة استلام رمز التحقق", style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("SMS" to "رسالة نصية", "WHATSAPP" to "واتساب").forEach { (key, label) ->
+                androidx.compose.material3.FilterChip(
+                    selected = form.otpChannel == key,
+                    onClick = { onChange(key) },
+                    label = { Text(label) },
+                )
+            }
+        }
+    }
+}
+
 /** Forgotten password step 1: the phone the reset code is texted to. */
 @Composable
 private fun ResetPhoneStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, String>) {
@@ -565,6 +606,7 @@ private fun ResetPhoneStep(vm: AuthViewModel, form: AuthForm, errors: Map<String
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
+        CodeChannel(form) { c -> vm.update { copy(otpChannel = c) } }
         form.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = vm::requestResetCode, enabled = !form.busy, modifier = Modifier.fillMaxWidth()) {
             if (form.busy) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp) else Text("إرسال الرمز")
@@ -585,7 +627,7 @@ private fun OtpStep(vm: AuthViewModel, form: AuthForm, errors: Map<String, Strin
         Text(form.full, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         form.whatsapp?.let { store ->
             Text(
-                "لا تصل الرسائل النصية إلى أرقام ${form.country.nameAr}. اطلب الرمز من المتجر عبر واتساب وسنرسله لك هناك.",
+                if (form.country == Country.YE) "اطلب الرمز من المتجر عبر واتساب وسنرسله لك هناك." else "لا تصل الرسائل النصية إلى أرقام ${form.country.nameAr}. اطلب الرمز من المتجر عبر واتساب وسنرسله لك هناك.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

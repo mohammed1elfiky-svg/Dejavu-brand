@@ -91,8 +91,9 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         governorate: String? = null,
         area: String? = null,
         otp: String? = null,
+        otpChannel: String? = null,
     ): Result<SignUpResult> = apiCall {
-        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }))
+        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }, otpChannel))
     }.map { r ->
         val customer = r.customer
         val access = r.accessToken
@@ -136,14 +137,14 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
     suspend fun otpRequired() = apiCall { api.otpRequired() }.map { it.required }
 
     /** Forgotten password: texts a reset code to the registered [phone]. */
-    suspend fun sendResetCode(phone: String) = apiCall { api.sendResetCode(com.dejavu.core.model.OtpRequest(phone.normalizedPhone())) }
+    suspend fun sendResetCode(phone: String, channel: String? = null) = apiCall { api.sendResetCode(com.dejavu.core.model.OtpRequest(phone.normalizedPhone(), channel)) }
 
     /** Sets [newPassword] with the texted [code] and signs in. */
     suspend fun resetPassword(phone: String, code: String, newPassword: String): Result<Customer> =
         apiCall { api.resetPassword(com.dejavu.core.model.PasswordResetRequest(phone.normalizedPhone(), code.trim(), newPassword)) }.map(::start)
 
     /** Texts a sign-up code to [phone] (sent from the store's phone). */
-    suspend fun sendOtp(phone: String) = apiCall { api.sendOtp(com.dejavu.core.model.OtpRequest(phone.normalizedPhone())) }
+    suspend fun sendOtp(phone: String, channel: String? = null) = apiCall { api.sendOtp(com.dejavu.core.model.OtpRequest(phone.normalizedPhone(), channel)) }
 
     suspend fun logout() {
         tokens.current()?.let { t -> apiCall { api.logout(RefreshRequest(t.refreshToken)) } }
@@ -176,7 +177,7 @@ private fun String.normalizedPhone() = filterNot { it.isWhitespace() }
 
 // ----------------------------------------------------------------- catalog ---
 
-/** STORE: the owner's own order (the server's default), then the newest. */
+/** STORE: the owner's own order (the server's default), then the most visited, then the newest. */
 enum class ProductSort(val wire: String?) { STORE(null), NEWEST("newest"), PRICE_ASC("price_asc"), PRICE_DESC("price_desc") }
 
 class CatalogRepository(private val api: DejavuApi) {
@@ -376,10 +377,18 @@ class WalletRepository(private val api: DejavuApi) {
         bankAccountId: String?,
         reference: String?,
         note: String?,
+        /** The slip already uploaded (by [uploadSlip]); [receipt] is not sent again. */
+        receiptFileId: String? = null,
     ): Result<TopUp> = apiCall {
-        val part = MultipartBody.Part.createFormData("file", "receipt.jpg", receipt.toRequestBody(mimeType.toMediaType()))
-        val file = api.uploadFile(part)
-        api.requestTopUp(TopUpRequest(currency, amount, file.id, bankAccountId, reference?.ifBlank { null }, note?.ifBlank { null }))
+        val fileId = receiptFileId ?: api.uploadFile(MultipartBody.Part.createFormData("file", "receipt.jpg", receipt.toRequestBody(mimeType.toMediaType()))).id
+        api.requestTopUp(TopUpRequest(currency, amount, fileId, bankAccountId, reference?.ifBlank { null }, note?.ifBlank { null }))
+    }
+
+    /** Uploads the slip photo and reads it: reference number, amount, and whether it was used before. */
+    suspend fun uploadSlip(receipt: ByteArray, mimeType: String = "image/jpeg"): Result<Pair<String, com.dejavu.core.model.SlipScan>> = apiCall {
+        val file = api.uploadFile(MultipartBody.Part.createFormData("file", "receipt.jpg", receipt.toRequestBody(mimeType.toMediaType())))
+        val scan = runCatching { api.scanSlip(com.dejavu.core.model.ScanSlipRequest(file.id)) }.getOrDefault(com.dejavu.core.model.SlipScan())
+        file.id to scan
     }
 
     /** Edits a request still under review; [receipt] replaces the deposit slip when given. */
@@ -507,4 +516,5 @@ class StoreExtrasRepository(private val api: DejavuApi) {
     suspend fun preOrders() = apiCall { api.preOrders() }
     suspend fun preOrder(variantId: String, quantity: Int) = apiCall { api.preOrder(com.dejavu.core.model.PreOrderRequest(variantId, quantity)) }
     suspend fun cancelPreOrder(id: String) = apiCall { api.cancelPreOrder(id) }
+    suspend fun confirmPreOrder(id: String) = apiCall { api.confirmPreOrder(id) }
 }

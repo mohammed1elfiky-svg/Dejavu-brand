@@ -154,6 +154,15 @@ export class PosService {
     return { available: (await liveCoupons(this.prisma)) > 0 };
   }
 
+  async checkCouponCode(code: string, customerId?: string) {
+    if (!code.trim()) throw new BadRequestException('Type the coupon code');
+    const walkIn = !customerId || customerId === (await this.walkInId(this.prisma as unknown as Tx));
+    // The minimum order is checked on the sale itself.
+    const c = await checkCoupon(this.prisma, code.trim(), walkIn ? null : customerId!, '999999999');
+    if (typeof c === 'string') throw new UnprocessableEntityException(c);
+    return { code: c.code, type: c.type, value: c.value, maxDiscount: c.maxDiscount, minOrderAmount: c.minOrderAmount };
+  }
+
   // ----------------------------------------------------------------- sale ---
 
   async sell(dto: PosSaleDto, cashierId: string) {

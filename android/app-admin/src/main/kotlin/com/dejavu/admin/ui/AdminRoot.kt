@@ -143,6 +143,7 @@ import com.dejavu.admin.ui.treasury.CashBoxScreen
 import com.dejavu.admin.ui.treasury.CashBoxesScreen
 import com.dejavu.admin.ui.treasury.ExchangeScreen
 import com.dejavu.admin.ui.wallet.BankAccountsScreen
+import com.dejavu.admin.ui.wallet.BankTransfersScreen
 import com.dejavu.admin.ui.wallet.TopUpScreen
 import com.dejavu.admin.ui.wallet.TopUpsScreen
 import com.dejavu.core.admin.Perm
@@ -229,6 +230,7 @@ object R {
     const val PRE_ORDERS = "pre-orders"
     const val WEEKLY = "weekly-summary"
     const val STORE_ORDER = "store-order"
+    const val BANK_TRANSFERS = "bank-transfers"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -475,7 +477,8 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
             page(R.EXCHANGE) { ExchangeScreen(session, back) }
             page(R.PROMOTIONS) { PromotionsScreen(session, back, open = { open(R.PROMOTION, it) }) }
             page(R.PROMOTION) { e -> PromotionEditScreen(e.arguments?.getString("id")?.takeIf { it != "new" }, back) }
-            page(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }) }
+            page(R.TOP_UPS) { TopUpsScreen(back, open = { open(R.TOP_UP, it) }, openTransfers = { nav.navigate(R.BANK_TRANSFERS) }) }
+            page(R.BANK_TRANSFERS) { BankTransfersScreen(back, openTopUp = { open(R.TOP_UP, it) }) }
             page(R.TOP_UP) { e -> TopUpScreen(e.arguments?.getString("id").orEmpty(), session, back) }
             page(R.BANK_ACCOUNTS) { BankAccountsScreen(session, back) }
             page(R.STAFF) { StaffScreen(back, open = { open(R.STAFF_EDIT, it) }) }

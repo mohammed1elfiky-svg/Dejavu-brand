@@ -133,17 +133,45 @@ private val REFUND_METHODS = listOf(PaymentMethod.CASH, PaymentMethod.CARD, Paym
 
 // -------------------------------------------------------------- order list ---
 
-class OrdersViewModel(private val repo: AdminOrderRepository) : BaseViewModel() {
+/** Lists beside the order statuses: merchants' orders to approve, reservations to put aside. */
+enum class OrderView { APPROVAL, HOLD }
+
+class OrdersViewModel(private val repo: AdminOrderRepository, private val extras: com.dejavu.core.admin.SalesExtrasRepository) : BaseViewModel() {
     private val _state = MutableStateFlow<Load<Page<AdminOrderSummary>>>(Load.Loading)
     val state = _state.asStateFlow()
     var status: OrderStatus? = OrderStatus.PENDING
         private set
     var query: String = ""
         private set
+    var view: OrderView? = null
+        private set
 
-    fun filter(status: OrderStatus?) {
-        this.status = status
+    /** Reservations nobody put aside yet (pre-orders that arrived, deposits), shown with the orders. */
+    private val _toHold = MutableStateFlow<Load<List<com.dejavu.core.admin.Layaway>>>(Load.Loading)
+    val toHold = _toHold.asStateFlow()
+    private val _holding = MutableStateFlow<String?>(null)
+    val holding = _holding.asStateFlow()
+
+    /** [choice]: an [OrderStatus], an [OrderView], or null for all. */
+    fun choose(choice: Any?) {
+        view = choice as? OrderView
+        status = choice as? OrderStatus
         load(reset = true)
+    }
+
+    fun filter(status: OrderStatus?) = choose(status)
+
+    fun hold(l: com.dejavu.core.admin.Layaway) {
+        if (_holding.value != null) return
+        _holding.value = l.id
+        viewModelScope.launch {
+            extras.holdLayaway(l.id).orSay()?.let {
+                val list = (_toHold.value as? Load.Ready)?.value
+                if (list != null) _toHold.value = Load.Ready(list.filterNot { x -> x.id == l.id })
+                say("تم حجز قطع ${l.number} للعميل")
+            }
+            _holding.value = null
+        }
     }
 
     fun search(text: String) {
@@ -153,18 +181,28 @@ class OrdersViewModel(private val repo: AdminOrderRepository) : BaseViewModel() 
 
     fun clearFilters() {
         status = null
+        view = null
         query = ""
         load(reset = true)
     }
 
     fun load(reset: Boolean = false) {
+        if (view == OrderView.HOLD) {
+            if (reset || _toHold.value !is Load.Ready) _toHold.value = Load.Loading
+            viewModelScope.launch { _toHold.value = extras.layawaysToHold().map { it.items }.toLoad() }
+            return
+        }
         if (reset || _state.value !is Load.Ready) _state.value = Load.Loading
-        viewModelScope.launch { _state.value = repo.list(status, query).toLoad() }
+        viewModelScope.launch { _state.value = fetch() }
     }
+
+    private suspend fun fetch() = repo.list(status, query, awaitingApproval = view == OrderView.APPROVAL).toLoad()
 
     val refresher = Refresher()
 
-    fun refresh() = refresher.run(viewModelScope) { _state.value = repo.list(status, query).toLoad() }
+    fun refresh() = refresher.run(viewModelScope) {
+        if (view == OrderView.HOLD) _toHold.value = extras.layawaysToHold().map { it.items }.toLoad() else _state.value = fetch()
+    }
 }
 
 /**
@@ -193,8 +231,10 @@ fun OrdersScreen(openOrder: (String) -> Unit, detailPane: (@Composable (id: Stri
 
 @Composable
 private fun OrdersList(openOrder: (String) -> Unit, selected: String?) {
-    val vm = adminViewModel { OrdersViewModel(it.orders) }
+    val vm = adminViewModel { OrdersViewModel(it.orders, it.salesExtras) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val toHold by vm.toHold.collectAsStateWithLifecycle()
+    val holding by vm.holding.collectAsStateWithLifecycle()
     val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf(vm.query) }
     LifecycleResumeEffect(vm) {
@@ -214,7 +254,33 @@ private fun OrdersList(openOrder: (String) -> Unit, selected: String?) {
                 keyboardActions = KeyboardActions(onSearch = { vm.search(query) }),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            ChipFilter(listOf(null) + OrderStatus.entries, vm.status, { it?.label ?: "الكل" }, vm::filter)
+            ChipFilter<Any>(
+                listOf(OrderView.APPROVAL, OrderView.HOLD, null) + OrderStatus.entries,
+                vm.view ?: vm.status,
+                {
+                    when (it) {
+                        OrderView.APPROVAL -> "بانتظار موافقتك"
+                        OrderView.HOLD -> "حجوزات للتجهيز"
+                        is OrderStatus -> it.label
+                        else -> "الكل"
+                    }
+                },
+                vm::choose,
+            )
+            if (vm.view == OrderView.HOLD) {
+                LoadContent(toHold, onRetry = { vm.load() }) { list ->
+                    RefreshList(refreshing, onRefresh = vm::refresh) {
+                        if (list.isEmpty()) {
+                            EmptyList(Icons.AutoMirrored.Filled.List, "لا توجد حجوزات للتجهيز", "تظهر هنا الطلبات المسبقة التي وصلت والحجوزات بعربون حتى يحجز أحد الموظفين قطعها")
+                        } else {
+                            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(list, key = { it.id }) { l -> HoldRow(l, busy = holding == l.id) { vm.hold(l) } }
+                            }
+                        }
+                    }
+                }
+                return@Column
+            }
             LoadContent(state, onRetry = { vm.load() }) { page ->
                 RefreshList(refreshing, onRefresh = vm::refresh) {
                     if (page.items.isEmpty()) {
@@ -241,6 +307,29 @@ private fun OrdersList(openOrder: (String) -> Unit, selected: String?) {
     }
 }
 
+/** A reservation to put aside: its pieces, the customer, and "تم حجز القطع". */
+@Composable
+private fun HoldRow(l: com.dejavu.core.admin.Layaway, busy: Boolean, onHold: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(l.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                StatusChip("بانتظار الحجز", com.dejavu.core.ui.theme.Warning)
+            }
+            Text("${l.customer.name} · ${l.customer.phone}", style = MaterialTheme.typography.bodyMedium)
+            l.items.forEach { i ->
+                Text(
+                    listOfNotNull(i.name, i.size?.let { "مقاس $it" }, i.color, "× ${i.quantity}").joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            l.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(formatDateTime(l.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onHold, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("تم حجز القطع") }
+        }
+    }
+}
+
 @Composable
 private fun OrderRow(o: AdminOrderSummary, selected: Boolean, onClick: () -> Unit) {
     val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
@@ -248,7 +337,7 @@ private fun OrderRow(o: AdminOrderSummary, selected: Boolean, onClick: () -> Uni
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(o.number, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                StatusChip(o.status.label, o.status.tint())
+                if (o.awaitingApproval) StatusChip("بانتظار موافقتك", com.dejavu.core.ui.theme.Warning) else StatusChip(o.status.label, o.status.tint())
             }
             Text("${o.customer.name} · ${o.customer.phone.orEmpty()}", style = MaterialTheme.typography.bodyMedium)
             Row {
@@ -335,6 +424,10 @@ class OrderDetailViewModel(
             repo.changeStatus(id, status, note, carrier, tracking)
         }
 
+    fun approve() = act("تمت الموافقة على طلب التاجر وتسجيله على حسابه") { repo.approve(id) }
+    fun reject(reason: String?) = act("تم رفض الطلب") { repo.reject(id, reason) }
+    fun editItems(quantities: Map<String, Int>) = act("تم تعديل الكميات") { repo.editItems(id, quantities) }
+
     fun pay(amount: String, method: PaymentMethod, reference: String, currency: Currency) =
         act("تم تسجيل الدفعة") { repo.recordPayment(id, method, amount, reference, currency = currency) }
 
@@ -380,6 +473,8 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
     var zoom by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     var dialog by remember { mutableStateOf<OrderDialog?>(null) }
+    var editingQuantities by remember { mutableStateOf(false) }
+    var rejecting by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -406,6 +501,21 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                             Text("${o.paymentMethod.label} · ${o.paymentStatus.label}", style = MaterialTheme.typography.bodySmall)
                         }
                         StatusChip(o.status.label, o.status.tint())
+                    }
+                }
+
+                // A merchant's order on credit: the owner approves, changes quantities or rejects first.
+                if (o.awaitingApproval && session.can(Perm.ORDERS_UPDATE)) {
+                    item {
+                        InfoCard {
+                            Text("طلب تاجر بالآجل بانتظار موافقتك", style = MaterialTheme.typography.titleSmall, color = com.dejavu.core.ui.theme.Warning)
+                            Text("عند الموافقة يُسجَّل الطلب على حساب التاجر ويُؤكَّد للتجهيز.", style = MaterialTheme.typography.bodySmall)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = vm::approve, enabled = !busy) { Text("موافقة") }
+                                OutlinedButton(onClick = { editingQuantities = true }, enabled = !busy) { Text("تعديل الكميات") }
+                                OutlinedButton(onClick = { rejecting = true }, enabled = !busy) { Text("رفض", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
                     }
                 }
 
@@ -592,6 +702,15 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                 )
                 null -> {}
             }
+            if (editingQuantities) {
+                EditQuantitiesDialog(o, onDismiss = { editingQuantities = false }) { changes ->
+                    editingQuantities = false
+                    if (changes.isNotEmpty()) vm.editItems(changes)
+                }
+            }
+            if (rejecting) {
+                TextDialog("رفض طلب التاجر", "السبب (يظهر للتاجر، اختياري)", "رفض الطلب", { rejecting = false }, minLength = 0) { vm.reject(it) }
+            }
 
             if (suggestReceipt && o.isAppOrder) {
                 AlertDialog(
@@ -617,6 +736,37 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
 
 /** "سند الإرسال": the photo sent to the customer (tap to enlarge), with take / replace. */
 @OptIn(ExperimentalLayoutApi::class)
+/** New quantity per line of a merchant's order (0 removes the line). */
+@Composable
+private fun EditQuantitiesDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onSave: (Map<String, Int>) -> Unit) {
+    val quantities = remember { androidx.compose.runtime.mutableStateMapOf<String, Int>().apply { order.items.forEach { put(it.id, it.quantity) } } }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("تعديل الكميات") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                order.items.forEach { i ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(listOfNotNull(i.productName, i.size, i.color).joinToString(" · "), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        val q = quantities[i.id] ?: i.quantity
+                        androidx.compose.material3.IconButton(onClick = { quantities[i.id] = (q - 1).coerceAtLeast(0) }) { Text("−", style = MaterialTheme.typography.titleLarge) }
+                        Text("$q", style = MaterialTheme.typography.titleMedium)
+                        androidx.compose.material3.IconButton(onClick = { quantities[i.id] = q + 1 }) { Text("+", style = MaterialTheme.typography.titleLarge) }
+                    }
+                }
+                Text("0 يحذف المنتج من الطلب. السعر والخصم لكل قطعة يبقيان كما هما.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { onSave(quantities.filter { (id, q) -> order.items.first { it.id == id }.quantity != q }) },
+                enabled = quantities.values.any { it > 0 },
+            ) { Text("حفظ") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("إلغاء") } },
+    )
+}
+
 @Composable
 private fun ShippingReceiptCard(
     hasReceipt: Boolean,

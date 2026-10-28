@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -85,7 +86,7 @@ fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.
     val busy by vm.busy.collectAsStateWithLifecycle()
     com.dejavu.core.ui.CollectMessages(vm, snackbar)
     val spendable = balances.filter { (Money.parse(it.balance)).signum() > 0 }
-    var country by rememberSaveable { mutableStateOf(Country.YE) }
+    var country by remember { mutableStateOf(Country.YE) }
     var number by rememberSaveable { mutableStateOf("") }
     var currencyCode by rememberSaveable { mutableStateOf(spendable.firstOrNull()?.currency?.code ?: "") }
     var amount by rememberSaveable { mutableStateOf("") }

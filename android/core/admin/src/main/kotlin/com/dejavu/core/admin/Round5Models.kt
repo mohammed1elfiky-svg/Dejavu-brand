@@ -120,6 +120,9 @@ data class Layaway(
     val saleOrderId: String? = null,
     val createdAt: String,
     val closedAt: String? = null,
+    /** When an employee put the pieces aside (null: still to do). */
+    val heldAt: String? = null,
+    val heldBy: String? = null,
     val payments: List<Payment> = emptyList(),
     val items: List<Item> = emptyList(),
 ) {

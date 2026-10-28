@@ -250,6 +250,9 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
                             Column(Modifier.weight(1f)) {
                                 Text(formatDateTime(order.placedAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("${order.paymentMethod.label} · ${order.paymentStatus.label}", style = MaterialTheme.typography.bodySmall)
+                                if (order.awaitingApproval) {
+                                    Text("بانتظار موافقة المتجر على الطلب بالآجل", style = MaterialTheme.typography.bodySmall, color = com.dejavu.core.ui.theme.Liquid.GoldDeep)
+                                }
                             }
                             StatusChip(order.status.label, order.status.color())
                         }

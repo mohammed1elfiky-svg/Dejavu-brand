@@ -152,8 +152,14 @@ class DashboardRepository(private val api: AdminApi) {
 }
 
 class AdminOrderRepository(private val api: AdminApi) {
-    suspend fun list(status: OrderStatus? = null, query: String? = null, page: Int = 1): Result<Page<AdminOrderSummary>> =
-        apiCall { api.orders(status?.name, query?.trim()?.ifBlank { null }, page) }
+    suspend fun list(status: OrderStatus? = null, query: String? = null, page: Int = 1, awaitingApproval: Boolean = false): Result<Page<AdminOrderSummary>> =
+        apiCall { api.orders(status?.name, query?.trim()?.ifBlank { null }, page, awaitingApproval = awaitingApproval.takeIf { it }) }
+
+    /** A merchant's order on credit: approve (charged to their account), reject, or change quantities (0 removes a line). */
+    suspend fun approve(id: String) = apiCall { api.approveOrder(id) }
+    suspend fun reject(id: String, reason: String?) = apiCall { api.rejectOrder(id, OptionalReason(reason?.trim()?.ifBlank { null })) }
+    suspend fun editItems(id: String, quantities: Map<String, Int>) =
+        apiCall { api.editOrderItems(id, EditOrderItemsRequest(quantities.map { (itemId, q) -> OrderLineQuantity(itemId, q) })) }
 
     suspend fun get(id: String) = apiCall { api.order(id) }
 
@@ -457,6 +463,10 @@ class PosRepository(private val api: AdminApi) {
 
     /** New app orders and top-up requests since [since] (ISO time); polled for alerts. */
     suspend fun alerts(since: String? = null) = apiCall { api.alerts(since) }
+
+    /** Whether any coupon can be used now (the till shows the coupon field only then). */
+    suspend fun couponsAvailable() = apiCall { api.posCouponsAvailable() }
+    suspend fun checkCoupon(code: String, customerId: String?) = apiCall { api.posCheckCoupon(code.trim(), customerId) }
     suspend fun shift() = apiCall { api.shift() }
 
     /** Till sales of a day (yyyy-MM-dd, null = today): your own, or everyone's with [all] (managers). */
@@ -515,7 +525,13 @@ class TreasuryRepository(private val api: AdminApi) {
 
 /** Wallet top-up requests and the store bank accounts shown to customers. */
 class WalletAdminRepository(private val api: AdminApi) {
-    suspend fun list(status: com.dejavu.core.model.TopUpStatus? = null, page: Int = 1) = apiCall { api.topUps(status?.name, page) }
+    suspend fun list(status: com.dejavu.core.model.TopUpStatus? = null, page: Int = 1, toVerify: Boolean = false) =
+        apiCall { api.topUps(if (toVerify) null else status?.name, page, toVerify.takeIf { it }) }
+    suspend fun verify(id: String) = apiCall { api.verifyTopUp(id) }
+    suspend fun reverse(id: String, reason: String) = apiCall { api.reverseTopUp(id, ReasonBody(reason.trim())) }
+    suspend fun settings() = apiCall { api.walletSettings() }
+    suspend fun setAutoApprove(on: Boolean) = apiCall { api.setWalletSettings(WalletSettings(on)) }
+    suspend fun transfers(query: String? = null, page: Int = 1) = apiCall { api.bankTransfers(query?.trim()?.ifBlank { null }, page) }
     suspend fun get(id: String) = apiCall { api.topUp(id) }
     suspend fun approve(id: String, cashBoxId: String, amount: String? = null) = apiCall { api.approveTopUp(id, ApproveTopUpRequest(cashBoxId, amount?.trim()?.ifBlank { null })) }
     suspend fun reject(id: String, reason: String) = apiCall { api.rejectTopUp(id, ReasonBody(reason.trim())) }

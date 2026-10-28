@@ -23,6 +23,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.graphics.Color
+import com.dejavu.core.model.TopUpStatus
 import com.dejavu.core.ui.theme.FloatingGlassBar
 import com.dejavu.core.ui.theme.GlassNavItem
 import com.dejavu.core.ui.theme.IosTransitions
@@ -90,7 +91,7 @@ object Routes {
     const val SERVER = "server"
     const val NOTIFICATIONS = "notifications"
     const val WALLET = "wallet"
-    const val TOP_UP = "wallet/top-up"
+    const val TOP_UP = "wallet/top-up?amount={amount}&currency={currency}&forOrder={forOrder}"
     const val STOCK_ALERTS = "stock-alerts"
     const val CHAT = "chat"
     const val ABOUT = "about"
@@ -109,9 +110,13 @@ object Routes {
     fun productReviews(slug: String) = "product/${enc(slug)}/reviews"
     fun order(number: String, placed: Boolean = false) = "order/${enc(number)}?placed=$placed"
     fun addressForm(id: String? = null) = "address?id=${enc(id)}"
+    fun topUp(amount: String? = null, currency: String? = null, forOrder: Boolean = false) =
+        "wallet/top-up?amount=${enc(amount)}&currency=${enc(currency)}&forOrder=$forOrder"
 
     private fun enc(v: String?) = v?.let { Uri.encode(it) } ?: ""
 }
+
+private const val DIRECT_PAID = "directPaid"
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -301,11 +306,16 @@ fun DejavuNavHost() {
                     shop = { nav.switchTab(Routes.HOME) },
                 )
             }
-            page(Routes.CHECKOUT) {
+            page(Routes.CHECKOUT) { entry ->
+                // Set by the direct-payment screen once the transfer was credited.
+                val paid by entry.savedStateHandle.getStateFlow(DIRECT_PAID, false).collectAsStateWithLifecycle()
                 CheckoutScreen(
                     onBack = { nav.popBackStack() },
                     addAddress = { nav.navigate(Routes.addressForm()) },
-                    topUp = { nav.navigate(Routes.TOP_UP) },
+                    topUp = { nav.navigate(Routes.topUp()) },
+                    payDirect = { amount, currency -> nav.navigate(Routes.topUp(amount, currency, forOrder = true)) },
+                    directPaid = paid,
+                    consumeDirectPaid = { entry.savedStateHandle[DIRECT_PAID] = false },
                     placed = { number ->
                         nav.navigate(Routes.order(number, placed = true)) { popUpTo(Routes.CART) }
                     },
@@ -385,14 +395,30 @@ fun DejavuNavHost() {
                 )
             }
             page(Routes.WALLET) {
-                WalletScreen(onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.ACCOUNT) }, topUp = { nav.navigate(Routes.TOP_UP) })
+                WalletScreen(onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.ACCOUNT) }, topUp = { nav.navigate(Routes.topUp()) })
             }
-            page(Routes.TOP_UP) {
+            page(
+                Routes.TOP_UP,
+                arguments = listOf(
+                    navArgument("amount") { type = NavType.StringType; nullable = true },
+                    navArgument("currency") { type = NavType.StringType; nullable = true },
+                    navArgument("forOrder") { type = NavType.BoolType; defaultValue = false },
+                ),
+            ) { entry ->
+                val args = entry.arguments
+                val forOrder = args?.getBoolean("forOrder") ?: false
                 TopUpScreen(
                     onBack = { nav.popBackStack() },
-                    // Show the new request (under review) in the wallet.
-                    submitted = {
-                        if (!nav.popBackStack(Routes.WALLET, inclusive = false)) {
+                    amount = args?.getString("amount")?.ifBlank { null },
+                    currency = args?.getString("currency")?.ifBlank { null },
+                    forOrder = forOrder,
+                    submitted = { topUp ->
+                        if (forOrder && topUp.status == TopUpStatus.APPROVED) {
+                            // Credited: back to checkout, which places the order from the wallet.
+                            nav.previousBackStackEntry?.savedStateHandle?.set(DIRECT_PAID, true)
+                            nav.popBackStack()
+                        } else if (!nav.popBackStack(Routes.WALLET, inclusive = false)) {
+                            // Show the new request (under review) in the wallet.
                             nav.navigate(Routes.WALLET) { popUpTo(Routes.TOP_UP) { inclusive = true } }
                         }
                     },

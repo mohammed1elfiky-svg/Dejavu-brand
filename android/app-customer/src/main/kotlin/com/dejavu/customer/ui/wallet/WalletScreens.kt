@@ -668,8 +668,28 @@ class TopUpViewModel(private val repo: WalletRepository, currencies: CurrencyRep
     /** The deposit slip, as compressed JPEG bytes. */
     private val _receipt = MutableStateFlow<ByteArray?>(null)
     val receipt = _receipt.asStateFlow()
-    private val _done = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val _done = MutableSharedFlow<TopUp>(extraBufferCapacity = 1)
     val done = _done.asSharedFlow()
+
+    /** The slip once uploaded and read: its file id, what was read off it, and whether it was used before. */
+    private val _slip = MutableStateFlow<SlipRead?>(null)
+    val slip = _slip.asStateFlow()
+    private var prefilled = false
+
+    /** "Pay now" from checkout: the amount and currency still to pay. */
+    fun prefill(amount: String?, currencyCode: String?) {
+        if (prefilled) return
+        prefilled = true
+        val c = currencyCode?.let { Currency.of(it) }
+        _form.value = _form.value.copy(amount = amount ?: _form.value.amount, currency = c ?: _form.value.currency)
+        pinnedCurrency = c
+        // Accounts already loaded: pick one that takes this currency.
+        val loaded = (_accounts.value as? Load.Ready)?.value
+        if (c != null && loaded != null) {
+            _form.value = _form.value.copy(bankAccountId = loaded.firstOrNull { it.takes(c) }?.id ?: _form.value.bankAccountId)
+        }
+    }
+    private var pinnedCurrency: Currency? = null
 
     /** Currencies the store sells in; bank accounts may add others. */
     val available = currencies.available
@@ -682,7 +702,10 @@ class TopUpViewModel(private val repo: WalletRepository, currencies: CurrencyRep
             val result = repo.bankAccounts().map { list -> list.filter { it.isActive }.sortedBy { it.sortOrder } }
             _accounts.value = result.toLoad()
             result.getOrNull()?.let { list ->
-                if (_form.value.currency == null) {
+                val pinned = pinnedCurrency
+                if (pinned != null && _form.value.bankAccountId == null) {
+                    _form.value = _form.value.copy(bankAccountId = list.firstOrNull { it.takes(pinned) }?.id ?: list.firstOrNull()?.id)
+                } else if (_form.value.currency == null) {
                     val first = list.firstOrNull()
                     _form.value = _form.value.copy(
                         currency = first?.acceptedCurrencies?.firstOrNull() ?: available.value.firstOrNull(),
@@ -718,6 +741,23 @@ class TopUpViewModel(private val repo: WalletRepository, currencies: CurrencyRep
 
     fun setReceipt(bytes: ByteArray?) {
         _receipt.value = bytes
+        _slip.value = null
+        bytes ?: return
+        _slip.value = SlipRead(reading = true)
+        viewModelScope.launch {
+            repo.uploadSlip(bytes)
+                .onSuccess { (fileId, scan) ->
+                    if (_receipt.value !== bytes) return@onSuccess
+                    _slip.value = SlipRead(fileId = fileId, reference = scan.reference, amount = scan.amount, duplicate = scan.duplicate)
+                    val f = _form.value
+                    _form.value = f.copy(
+                        reference = f.reference.ifBlank { scan.reference.orEmpty() },
+                        amount = f.amount.ifBlank { scan.amount.orEmpty() },
+                    )
+                    scan.duplicate?.let { say(it) }
+                }
+                .onFailure { if (_receipt.value === bytes) _slip.value = null }
+        }
     }
 
     fun amountError(f: TopUpForm = _form.value): String? = topUpAmountError(f.amount, f.currency)
@@ -735,13 +775,22 @@ class TopUpViewModel(private val repo: WalletRepository, currencies: CurrencyRep
         }
         _form.value = f.copy(submitting = true)
         viewModelScope.launch {
-            repo.requestTopUp(currency, amount.toPlainString(), receipt, "image/jpeg", f.bankAccountId, f.reference.trim(), f.note.trim())
-                .onSuccess { _done.tryEmit(Unit) }
+            repo.requestTopUp(currency, amount.toPlainString(), receipt, "image/jpeg", f.bankAccountId, f.reference.trim(), f.note.trim(), _slip.value?.fileId)
+                .onSuccess { _done.tryEmit(it) }
                 .onFailure { say(it.userMessage()) }
             _form.value = _form.value.copy(submitting = false)
         }
     }
 }
+
+/** The uploaded slip: [reading] while it is being read off the photo. */
+data class SlipRead(
+    val reading: Boolean = false,
+    val fileId: String? = null,
+    val reference: String? = null,
+    val amount: String? = null,
+    val duplicate: String? = null,
+)
 
 /** Accepts Arabic-Indic digits and the Arabic decimal separator too. */
 private fun parseAmount(raw: String): BigDecimal? {
@@ -768,8 +817,10 @@ private fun topUpAmountError(raw: String, currency: Currency?): String? {
 
 /** Bank transfer to one of the store's accounts, with the deposit slip, reviewed by staff. */
 @Composable
-fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
+fun TopUpScreen(onBack: () -> Unit, submitted: (TopUp) -> Unit, amount: String? = null, currency: String? = null, forOrder: Boolean = false) {
     val vm = appViewModel { TopUpViewModel(it.wallet, it.currencies) }
+    LaunchedEffect(vm) { vm.prefill(amount, currency) }
+    val slip by vm.slip.collectAsStateWithLifecycle()
     val accountsState by vm.accounts.collectAsStateWithLifecycle()
     val form by vm.form.collectAsStateWithLifecycle()
     val receipt by vm.receipt.collectAsStateWithLifecycle()
@@ -780,16 +831,16 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
     val context = LocalContext.current
     val picker = rememberImagePicker { bytes -> vm.setReceipt(bytes) }
     CollectMessages(vm, snackbar)
-    LaunchedEffect(vm) { vm.done.collect { submitted() } }
+    LaunchedEffect(vm) { vm.done.collect { submitted(it) } }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar("شحن الرصيد", onBack) },
+        topBar = { BackTopBar(if (forOrder) "الدفع المباشر" else "شحن الرصيد", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             GlassBottomPanel {
                 Button(onClick = vm::submit, enabled = !form.submitting, modifier = Modifier.fillMaxWidth()) {
-                    if (form.submitting) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("إرسال طلب الشحن")
+                    if (form.submitting) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (forOrder) "إرسال الحوالة وتأكيد الطلب" else "إرسال طلب الشحن")
                 }
             }
         },
@@ -802,6 +853,12 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                 Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (forOrder) {
+                    Text(
+                        "حوّل قيمة الطلب بأي عملة يقبلها الحساب، ثم أرفق صورة الإشعار. يُضاف المبلغ إلى رصيدك ويُخصم منه سعر الطلب مباشرة.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Text("1. حوّل المبلغ إلى أحد حساباتنا", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                 if (accounts.isEmpty()) {
                     Text("لا توجد حسابات بنكية متاحة حالياً، تواصل معنا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -855,9 +912,19 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                 )
 
                 Text("4. صورة إيصال الإيداع", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
-                val slip = receipt
-                if (slip != null) {
-                    ReceiptPreview(slip, onRemove = { vm.setReceipt(null) })
+                val photo = receipt
+                if (photo != null) {
+                    ReceiptPreview(photo, onRemove = { vm.setReceipt(null) })
+                    val read = slip
+                    when {
+                        read == null -> {}
+                        read.reading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(Modifier.size(16.dp), color = Liquid.Gold, strokeWidth = 2.dp)
+                            Text("نقرأ رقم الحوالة من الصورة…", style = MaterialTheme.typography.bodySmall)
+                        }
+                        read.duplicate != null -> Text(read.duplicate, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                        read.reference != null -> Text("رقم الحوالة: ${read.reference}", color = Liquid.GoldDeep, style = MaterialTheme.typography.bodyMedium)
+                    }
                 } else if (form.showErrors) {
                     Text("أرفق صورة الإيصال", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
@@ -866,7 +933,7 @@ fun TopUpScreen(onBack: () -> Unit, submitted: () -> Unit) {
                     OutlinedButton(onClick = picker.fromCamera, modifier = Modifier.weight(1f)) { Text("التقاط صورة") }
                 }
                 Text(
-                    "يُراجع فريقنا الطلب ويُضاف المبلغ إلى رصيدك بعد التأكد من وصول التحويل، وسنرسل لك إشعاراً بالنتيجة.",
+                    "يُضاف المبلغ إلى رصيدك فور الإرسال ويتحقق فريقنا من وصول التحويل. لا تُقبل الحوالة نفسها مرتين.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

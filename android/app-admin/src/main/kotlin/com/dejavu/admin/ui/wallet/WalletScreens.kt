@@ -56,6 +56,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,6 +98,7 @@ import com.dejavu.admin.ui.theme.GoldPill
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminTopUp
 import com.dejavu.core.admin.BankAccountRequest
+import com.dejavu.core.admin.BankTransferRow
 import com.dejavu.core.admin.CashBox
 import com.dejavu.core.admin.CashBoxKind
 import com.dejavu.core.admin.FinanceRepository
@@ -169,11 +171,32 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
     val loadingMore = _loadingMore.asStateFlow()
     var status: TopUpStatus? = TopUpStatus.PENDING
         private set
+    /** "للتحقق": credited automatically, not yet checked against the bank. */
+    var toVerify = false
+        private set
     private var page = 1
     private var registered = false
 
-    fun select(s: TopUpStatus?) {
+    /** Whether top-ups are credited at once (null until loaded). */
+    private val _autoApprove = MutableStateFlow<Boolean?>(null)
+    val autoApprove = _autoApprove.asStateFlow()
+
+    fun loadSettings() {
+        viewModelScope.launch { repo.settings().getOrNull()?.let { _autoApprove.value = it.autoApprove } }
+    }
+
+    fun setAutoApprove(on: Boolean) {
+        viewModelScope.launch {
+            repo.setAutoApprove(on).orSay()?.let {
+                _autoApprove.value = it.autoApprove
+                say(if (it.autoApprove) "يُضاف المبلغ لرصيد العميل فور إرسال الحوالة، وتتحقق منها لاحقاً" else "تنتظر طلبات الشحن موافقتك قبل إضافة المبلغ")
+            }
+        }
+    }
+
+    fun select(s: TopUpStatus?, verify: Boolean = false) {
         status = s
+        toVerify = verify
         load(reset = true)
     }
 
@@ -182,7 +205,7 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
         page = 1
         viewModelScope.launch {
             if (!registered) registered = finance.activeCurrencies().isSuccess
-            val res = repo.list(status, 1)
+            val res = repo.list(status, 1, toVerify)
             _hasMore.value = res.getOrNull()?.hasMore == true
             _state.value = res.map { it.items }.toLoad()
         }
@@ -192,7 +215,7 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
 
     fun refresh() = refresher.run(viewModelScope) {
         val s = status
-        val res = repo.list(s, 1)
+        val res = repo.list(s, 1, toVerify)
         if (s == status) {
             page = 1
             _hasMore.value = res.getOrNull()?.hasMore == true
@@ -205,7 +228,7 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
         if (_loadingMore.value || !_hasMore.value) return
         _loadingMore.value = true
         viewModelScope.launch {
-            repo.list(status, page + 1).orSay()?.let { res ->
+            repo.list(status, page + 1, toVerify).orSay()?.let { res ->
                 page += 1
                 _state.value = Load.Ready(current + res.items.filter { n -> current.none { it.id == n.id } })
                 _hasMore.value = res.hasMore
@@ -217,7 +240,7 @@ class TopUpsViewModel(private val repo: WalletAdminRepository, private val finan
 
 /** Customers' wallet top-up requests (deposit slips) by status. */
 @Composable
-fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
+fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit, openTransfers: () -> Unit = {}) {
     val vm = adminViewModel { TopUpsViewModel(it.wallet, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
@@ -225,31 +248,55 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit) {
     val refreshing by vm.refresher.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var status by rememberSaveable { mutableStateOf(vm.status) }
+    var verify by rememberSaveable { mutableStateOf(vm.toVerify) }
+    val autoApprove by vm.autoApprove.collectAsStateWithLifecycle()
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
+        vm.loadSettings()
         onPauseOrDispose {}
     }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar("طلبات شحن حسابات العملاء", onBack) },
+        topBar = {
+            BackTopBar("طلبات شحن حسابات العملاء", onBack) {
+                TextButton(onClick = openTransfers) { Text("سجل الحوالات", color = Lux.GoldDeep) }
+            }
+        },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
+            autoApprove?.let { on ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("إضافة المبلغ تلقائياً عند إرسال الحوالة", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (on) "يُضاف للرصيد فوراً وتظهر الحوالة في «للتحقق»" else "تنتظر الطلبات موافقتك",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Lux.InkSoft,
+                        )
+                    }
+                    androidx.compose.material3.Switch(checked = on, onCheckedChange = vm::setAutoApprove)
+                }
+            }
+            // "VERIFY" = credited automatically, waiting for a check; then by status.
             ChipFilter(
-                options = listOf(TopUpStatus.PENDING, TopUpStatus.APPROVED, TopUpStatus.REJECTED, null),
-                selected = status,
-                label = { it?.label ?: "الكل" },
+                options = listOf("VERIFY", TopUpStatus.PENDING.name, TopUpStatus.APPROVED.name, TopUpStatus.REJECTED.name, null),
+                selected = if (verify) "VERIFY" else status?.name,
+                label = { if (it == "VERIFY") "للتحقق" else it?.let { n -> TopUpStatus.valueOf(n).label } ?: "الكل" },
                 onSelect = {
-                    status = it
-                    vm.select(it)
+                    verify = it == "VERIFY"
+                    status = it?.takeIf { n -> n != "VERIFY" }?.let { n -> TopUpStatus.valueOf(n) }
+                    vm.select(status, verify)
                 },
             )
             LoadContent(state, onRetry = { vm.load() }) { list ->
                 RefreshList(refreshing, onRefresh = vm::refresh) {
                 if (list.isEmpty()) {
-                    if (status == TopUpStatus.PENDING) {
+                    if (verify) {
+                        EmptyList(Icons.Filled.Email, "لا توجد حوالات للتحقق", "تظهر هنا الحوالات التي أُضيفت لرصيد العملاء تلقائياً حتى تتأكد من وصولها")
+                    } else if (status == TopUpStatus.PENDING) {
                         EmptyList(Icons.Filled.Email, "لا توجد طلبات بانتظار المراجعة", "تظهر هنا طلبات شحن الرصيد التي يرسلها العملاء مع صورة الإيصال")
                     } else {
                         EmptyList(
@@ -291,11 +338,12 @@ private fun TopUpRow(t: AdminTopUp, onClick: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall,
                 )
                 t.bankAccount?.let { Text("${it.bankName} · ${it.accountNumber}", style = MaterialTheme.typography.bodySmall) }
+                t.reference?.let { Text("مرجع: $it", style = MaterialTheme.typography.bodySmall) }
                 Text(formatDateTime(t.createdAt), style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(amountIn(t.amount, t.currency), style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep)
-                StatusChip(t.status.label, t.status.tint())
+                if (t.toVerify) StatusChip("للتحقق", Warning) else StatusChip(t.status.label, t.status.tint())
             }
         }
     }
@@ -365,6 +413,20 @@ class TopUpViewModel(
         }
     }
 
+    fun verify() = act {
+        repo.verify(id).orSay()?.let {
+            _state.value = Load.Ready(it)
+            say("تم التحقق من وصول الحوالة")
+        }
+    }
+
+    fun reverse(reason: String) = act {
+        repo.reverse(id, reason).orSay()?.let {
+            _state.value = Load.Ready(it)
+            say("أُلغي الشحن وخُصم المبلغ من رصيد العميل")
+        }
+    }
+
     fun reject(reason: String) = act {
         repo.reject(id, reason).orSay()?.let {
             _state.value = Load.Ready(it)
@@ -392,6 +454,7 @@ fun TopUpScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) 
     val snackbar = remember { SnackbarHostState() }
     var approving by remember { mutableStateOf(false) }
     var rejecting by remember { mutableStateOf(false) }
+    var reversing by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
@@ -469,6 +532,28 @@ fun TopUpScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) 
                             t.reviewedAt?.let { SummaryRow("التاريخ", formatDateTime(it)) }
                             t.cashBox?.let { SummaryRow("أُودِع في", it.name) }
                             t.rejectReason?.let { Text("السبب: $it", color = MaterialTheme.colorScheme.error) }
+                            if (t.autoApproved) {
+                                Text(
+                                    if (t.verifiedAt != null) "أُضيف تلقائياً وتم التحقق منه" else "أُضيف تلقائياً — تحقق من وصول المبلغ إلى الحساب",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (t.verifiedAt != null) Success else Warning,
+                                )
+                            }
+                        }
+                    }
+                    if (t.toVerify && canManage) {
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Button(
+                                    onClick = vm::verify,
+                                    enabled = !busy,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Success),
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("وصل المبلغ ✓") }
+                                OutlinedButton(onClick = { reversing = true }, enabled = !busy, modifier = Modifier.weight(1f)) {
+                                    Text("لم يصل — إلغاء الشحن", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
                         }
                     }
                 } else if (canManage) {
@@ -499,6 +584,9 @@ fun TopUpScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit) 
     }
     if (rejecting) {
         TextDialog("رفض طلب الشحن", "سبب الرفض (يظهر للعميل)", "رفض", onDismiss = { rejecting = false }) { vm.reject(it) }
+    }
+    if (reversing) {
+        TextDialog("إلغاء الشحن", "السبب (يظهر للعميل) — يُخصم المبلغ من رصيده", "إلغاء الشحن", onDismiss = { reversing = false }) { vm.reverse(it) }
     }
     val image = (receipt as? Load.Ready)?.value
     if (zoom && image != null) ZoomDialog(image) { zoom = false }
@@ -1003,4 +1091,100 @@ private fun BankAccountDialog(
 @Composable
 private fun Input(label: String, value: String, onChange: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+}
+
+// ------------------------------------------------------- transfer register ---
+
+class BankTransfersViewModel(private val repo: WalletAdminRepository) : BaseViewModel() {
+    private val _state = MutableStateFlow<Load<List<BankTransferRow>>>(Load.Loading)
+    val state = _state.asStateFlow()
+    private val _hasMore = MutableStateFlow(false)
+    val hasMore = _hasMore.asStateFlow()
+    private var page = 1
+    private var query: String? = null
+    private var job: kotlinx.coroutines.Job? = null
+
+    fun search(q: String?) {
+        query = q
+        page = 1
+        job?.cancel()
+        job = viewModelScope.launch {
+            kotlinx.coroutines.delay(300)
+            val res = repo.transfers(query, 1)
+            _hasMore.value = res.getOrNull()?.hasMore == true
+            _state.value = res.map { it.items }.toLoad()
+        }
+    }
+
+    fun more() {
+        val current = (_state.value as? Load.Ready)?.value ?: return
+        viewModelScope.launch {
+            repo.transfers(query, page + 1).orSay()?.let { res ->
+                page += 1
+                _state.value = Load.Ready(current + res.items)
+                _hasMore.value = res.hasMore
+            }
+        }
+    }
+}
+
+/** Every accepted bank transfer by its reference number: the same one is never accepted twice. */
+@Composable
+fun BankTransfersScreen(onBack: () -> Unit, openTopUp: (String) -> Unit) {
+    val vm = adminViewModel(key = "bank-transfers") { BankTransfersViewModel(it.wallet) }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val hasMore by vm.hasMore.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var query by rememberSaveable { mutableStateOf("") }
+    CollectMessages(vm, snackbar)
+    LaunchedEffect(query) { vm.search(query) }
+    Scaffold(
+        contentWindowInsets = WindowInsets(0),
+        topBar = { BackTopBar("سجل الحوالات", onBack) },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            com.dejavu.core.ui.theme.OutlinedTextField(
+                value = query,
+                onValueChange = { query = it.take(60) },
+                label = { Text("ابحث برقم الحوالة أو البنك") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+            )
+            Text(
+                "أرقام الحوالات المقبولة من التطبيق والكاشير. الحوالة نفسها (أو صورة الإشعار نفسها) لا تُقبل مرتين.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Lux.InkSoft,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            LoadContent(state, onRetry = { vm.search(query) }) { list ->
+                if (list.isEmpty()) {
+                    EmptyList(Icons.Filled.Email, "لا توجد حوالات", "تظهر هنا كل حوالة تُقبل مع رقمها")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(list, key = { it.id }) { t ->
+                            GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp, onClick = t.topUpId?.let { id -> { openTopUp(id) } }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(t.reference ?: "بدون رقم (صورة الإشعار فقط)", style = MaterialTheme.typography.titleSmall)
+                                        val where = when (t.source) {
+                                            "TOP_UP" -> "شحن رصيد من التطبيق"
+                                            "POS" -> "بيع في الكاشير"
+                                            else -> "سند قبض في الكاشير"
+                                        }
+                                        Text(listOfNotNull(where, t.bankName, t.customer?.name).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                                        Text(formatDateTime(t.createdAt) + if (t.extracted) " · قُرئ من الصورة" else "", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                                    }
+                                    if (t.amount != null && t.currency != null) {
+                                        Text(amountIn(t.amount, Currency.of(t.currency)), style = MaterialTheme.typography.titleSmall, color = Lux.GoldDeep)
+                                    }
+                                }
+                            }
+                        }
+                        if (hasMore) item { OutlinedButton(onClick = vm::more, modifier = Modifier.fillMaxWidth()) { Text("عرض المزيد") } }
+                    }
+                }
+            }
+        }
+    }
 }

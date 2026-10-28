@@ -79,21 +79,56 @@ data class AdminPreOrder(
     val createdAt: String,
     val notifiedAt: String? = null,
     val customer: Layaway.Customer,
-    val variantId: String,
-    val sku: String = "",
+    /** Null for a piece not in the catalogue yet ([itemName]); linked once it is added. */
+    val variantId: String? = null,
+    val sku: String? = null,
     val size: String? = null,
     val color: String? = null,
-    val productId: String,
+    val productId: String? = null,
     val name: String,
-    val slug: String = "",
+    val slug: String? = null,
     val imageUrl: String? = null,
     /** Pieces free on the shelf now. */
     val inStock: Int = 0,
     val expectedDate: String? = null,
+    /** Taken by staff: put aside at once when it arrives (no confirmation asked). */
+    val byStaff: Boolean = false,
+    val itemName: String? = null,
+    val itemSize: String? = null,
+    val itemColor: String? = null,
+    /** Agreed price per piece, SAR. */
+    val unitPrice: String? = null,
+    /** Arrived; the customer has not confirmed yet. */
+    val awaitingConfirmation: Boolean = false,
+    val confirmedAt: String? = null,
 )
 
 @Serializable
-data class CreatePreOrderRequest(val customerId: String, val variantId: String, val quantity: Int, val note: String? = null)
+data class CreatePreOrderRequest(
+    val customerId: String,
+    val variantId: String? = null,
+    val quantity: Int,
+    val note: String? = null,
+    val itemName: String? = null,
+    val itemSize: String? = null,
+    val itemColor: String? = null,
+    val unitPrice: String? = null,
+)
+
+/** Changes to an open pre-order; "" clears a text field, null leaves it. */
+@Serializable
+data class UpdatePreOrderRequest(
+    val variantId: String? = null,
+    val quantity: Int? = null,
+    val note: String? = null,
+    val itemName: String? = null,
+    val itemSize: String? = null,
+    val itemColor: String? = null,
+    val unitPrice: String? = null,
+)
+
+@Serializable
+data class ArrivalsChecked(val handled: Int = 0)
 
 /** GET admin/pre-orders/incoming: pieces on their way per size/colour. */
 @Serializable

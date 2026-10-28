@@ -147,7 +147,10 @@ class CheckoutViewModel(
         methodsFor = governorate
         methodsJob?.cancel()
         methodsJob = viewModelScope.launch {
-            val methods = orders.paymentMethods(governorate).filter { it != PaymentMethod.INSTAPAY }
+            // Bank transfers are paid on the spot ("الدفع المباشر": a top-up, then the wallet), so that
+            // option stands for them whenever paying from the wallet is on.
+            val server = orders.paymentMethods(governorate)
+            val methods = server.filter { it !in MANUAL } + listOfNotNull(PaymentMethod.BANK_TRANSFER.takeIf { PaymentMethod.CUSTOMER_ACCOUNT in server })
             val s = _state.value
             _state.value = s.copy(methods = methods, method = if (s.method in methods) s.method else methods.firstOrNull() ?: s.method)
         }
@@ -161,13 +164,15 @@ class CheckoutViewModel(
         _state.value = _state.value.copy(note = note.take(500))
     }
 
-    fun place() {
+    /** [method] overrides the chosen one (after a direct payment the order is paid from the wallet). */
+    fun place(method: PaymentMethod? = null) {
         val s = _state.value
         val addressId = s.addressId ?: return say("اختر عنوان التوصيل")
         if (s.placing) return
         _state.value = s.copy(placing = true, problems = emptyList())
+        val paying = method ?: s.method.let { if (it == PaymentMethod.BANK_TRANSFER) PaymentMethod.CUSTOMER_ACCOUNT else it }
         viewModelScope.launch {
-            orders.checkout(addressId, s.method, s.note, currencies.checkoutCurrency())
+            orders.checkout(addressId, paying, s.note, currencies.checkoutCurrency())
                 .onSuccess { order ->
                     // The order exists either way; if the card page fails to open, it can be retried from the order.
                     val url = if (order.canPayByCard) orders.payByCard(order.number).orSay()?.checkoutUrl else null
@@ -184,8 +189,21 @@ class CheckoutViewModel(
     }
 }
 
+/** Old manual methods the app no longer offers: a transfer is paid on the spot instead. */
+private val MANUAL = setOf(PaymentMethod.BANK_TRANSFER, PaymentMethod.WALLET, PaymentMethod.INSTAPAY)
+
 @Composable
-fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit, placed: (String) -> Unit) {
+fun CheckoutScreen(
+    onBack: () -> Unit,
+    addAddress: () -> Unit,
+    topUp: () -> Unit,
+    placed: (String) -> Unit,
+    /** Opens the transfer screen for [amount] of [currency] still to pay. */
+    payDirect: (amount: String, currency: String) -> Unit = { _, _ -> },
+    /** The transfer was credited: place the order from the wallet now. */
+    directPaid: Boolean = false,
+    consumeDirectPaid: () -> Unit = {},
+) {
     val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies, it.wallet) }
     val rates by appContainer().currencies.rates.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -199,6 +217,13 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
             placed(number)
         }
     }
+    LaunchedEffect(directPaid) {
+        if (directPaid) {
+            consumeDirectPaid()
+            vm.loadWallet()
+            vm.place(PaymentMethod.CUSTOMER_ACCOUNT)
+        }
+    }
     // Reload when coming back from "add address".
     LifecycleResumeEffect(vm) {
         vm.loadAddresses()
@@ -206,14 +231,32 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
         onPauseOrDispose {}
     }
 
-    // What paying from the wallet would take: the total in the invoice (display) currency
-    // versus the balance in that currency. The server has the final say.
+    // What paying from the wallet would take: the total in the invoice (display) currency versus
+    // every balance changed into it (the server changes other currencies when paying). The server
+    // has the final say.
     val display = rates.let { Money.display }
-    val walletBalance = state.wallet?.let { Money.parse(it.available(display.currency)) }
+    val walletBalance = state.wallet?.let { w ->
+        w.balances.fold(BigDecimal.ZERO) { sum, b ->
+            val amount = Money.parse(b.balance)
+            if (amount.signum() <= 0) return@fold sum
+            if (b.currency == display.currency) return@fold sum + amount
+            val rate = rates?.rate(b.currency)?.rate?.toBigDecimalOrNull() ?: return@fold sum
+            sum + Money.convert(Money.toBase(amount, b.currency, rate), display.currency, display.rate)
+        }
+    }
     val orderTotal = cart?.let { Money.convert(Money.parse(it.totals.grandTotal), display.currency, display.rate) }
-    // Merchants may order "on account" (credit); the server enforces their credit limit.
+    // Merchants may order "on account" (credit); the store approves each such order.
     val merchant = state.wallet?.merchant
     val walletShort = merchant == null && walletBalance != null && orderTotal != null && walletBalance < orderTotal
+    /** Still to transfer when paying directly: the total less what the wallet holds. */
+    val toTransfer = if (orderTotal != null) (orderTotal - (walletBalance ?: BigDecimal.ZERO).max(BigDecimal.ZERO)).max(BigDecimal.ZERO) else null
+    val confirm = {
+        if (state.method == PaymentMethod.BANK_TRANSFER && toTransfer != null && toTransfer.signum() > 0) {
+            payDirect(toTransfer.setScale(display.currency.decimals, java.math.RoundingMode.UP).toPlainString(), display.currency.code)
+        } else {
+            vm.place()
+        }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -240,12 +283,16 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                         }
                     }
                     Button(
-                        onClick = vm::place,
+                        onClick = confirm,
                         enabled = !state.placing && state.addressId != null && cart?.canCheckout == true && state.method in state.methods &&
                             !(state.method == PaymentMethod.CUSTOMER_ACCOUNT && walletShort),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
-                        if (state.placing) CircularProgressIndicator(Modifier.padding(2.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الطلب")
+                        if (state.placing) {
+                            CircularProgressIndicator(Modifier.padding(2.dp), color = Color.White, strokeWidth = 2.dp)
+                        } else {
+                            Text(if (state.method == PaymentMethod.BANK_TRANSFER && (toTransfer?.signum() ?: 0) > 0) "متابعة إلى الدفع" else "تأكيد الطلب")
+                        }
                     }
                 }
             }
@@ -280,8 +327,18 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
             }
 
             item { SectionTitle("طريقة الدفع") }
-            items(state.methods) { m ->
-                if (m == PaymentMethod.CUSTOMER_ACCOUNT && merchant != null) {
+            items(state.methods.filter { !(it == PaymentMethod.BANK_TRANSFER && merchant != null) }) { m ->
+                if (m == PaymentMethod.BANK_TRANSFER) {
+                    Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
+                        Text("الدفع المباشر (تحويل بنكي)", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "حوّل المبلغ بأي عملة إلى أحد حساباتنا وأرفق صورة الإشعار، ويُخصم سعر الطلب فوراً" +
+                                (toTransfer?.takeIf { it.signum() > 0 }?.let { " — المطلوب: ${Money.plain(it, display.currency)}" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (m == PaymentMethod.CUSTOMER_ACCOUNT && merchant != null) {
                     Choice(selected = m == state.method, onClick = { vm.chooseMethod(m) }) {
                         Text("آجل على حساب التاجر", style = MaterialTheme.typography.titleSmall)
                         Text(
@@ -305,7 +362,7 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                             )
                         }
                         Text(
-                            "يُسجَّل إجمالي الطلب على حسابك وتسدده لاحقاً",
+                            "يُسجَّل إجمالي الطلب على حسابك وتسدده لاحقاً، بعد موافقة المتجر على الطلب",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -325,6 +382,11 @@ fun CheckoutScreen(onBack: () -> Unit, addAddress: () -> Unit, topUp: () -> Unit
                                 color = MaterialTheme.colorScheme.error,
                             )
                             TextButton(onClick = topUp) { Text("شحن الرصيد") }
+                            Text(
+                                "أو اختر «الدفع المباشر» لتحويل الفرق الآن",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         } else {
                             Text(
                                 "يُخصم إجمالي الطلب من رصيدك فور التأكيد",

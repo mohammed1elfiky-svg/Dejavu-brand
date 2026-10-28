@@ -50,9 +50,10 @@ export class CreateCategoryDto {
   @Matches(SLUG_REGEX, { message: 'slug must be lowercase-kebab-case' })
   slug: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Picture / icon shown with the category in the app; "" removes it' })
   @IsOptional()
-  @IsUrl()
+  @ValidateIf((_, v) => v !== '')
+  @IsUrl({ require_tld: false })
   imageUrl?: string;
 
   @ApiPropertyOptional()

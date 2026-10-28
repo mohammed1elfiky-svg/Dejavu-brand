@@ -72,7 +72,11 @@ interface AdminApi {
         @Query("q") query: String? = null,
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
+        @Query("awaitingApproval") awaitingApproval: Boolean? = null,
     ): Page<AdminOrderSummary>
+    @POST("admin/orders/{id}/approve") suspend fun approveOrder(@Path("id") id: String): AdminOrderDetail
+    @POST("admin/orders/{id}/reject") suspend fun rejectOrder(@Path("id") id: String, @Body body: OptionalReason): AdminOrderDetail
+    @PUT("admin/orders/{id}/items") suspend fun editOrderItems(@Path("id") id: String, @Body body: EditOrderItemsRequest): AdminOrderDetail
     @GET("admin/orders/{id}") suspend fun order(@Path("id") id: String): AdminOrderDetail
     @Multipart @POST("admin/orders/{id}/shipping-receipt") suspend fun shippingReceipt(@Path("id") id: String, @Part file: MultipartBody.Part): AdminOrderDetail
     @POST("admin/orders/{id}/status") suspend fun changeStatus(@Path("id") id: String, @Body body: ChangeStatusRequest): AdminOrderDetail
@@ -224,6 +228,8 @@ interface AdminApi {
     @GET("admin/pos/settings") suspend fun posSettings(): PosSettings
     @PUT("admin/pos/settings") suspend fun savePosSettings(@Body body: PosSettings): PosSettings
     @POST("admin/pos/returns/without-invoice") suspend fun posFreeReturn(@Body body: FreeReturnRequest): FreeReturnResult
+    @GET("admin/pos/coupons-available") suspend fun posCouponsAvailable(): CouponsAvailable
+    @GET("admin/pos/coupons/check") suspend fun posCheckCoupon(@Query("code") code: String, @Query("customerId") customerId: String? = null): PosCoupon
     @GET("admin/alerts") suspend fun alerts(@Query("since") since: String? = null): StaffAlerts
     @GET("admin/pos/shift") suspend fun shift(): PosShift
     @POST("admin/pos/customers") suspend fun quickCustomer(@Body body: QuickCustomerRequest): QuickCustomer
@@ -241,7 +247,12 @@ interface AdminApi {
     @GET("admin/cash-transfers") suspend fun transfers(@Query("exchangesOnly") exchangesOnly: Boolean? = null, @Query("page") page: Int = 1): Page<CashTransfer>
 
     // wallet top-ups & bank accounts
-    @GET("admin/wallet/top-ups") suspend fun topUps(@Query("status") status: String? = null, @Query("page") page: Int = 1): Page<AdminTopUp>
+    @GET("admin/wallet/top-ups") suspend fun topUps(@Query("status") status: String? = null, @Query("page") page: Int = 1, @Query("toVerify") toVerify: Boolean? = null): Page<AdminTopUp>
+    @POST("admin/wallet/top-ups/{id}/verify") suspend fun verifyTopUp(@Path("id") id: String): AdminTopUp
+    @POST("admin/wallet/top-ups/{id}/reverse") suspend fun reverseTopUp(@Path("id") id: String, @Body body: ReasonBody): AdminTopUp
+    @GET("admin/wallet/settings") suspend fun walletSettings(): WalletSettings
+    @PUT("admin/wallet/settings") suspend fun setWalletSettings(@Body body: WalletSettings): WalletSettings
+    @GET("admin/bank-transfers") suspend fun bankTransfers(@Query("q") q: String? = null, @Query("page") page: Int = 1): Page<BankTransferRow>
     @GET("admin/wallet/top-ups/{id}") suspend fun topUp(@Path("id") id: String): AdminTopUp
     @POST("admin/wallet/top-ups/{id}/approve") suspend fun approveTopUp(@Path("id") id: String, @Body body: ApproveTopUpRequest): AdminTopUp
     @POST("admin/wallet/top-ups/{id}/reject") suspend fun rejectTopUp(@Path("id") id: String, @Body body: ReasonBody): AdminTopUp
@@ -289,7 +300,14 @@ interface AdminApi {
     @POST("admin/pricing/bulk") suspend fun bulkPrice(@Body body: BulkPriceRequest): BulkPriceResult
     @GET("admin/pricing/on-offer") suspend fun onOffer(): List<OfferProduct>
 
-    @GET("admin/layaways") suspend fun layaways(@Query("status") status: String? = null, @Query("customerId") customerId: String? = null, @Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 50): com.dejavu.core.model.Page<Layaway>
+    @GET("admin/layaways") suspend fun layaways(
+        @Query("status") status: String? = null,
+        @Query("customerId") customerId: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 50,
+        @Query("toHold") toHold: Boolean? = null,
+    ): com.dejavu.core.model.Page<Layaway>
+    @POST("admin/layaways/{id}/hold") suspend fun holdLayaway(@Path("id") id: String): Layaway
     @GET("admin/layaways/{id}") suspend fun layaway(@Path("id") id: String): Layaway
     @POST("admin/layaways") suspend fun createLayaway(@Body body: CreateLayawayRequest): Layaway
     @POST("admin/layaways/{id}/payments") suspend fun payLayaway(@Path("id") id: String, @Body body: LayawayDeposit): Layaway
@@ -343,6 +361,9 @@ interface AdminApi {
     @POST("admin/pre-orders") suspend fun createPreOrder(@Body body: CreatePreOrderRequest): AdminPreOrder
     @POST("admin/pre-orders/{id}/cancel") suspend fun cancelPreOrder(@Path("id") id: String): AdminPreOrder
     @POST("admin/pre-orders/{id}/convert") suspend fun convertPreOrder(@Path("id") id: String): PreOrderConverted
+    @PATCH("admin/pre-orders/{id}") suspend fun updatePreOrder(@Path("id") id: String, @Body body: UpdatePreOrderRequest): AdminPreOrder
+    @POST("admin/pre-orders/{id}/arrived") suspend fun preOrderArrived(@Path("id") id: String): AdminPreOrder
+    @POST("admin/pre-orders/check-arrivals") suspend fun checkPreOrderArrivals(): ArrivalsChecked
 
     @POST("admin/ai/product-draft") suspend fun productDraft(@Body body: ProductDraftRequest): ProductDraft
     @POST("admin/ai/marketing-text") suspend fun marketingText(@Body body: MarketingTextRequest): MarketingTexts

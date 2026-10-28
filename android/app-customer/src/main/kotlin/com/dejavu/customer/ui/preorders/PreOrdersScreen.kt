@@ -86,6 +86,20 @@ class PreOrdersViewModel(private val extras: StoreExtrasRepository, val session:
         }
     }
 
+    /** "تأكيد الطلب" once arrived: the pieces are put aside and prepared. */
+    fun confirm(p: PreOrder) {
+        if (_cancelling.value != null) return
+        _cancelling.value = p.id
+        viewModelScope.launch {
+            extras.confirmPreOrder(p.id).orSay()?.let { done ->
+                val list = (_state.value as? Load.Ready)?.value
+                if (list != null) _state.value = Load.Ready(list.map { if (it.id == p.id) done.preOrder else it })
+                say("تم تأكيد طلبك، نجهّزه لك الآن")
+            }
+            _cancelling.value = null
+        }
+    }
+
     fun cancel(p: PreOrder) {
         if (_cancelling.value != null) return
         _cancelling.value = p.id
@@ -103,8 +117,8 @@ class PreOrdersViewModel(private val extras: StoreExtrasRepository, val session:
 
 private fun statusLabel(status: String): Pair<String, Color> = when (status) {
     "WAITING" -> "بانتظار الوصول" to Liquid.GoldDeep
-    "NOTIFIED" -> "وصلت — اطلبيها الآن" to Liquid.Success
-    "CONVERTED" -> "تم حجزها لك" to Liquid.Success
+    "NOTIFIED" -> "وصلت — أكّدي الطلب" to Liquid.Success
+    "CONVERTED" -> "محجوزة لك وقيد التجهيز" to Liquid.Success
     "CANCELLED" -> "ملغاة" to Liquid.InkSoft
     else -> status to Liquid.InkSoft
 }
@@ -161,8 +175,9 @@ fun PreOrdersScreen(onBack: () -> Unit, openProduct: (String) -> Unit) {
                             PreOrderRow(
                                 p,
                                 cancelling = cancelling == p.id,
-                                onOpen = { openProduct(p.slug) },
+                                onOpen = { p.slug?.let(openProduct) },
                                 onCancel = { confirmCancel = p },
+                                onConfirm = { vm.confirm(p) },
                             )
                         }
                     }
@@ -188,7 +203,7 @@ fun PreOrdersScreen(onBack: () -> Unit, openProduct: (String) -> Unit) {
 }
 
 @Composable
-private fun PreOrderRow(p: PreOrder, cancelling: Boolean, onOpen: () -> Unit, onCancel: () -> Unit) {
+private fun PreOrderRow(p: PreOrder, cancelling: Boolean, onOpen: () -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) {
     val (label, color) = statusLabel(p.status)
     GlassCard(Modifier.fillMaxWidth(), elevation = 10.dp, contentPadding = 12.dp, onClick = onOpen) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -209,8 +224,10 @@ private fun PreOrderRow(p: PreOrder, cancelling: Boolean, onOpen: () -> Unit, on
                 Text(Numerals.of("رقم الحجز ${p.number} · ${formatDate(p.createdAt)}"), style = MaterialTheme.typography.labelSmall, color = Liquid.InkSoft)
                 if (p.status == "WAITING" || p.status == "NOTIFIED") {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (p.status == "NOTIFIED") {
-                            Text("اطلبيها الآن", style = MaterialTheme.typography.labelLarge, color = Liquid.Success, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        if (p.awaitingConfirmation) {
+                            com.dejavu.core.ui.theme.Button(onClick = onConfirm, enabled = !cancelling, modifier = Modifier.weight(1f)) { Text("تأكيد الطلب") }
+                        } else if (p.status == "NOTIFIED") {
+                            Text("وصلت قطعتك", style = MaterialTheme.typography.labelLarge, color = Liquid.Success, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         } else {
                             androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                         }

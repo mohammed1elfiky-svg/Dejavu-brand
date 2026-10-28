@@ -213,6 +213,10 @@ interface DejavuApi {
     @POST("store/me/wallet/top-ups")
     suspend fun requestTopUp(@Body body: TopUpRequest): TopUp
 
+    /** Reads the reference number and amount off an uploaded slip, and says if it was used before. */
+    @POST("store/me/wallet/top-ups/scan")
+    suspend fun scanSlip(@Body body: com.dejavu.core.model.ScanSlipRequest): com.dejavu.core.model.SlipScan
+
     @PATCH("store/me/wallet/top-ups/{id}")
     suspend fun updateTopUp(@Path("id") id: String, @Body body: UpdateTopUpRequest): TopUp
 
@@ -307,6 +311,10 @@ interface DejavuApi {
 
     @DELETE("store/pre-orders/{id}")
     suspend fun cancelPreOrder(@Path("id") id: String): com.dejavu.core.model.PreOrder
+
+    /** "تأكيد الطلب" on an arrived pre-order: the pieces are put aside. */
+    @POST("store/pre-orders/{id}/confirm")
+    suspend fun confirmPreOrder(@Path("id") id: String): com.dejavu.core.model.PreOrderConfirmed
 
     @POST("store/me/gift-cards/redeem")
     suspend fun redeemGiftCard(@Body body: com.dejavu.core.model.GiftCardRedeemRequest): com.dejavu.core.model.GiftCardRedeemed

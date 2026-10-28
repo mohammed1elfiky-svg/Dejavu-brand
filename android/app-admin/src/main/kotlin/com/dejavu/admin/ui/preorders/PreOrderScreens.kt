@@ -60,6 +60,10 @@ import com.dejavu.admin.ui.Refresher
 import com.dejavu.admin.ui.adminViewModel
 import com.dejavu.admin.ui.layaway.ChosenCustomer
 import com.dejavu.admin.ui.layaway.CustomerPickerDialog
+import com.dejavu.admin.ui.layaway.PiecePickerDialog
+import com.dejavu.core.admin.UpdatePreOrderRequest
+import com.dejavu.core.model.Money
+import androidx.compose.foundation.verticalScroll
 import com.dejavu.admin.ui.theme.GlassCard
 import com.dejavu.admin.ui.theme.Lux
 import com.dejavu.core.admin.AdminPreOrder
@@ -88,6 +92,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/** What staff type for a pre-order: a size from the catalogue, or a description of the piece. */
+internal data class PreOrderFields(
+    val variantId: String? = null,
+    val variantLabel: String = "",
+    val itemName: String = "",
+    val itemSize: String = "",
+    val itemColor: String = "",
+    val quantity: Int = 1,
+    val unitPrice: String = "",
+    val note: String = "",
+)
 
 private fun preOrderStatusLabel(s: String?): String = when (s) {
     "WAITING" -> "بانتظار الوصول"
@@ -180,6 +196,58 @@ class PreOrdersViewModel(private val repo: OffersRepository) : BaseViewModel() {
         }
     }
 
+    /** A piece not in the app yet (or any piece), for a customer; put aside at once when it arrives. */
+    internal fun createFree(customer: ChosenCustomer, f: PreOrderFields) = act {
+        repo.createPreOrder(
+            CreatePreOrderRequest(
+                customerId = customer.id,
+                variantId = f.variantId,
+                quantity = f.quantity,
+                note = f.note.trim().ifBlank { null },
+                itemName = f.itemName.trim().ifBlank { null },
+                itemSize = f.itemSize.trim().ifBlank { null },
+                itemColor = f.itemColor.trim().ifBlank { null },
+                unitPrice = f.unitPrice.trim().ifBlank { null },
+            ),
+        ).orSay()?.let { p ->
+            say("تم تسجيل الطلب المسبق ${p.number} لـ ${customer.name}")
+            loadList()
+        }
+    }
+
+    internal fun update(p: AdminPreOrder, f: PreOrderFields) = act {
+        repo.updatePreOrder(
+            p.id,
+            UpdatePreOrderRequest(
+                variantId = f.variantId,
+                quantity = f.quantity,
+                note = f.note.trim(),
+                itemName = f.itemName.trim(),
+                itemSize = f.itemSize.trim(),
+                itemColor = f.itemColor.trim(),
+                unitPrice = f.unitPrice.trim().ifBlank { null },
+            ),
+        ).orSay()?.let {
+            say("تم حفظ الطلب ${p.number}")
+            loadList()
+        }
+    }
+
+    /** "وصلت": the customer is told now (or, taken by staff, the pieces are put aside). */
+    fun arrived(p: AdminPreOrder) = act {
+        repo.preOrderArrived(p.id).orSay()?.let {
+            say(if (it.status == "CONVERTED") "حُجزت القطع وأُبلغ العميل أن طلبه قيد التجهيز" else "أُبلغ العميل بوصول طلبه ليؤكده")
+            loadList()
+        }
+    }
+
+    fun checkArrivals() = act {
+        repo.checkArrivals().orSay()?.let {
+            say(if (it.handled > 0) "تمت معالجة ${it.handled} طلب مسبق وصلت قطعه" else "لا توجد طلبات مسبقة وصلت قطعها")
+            loadList()
+        }
+    }
+
     private fun act(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
@@ -221,6 +289,10 @@ fun PreOrdersScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openLaya
     var cancelling by remember { mutableStateOf<AdminPreOrder?>(null) }
     var reserving by remember { mutableStateOf<IncomingVariant?>(null) }
     var customer by remember { mutableStateOf<ChosenCustomer?>(null) }
+    // New pre-order for a piece not in the app yet: first the customer, then the details.
+    var newFor by remember { mutableStateOf<ChosenCustomer?>(null) }
+    var pickingCustomer by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<AdminPreOrder?>(null) }
     CollectMessages(vm, snackbar)
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -233,7 +305,11 @@ fun PreOrdersScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openLaya
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar("الحجز المسبق", onBack) },
+        topBar = {
+            BackTopBar("الحجز المسبق", onBack) {
+                TextButton(onClick = { pickingCustomer = true }, enabled = !busy) { Text("طلب مسبق جديد", color = Lux.GoldDeep) }
+            }
+        },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -244,6 +320,9 @@ fun PreOrdersScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openLaya
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (tab == 0) {
                 ChipFilter(listOf<String?>("WAITING", "NOTIFIED", "CONVERTED", "CANCELLED", null), status, ::preOrderStatusLabel, vm::setStatus)
+                OutlinedButton(onClick = vm::checkArrivals, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text("فحص الواصل الآن وإبلاغ العملاء")
+                }
                 LoadContent(list, onRetry = vm::loadList) { rows ->
                     RefreshList(refreshing, vm::refresh) {
                         if (rows.isEmpty()) {
@@ -265,6 +344,8 @@ fun PreOrdersScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openLaya
                                         onCancel = { cancelling = p },
                                         onCall = { dial(p.customer.phone) },
                                         onOpenLayaway = { p.layawayId?.let(openLayaway) },
+                                        onEdit = { editing = p },
+                                        onArrived = { vm.arrived(p) },
                                     )
                                 }
                             }
@@ -293,6 +374,35 @@ fun PreOrdersScreen(session: StaffSession.LoggedIn, onBack: () -> Unit, openLaya
                     }
                 }
             }
+        }
+    }
+
+    if (pickingCustomer) {
+        CustomerPickerDialog(onDismiss = { pickingCustomer = false }, onPick = { newFor = it })
+    }
+    newFor?.let { c ->
+        PreOrderFieldsDialog(title = "طلب مسبق لـ ${c.name}", initial = PreOrderFields(), onDismiss = { newFor = null }) { f ->
+            newFor = null
+            vm.createFree(c, f)
+        }
+    }
+    editing?.let { p ->
+        PreOrderFieldsDialog(
+            title = "تعديل ${p.number}",
+            initial = PreOrderFields(
+                variantId = p.variantId,
+                variantLabel = if (p.variantId != null) listOfNotNull(p.name, p.size, p.color).joinToString(" · ") else "",
+                itemName = p.itemName.orEmpty(),
+                itemSize = p.itemSize.orEmpty(),
+                itemColor = p.itemColor.orEmpty(),
+                quantity = p.quantity,
+                unitPrice = p.unitPrice.orEmpty(),
+                note = p.note.orEmpty(),
+            ),
+            onDismiss = { editing = null },
+        ) { f ->
+            editing = null
+            vm.update(p, f)
         }
     }
 
@@ -342,6 +452,8 @@ private fun PreOrderCard(
     onCancel: () -> Unit,
     onCall: () -> Unit,
     onOpenLayaway: () -> Unit,
+    onEdit: () -> Unit,
+    onArrived: () -> Unit,
 ) {
     GlassCard(Modifier.fillMaxWidth(), elevation = 6.dp, contentPadding = 14.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -352,8 +464,14 @@ private fun PreOrderCard(
                 if (variant.isNotBlank()) Text(variant, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                 Text("الكمية: ${p.quantity} · ${p.number}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
-            StatusChip(preOrderStatusLabel(p.status), preOrderStatusColor(p.status))
+            StatusChip(if (p.awaitingConfirmation) "بانتظار تأكيد العميل" else preOrderStatusLabel(p.status), preOrderStatusColor(p.status))
         }
+        val tags = listOfNotNull(
+            if (p.byStaff) "من المحل" else "من التطبيق",
+            if (p.variantId == null) "غير مربوط بمنتج بعد" else null,
+            p.unitPrice?.let { "السعر المتفق: ${Money.formatBase(it)}" },
+        )
+        Text(tags.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(p.customer.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -372,9 +490,16 @@ private fun PreOrderCard(
             )
             p.note?.takeIf { it.isNotBlank() }?.let { Text("ملاحظة: $it", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onConvert, enabled = enabled && p.inStock >= p.quantity, modifier = Modifier.weight(1f)) {
-                    Text("حجز القطع للعميلة", maxLines = 1)
+                if (p.status == "WAITING" && p.variantId != null) {
+                    Button(onClick = onArrived, enabled = enabled && p.inStock >= p.quantity, modifier = Modifier.weight(1f)) {
+                        Text("وصلت", maxLines = 1)
+                    }
+                } else {
+                    Button(onClick = onConvert, enabled = enabled && p.variantId != null && p.inStock >= p.quantity, modifier = Modifier.weight(1f)) {
+                        Text("حجز القطع للعميلة", maxLines = 1)
+                    }
                 }
+                OutlinedButton(onClick = onEdit, enabled = enabled) { Text("تعديل") }
                 OutlinedButton(onClick = onCancel, enabled = enabled) { Text("إلغاء") }
             }
             if (p.inStock < p.quantity) {
@@ -452,4 +577,59 @@ private fun ReserveDialog(v: IncomingVariant, customer: ChosenCustomer, onDismis
         confirmButton = { TextButton(onClick = { onConfirm(qty.coerceIn(1, max), note) }) { Text("حجز") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
+}
+
+/** The piece (a size from the catalogue, or a description), quantity, agreed price and note. */
+@Composable
+private fun PreOrderFieldsDialog(title: String, initial: PreOrderFields, onDismiss: () -> Unit, onSave: (PreOrderFields) -> Unit) {
+    var f by remember { mutableStateOf(initial) }
+    var picking by remember { mutableStateOf(false) }
+    val valid = (f.variantId != null || f.itemName.trim().length >= 2) && f.quantity in 1..50 &&
+        (f.unitPrice.isBlank() || f.unitPrice.trim().toBigDecimalOrNull()?.let { it.signum() > 0 } == true)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("القطعة من المنتجات (اختياري)", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(f.variantLabel.ifBlank { "غير مربوطة بمنتج" }, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { picking = true }) { Text(if (f.variantId == null) "اختيار" else "تغيير") }
+                    if (f.variantId != null) TextButton(onClick = { f = f.copy(variantId = null, variantLabel = "") }) { Text("إزالة") }
+                }
+                Text("أو وصف قطعة لم تُضف للتطبيق بعد", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(f.itemName, { f = f.copy(itemName = it.take(150)) }, label = { Text("اسم القطعة") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(f.itemSize, { f = f.copy(itemSize = it.take(30)) }, label = { Text("المقاس") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(f.itemColor, { f = f.copy(itemColor = it.take(40)) }, label = { Text("اللون") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("الكمية", Modifier.weight(1f))
+                    QuantityStepper(f.quantity, { f = f.copy(quantity = it.coerceIn(1, 50)) }, max = 50)
+                }
+                OutlinedTextField(
+                    f.unitPrice,
+                    { f = f.copy(unitPrice = it.filter { c -> c.isDigit() || c == '.' }.take(10)) },
+                    label = { Text("السعر المتفق للقطعة (ر.س، اختياري)") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(f.note, { f = f.copy(note = it.take(300)) }, label = { Text("ملاحظة (اختياري)") }, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "عند وصول القطع وربطها بالمنتج تُحجز للعميل تلقائياً ويصله إشعار أن طلبه قيد التجهيز.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Lux.InkSoft,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(f) }, enabled = valid) { Text("حفظ") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
+    )
+    if (picking) {
+        PiecePickerDialog("اختر القطعة", onDismiss = { picking = false }, requireStock = false) { product, variant ->
+            picking = false
+            f = f.copy(variantId = variant.id, variantLabel = listOfNotNull(product.nameAr, variant.size, variant.color).joinToString(" · "))
+        }
+    }
 }

@@ -241,7 +241,7 @@ export class CatalogService {
       }
       await this.findCategory(dto.parentId);
     }
-    const category = await this.prisma.category.update({ where: { id }, data: dto });
+    const category = await this.prisma.category.update({ where: { id }, data: { ...dto, imageUrl: dto.imageUrl === '' ? null : dto.imageUrl } });
     await this.audit.log({ userId, action: 'UPDATE', entityType: 'Category', entityId: id, after: category });
     return category;
   }

@@ -195,6 +195,8 @@ describe('Round 8 (e2e)', () => {
     expect((await http.get('/store/cart', c.token).expect(200)).body.couponsAvailable).toBe(true);
     expect((await http.get('/admin/pos/coupons-available', admin).expect(200)).body.available).toBe(true);
 
+    expect((await http.get(`/admin/pos/coupons/check?code=${code.toLowerCase()}`, admin).expect(200)).body).toMatchObject({ type: 'PERCENTAGE', value: '10' });
+    await http.get('/admin/pos/coupons/check?code=NOPE', admin).expect(422);
     const p = await product('كوبون الكاشير', 100, 3);
     const items = [{ variantId: p.variants[0].id, quantity: 1 }];
     const sale = (await http.post('/admin/pos/sales', { items, saleType: 'CASH', couponCode: code.toLowerCase(), payments: [{ currency: 'SAR', amount: '90' }] }, admin).expect(201)).body;

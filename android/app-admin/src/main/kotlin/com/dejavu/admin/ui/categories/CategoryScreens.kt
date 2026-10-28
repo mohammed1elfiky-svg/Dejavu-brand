@@ -3,6 +3,9 @@ package com.dejavu.admin.ui.categories
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -124,6 +127,23 @@ class CategoriesViewModel(private val repo: InventoryRepository) : BaseViewModel
         }
     }
 
+    /** The category's picture or icon in the customer app; null bytes remove it. */
+    fun setImage(c: AdminCategory, bytes: ByteArray?) {
+        if (_busy.value) return
+        _busy.value = true
+        viewModelScope.launch {
+            val url = if (bytes == null) "" else repo.uploadImage(bytes).getOrElse { e -> tell(e.userMessage()); _busy.value = false; return@launch }.url
+            repo.updateCategory(c.id, UpdateCategoryRequest(imageUrl = url)).fold(
+                {
+                    patchLocal(c.id) { it.copy(imageUrl = url.ifBlank { null }) }
+                    tell(if (bytes == null) "أُزيلت صورة قسم ${c.nameAr}" else "تم حفظ صورة قسم ${c.nameAr}، تظهر الآن في التطبيق")
+                },
+                { e -> tell(e.userMessage()) },
+            )
+            _busy.value = false
+        }
+    }
+
     fun rename(c: AdminCategory, nameAr: String, nameEn: String) {
         val ar = nameAr.trim()
         val en = nameEn.trim()
@@ -202,6 +222,9 @@ fun CategoryManager(
     var adding by remember { mutableStateOf(false) }
     // Parent of the category being added (null = a main category).
     var addParent by remember { mutableStateOf<AdminCategory?>(null) }
+    // The category whose picture is being chosen.
+    var picturing by remember { mutableStateOf<AdminCategory?>(null) }
+    val picker = com.dejavu.core.ui.media.rememberImagePicker(maxSide = 800) { bytes -> picturing?.let { vm.setImage(it, bytes) } }
     LaunchedEffect(vm) { vm.load() }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -237,6 +260,7 @@ fun CategoryManager(
                                 onToggle = { v -> vm.setVisible(c, v) },
                                 onEdit = { editing = c },
                                 onAddChild = { addParent = c; adding = true },
+                                onPicture = { picturing = c },
                             )
                         }
                     }
@@ -247,6 +271,23 @@ fun CategoryManager(
             "القسم المخفي لا يظهر في تطبيق العملاء ولا تظهر منتجاته فيه، ويبقى متاحاً في الكاشير ولوحة التحكم.",
             style = MaterialTheme.typography.labelSmall,
             color = Lux.InkSoft,
+        )
+    }
+
+    picturing?.let { c ->
+        AlertDialog(
+            onDismissRequest = { picturing = null },
+            title = { Text("صورة قسم ${c.nameAr}") },
+            text = { Text("صورة أو أيقونة (مثل الكعب) تظهر مع القسم في تطبيق العملاء، وعند الضغط عليها تظهر منتجاته.") },
+            confirmButton = {
+                TextButton(onClick = { picker.fromGallery() }) { Text("من المعرض") }
+            },
+            dismissButton = {
+                Row {
+                    if (c.imageUrl != null) TextButton(onClick = { vm.setImage(c, null); picturing = null }) { Text("إزالة الصورة", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = { picker.fromCamera() }) { Text("التقاط صورة") }
+                }
+            },
         )
     }
 
@@ -286,11 +327,17 @@ private fun CategoryRow(
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onAddChild: () -> Unit,
+    onPicture: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(start = (depth * 16).dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        com.dejavu.core.ui.ProductImage(
+            c.imageUrl,
+            Modifier.padding(end = 8.dp).size(44.dp).clip(androidx.compose.foundation.shape.CircleShape).clickable(enabled = enabled, onClick = onPicture),
+            contentDescription = "صورة القسم",
+        )
         Column(Modifier.weight(1f).alpha(if (c.isActive) 1f else 0.5f)) {
             Text(
                 "${if (depth > 0) "↳ " else ""}${c.nameAr}",

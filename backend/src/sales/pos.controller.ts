@@ -50,6 +50,13 @@ export class AdminPosController {
     return this.pos.couponsAvailable();
   }
 
+  /** A coupon the cashier typed: its discount, so the till shows the total before the sale. */
+  @RequirePermissions('pos.sell')
+  @Get('coupons/check')
+  checkCoupon(@Query('code') code: string, @Query('customerId') customerId?: string) {
+    return this.pos.checkCouponCode(code ?? '', customerId);
+  }
+
   /** Resolves a scanned barcode: variant SKU (100-2), factory barcode, or product SKU (100). */
   @RequirePermissions('pos.sell')
   @Get('lookup')

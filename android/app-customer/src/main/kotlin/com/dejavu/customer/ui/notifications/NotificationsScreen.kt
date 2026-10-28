@@ -123,6 +123,12 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
         }
     }
 
+    /** Leaving the screen: everything shown counts as read (outlives this screen's scope). */
+    fun readAllOnLeave() {
+        if (unread.value <= 0) return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch { repo.markAllRead() }
+    }
+
     private fun markLocally(id: String) {
         val list = (_state.value as? Load.Ready)?.value ?: return
         _state.value = Load.Ready(list.map { if (it.id == id) it.copy(readAt = "read") else it })
@@ -170,6 +176,8 @@ fun NotificationsScreen(
         vm.load()
         onPauseOrDispose {}
     }
+    // Opened and left: the notifications were seen.
+    androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.readAllOnLeave() } }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),

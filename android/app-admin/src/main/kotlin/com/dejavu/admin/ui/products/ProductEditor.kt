@@ -706,6 +706,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                                     color = Lux.InkSoft,
                                 )
                             }
+                            com.dejavu.admin.ui.round9.AiPromptButton()
                         }
                     }
                 }

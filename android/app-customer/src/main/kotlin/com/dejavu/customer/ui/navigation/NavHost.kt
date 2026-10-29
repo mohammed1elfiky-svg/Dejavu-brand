@@ -97,6 +97,10 @@ object Routes {
     const val ABOUT = "about"
     const val WISHLIST = "wishlist"
     const val PRE_ORDERS = "pre-orders"
+    const val PROFILE = "profile"
+    const val LOYALTY = "loyalty"
+    const val GIFTS = "gifts"
+    const val GROUP_GIFTS = "group-gifts"
 
     const val PRODUCTS = "products?title={title}&category={category}&q={q}&featured={featured}&brand={brand}"
     const val PRODUCT = "product/{slug}"
@@ -347,8 +351,16 @@ fun DejavuNavHost() {
                     about = { nav.navigate(Routes.ABOUT) },
                     chat = { nav.navigate(Routes.CHAT) },
                     preOrders = { nav.navigate(Routes.PRE_ORDERS) },
+                    profile = { nav.navigate(Routes.PROFILE) },
+                    loyalty = { nav.navigate(Routes.LOYALTY) },
+                    gifts = { nav.navigate(Routes.GIFTS) },
+                    groupGifts = { nav.navigate(Routes.GROUP_GIFTS) },
                 )
             }
+            page(Routes.PROFILE) { com.dejavu.customer.ui.members.ProfileScreen(onBack = { nav.popBackStack() }) }
+            page(Routes.LOYALTY) { com.dejavu.customer.ui.members.LoyaltyScreen(onBack = { nav.popBackStack() }) }
+            page(Routes.GIFTS) { com.dejavu.customer.ui.members.GiftsScreen(onBack = { nav.popBackStack() }, addAddress = { nav.navigate(Routes.addressForm()) }) }
+            page(Routes.GROUP_GIFTS) { com.dejavu.customer.ui.members.GroupGiftsScreen(onBack = { nav.popBackStack() }) }
             page(Routes.WISHLIST) {
                 WishlistScreen(onBack = { nav.popBackStack() }, openProduct = { nav.navigate(Routes.product(it)) }, login = { nav.navigate(Routes.LOGIN) })
             }
@@ -392,6 +404,16 @@ fun DejavuNavHost() {
                     openCart = { nav.switchTab(Routes.CART) },
                     openReviews = { nav.navigate(Routes.productReviews(it)) },
                     openCategory = { container.requestCategory(it) },
+                    openScreen = { screen ->
+                        nav.navigate(
+                            when (screen) {
+                                "gifts" -> Routes.GIFTS
+                                "group-gift" -> Routes.GROUP_GIFTS
+                                "loyalty" -> Routes.LOYALTY
+                                else -> Routes.PROFILE
+                            },
+                        )
+                    },
                 )
             }
             page(Routes.WALLET) {

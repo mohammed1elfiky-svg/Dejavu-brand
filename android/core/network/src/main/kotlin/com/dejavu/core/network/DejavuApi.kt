@@ -140,7 +140,11 @@ interface DejavuApi {
 
     // cart
     @GET("store/cart")
-    suspend fun cart(@Query("addressId") addressId: String? = null): Cart
+    suspend fun cart(
+        @Query("addressId") addressId: String? = null,
+        @Query("deliveryMethod") deliveryMethod: String? = null,
+        @Query("carrierOfficeId") carrierOfficeId: String? = null,
+    ): Cart
 
     @POST("store/cart/items")
     suspend fun addToCart(@Body body: AddCartItemRequest): Cart
@@ -318,4 +322,48 @@ interface DejavuApi {
 
     @POST("store/me/gift-cards/redeem")
     suspend fun redeemGiftCard(@Body body: com.dejavu.core.model.GiftCardRedeemRequest): com.dejavu.core.model.GiftCardRedeemed
+
+    // ---- round 9 ----
+    @GET("store/carriers")
+    suspend fun carriers(): List<com.dejavu.core.model.StoreCarrier>
+
+    @GET("store/me/profile")
+    suspend fun profile(): com.dejavu.core.model.MyProfile
+
+    @PATCH("store/me/profile")
+    suspend fun updateProfile(@Body body: com.dejavu.core.model.UpdateProfileRequest): com.dejavu.core.model.MyProfile
+
+    @GET("store/usernames/check")
+    suspend fun checkUsername(@Query("u") username: String): com.dejavu.core.model.UsernameCheck
+
+    @Multipart
+    @POST("store/me/images")
+    suspend fun uploadPublicImage(@Part file: MultipartBody.Part): UploadedFile
+
+    @GET("store/me/loyalty")
+    suspend fun loyalty(): com.dejavu.core.model.MyLoyalty
+
+    @POST("store/me/loyalty/redeem")
+    suspend fun redeemPoints(@Body body: com.dejavu.core.model.RedeemPointsRequest): com.dejavu.core.model.MyLoyalty
+
+    @GET("store/me/gifts")
+    suspend fun myGifts(): List<com.dejavu.core.model.MyGift>
+
+    @POST("store/me/gifts/{id}/choose")
+    suspend fun chooseGift(@Path("id") id: String, @Body body: com.dejavu.core.model.GiftChoiceRequest): com.dejavu.core.model.MyGift
+
+    @GET("store/group-gifts/mine")
+    suspend fun myGroupGifts(): List<com.dejavu.core.model.GroupGift>
+
+    @GET("store/group-gifts/for/{username}")
+    suspend fun groupGiftsFor(@Path("username") username: String): List<com.dejavu.core.model.GroupGift>
+
+    @POST("store/group-gifts")
+    suspend fun startGroupGift(@Body body: com.dejavu.core.model.StartGroupGiftRequest): com.dejavu.core.model.GroupGift
+
+    @POST("store/group-gifts/{id}/contribute")
+    suspend fun contribute(@Path("id") id: String, @Body body: com.dejavu.core.model.ContributeRequest): com.dejavu.core.model.Contributed
+
+    @POST("store/group-gifts/{id}/cancel")
+    suspend fun cancelGroupGift(@Path("id") id: String): com.dejavu.core.model.GroupGift
 }

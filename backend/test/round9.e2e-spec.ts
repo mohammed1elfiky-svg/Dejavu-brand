@@ -158,7 +158,8 @@ describe('Round 9 (e2e)', () => {
     expect(m.customer).toMatchObject({ username: m.username, igStatus: 'PENDING' });
     expect(m.customer.igCode).toMatch(/^\d{4}$/);
     await http.post('/auth/customer/register', { name: 'مكرر', phone: uniquePhone(), password: 'secret123', username: m.username.toUpperCase() }).expect(409);
-    expect((await http.get(`/store/usernames/check?username=${m.username}`).expect(200)).body.available).toBe(false);
+    expect((await http.get(`/store/usernames/check?u=${m.username}`).expect(200)).body).toMatchObject({ available: false, reason: 'اليوزر مستخدم' });
+    expect((await http.get(`/store/usernames/check?u=${m.username}zz`).expect(200)).body.available).toBe(true);
 
     const pending = (await http.get('/admin/instagram-verifications', admin).expect(200)).body as { id: string }[];
     expect(pending.map((x) => x.id)).toContain(m.id);

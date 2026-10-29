@@ -1473,6 +1473,8 @@ fun PosScreen(
 
     if (showPending) PendingSalesDialog(vm, pending, onDismiss = { showPending = false })
 
+    var giftSaleId by remember { mutableStateOf<String?>(null) }
+    var giftMessage by remember { mutableStateOf<String?>(null) }
     if (confirmLogout && onLogout != null) {
         ConfirmDialog("تسجيل الخروج", "هل تريد الخروج من حسابك على هذا الجهاز؟", "خروج", onDismiss = { confirmLogout = false }, onConfirm = onLogout)
     }
@@ -1494,7 +1496,17 @@ fun PosScreen(
             onPrint = { printReceipt(r) },
             sharing = sharing,
             onWhatsApp = { sendWhatsApp(r) },
+            onGift = { giftSaleId = r.id },
         )
+    }
+    giftSaleId?.let { saleId ->
+        com.dejavu.admin.ui.round9.MarkGiftDialog(saleId, onDismiss = { giftSaleId = null }) { message ->
+            giftSaleId = null
+            giftMessage = message
+        }
+    }
+    giftMessage?.let { m ->
+        ConfirmDialog("الهدية 🎁", m, "حسناً", onDismiss = { giftMessage = null }) {}
     }
 
     viewing?.let { r ->
@@ -2769,6 +2781,7 @@ private fun ReceiptDialog(
     onPrint: () -> Unit,
     sharing: Boolean = false,
     onWhatsApp: (() -> Unit)? = null,
+    onGift: (() -> Unit)? = null,
 ) {
     val cur = r.currency
     fun inCur(v: String) = Money.plain(Money.parse(v), cur)
@@ -2827,6 +2840,11 @@ private fun ReceiptDialog(
                     }
                     if (r.customer?.phone.isNullOrBlank()) {
                         Text("لا يوجد رقم للعميل؛ ستختار المحادثة في واتساب.", style = MaterialTheme.typography.labelSmall, color = Lux.InkSoft)
+                    }
+                }
+                if (onGift != null) {
+                    OutlinedButton(onClick = onGift, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Text("🎁 هذه هدية لعميل")
                     }
                 }
             }

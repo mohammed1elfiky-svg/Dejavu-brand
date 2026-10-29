@@ -59,6 +59,11 @@ import com.dejavu.core.data.CurrencyRepository
 import com.dejavu.core.data.OrderRepository
 import com.dejavu.core.data.ServerMessages
 import com.dejavu.core.data.WalletRepository
+import com.dejavu.core.data.MembersRepository
+import com.dejavu.core.model.DeliveryMethods
+import com.dejavu.core.model.StoreCarrier
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material3.FilterChip
 import com.dejavu.core.data.userMessage
 import com.dejavu.core.model.Address
 import com.dejavu.core.model.Currency
@@ -93,7 +98,21 @@ data class CheckoutState(
     val problems: List<String> = emptyList(),
     /** Wallet balances, for paying from the account; null until loaded (or if it failed). */
     val wallet: Wallet? = null,
-)
+    /** [DeliveryMethods]: to an address, to a carrier office, or picked up from the store. */
+    val delivery: String = DeliveryMethods.HOME,
+    val carriers: List<StoreCarrier> = emptyList(),
+    val carrierId: String? = null,
+    val officeId: String? = null,
+) {
+    val office: StoreCarrier.Office? get() = carriers.firstNotNullOfOrNull { c -> c.offices.firstOrNull { it.id == officeId } }
+
+    /** Where the order goes is complete. */
+    val ready: Boolean get() = when (delivery) {
+        DeliveryMethods.PICKUP -> true
+        DeliveryMethods.OFFICE -> office != null
+        else -> addressId != null
+    }
+}
 
 class CheckoutViewModel(
     private val addressRepo: AddressRepository,
@@ -101,6 +120,7 @@ class CheckoutViewModel(
     private val orders: OrderRepository,
     private val currencies: CurrencyRepository,
     private val walletRepo: WalletRepository,
+    private val members: MembersRepository,
 ) : BaseViewModel() {
     private val _state = MutableStateFlow(CheckoutState())
     val state = _state.asStateFlow()
@@ -115,6 +135,46 @@ class CheckoutViewModel(
     init {
         // Fresh rate before invoicing, so the total shown is the one the order gets.
         viewModelScope.launch { currencies.refresh() }
+        viewModelScope.launch {
+            members.carriers().getOrNull()?.let { list -> _state.value = _state.value.copy(carriers = list) }
+        }
+    }
+
+    fun chooseDelivery(method: String) {
+        _state.value = _state.value.copy(delivery = method)
+        reprice()
+    }
+
+    /** HOME: the company to send with (optional). OFFICE: the company whose offices are listed. */
+    fun chooseCarrier(id: String?) {
+        val s = _state.value
+        val keepOffice = s.office?.let { o -> s.carriers.firstOrNull { it.id == id }?.offices?.any { it.id == o.id } } == true
+        _state.value = s.copy(carrierId = id, officeId = if (keepOffice) s.officeId else null)
+        if (!keepOffice && s.delivery == DeliveryMethods.OFFICE) reprice()
+    }
+
+    fun chooseOffice(id: String) {
+        val carrier = _state.value.carriers.firstOrNull { c -> c.offices.any { it.id == id } }
+        _state.value = _state.value.copy(officeId = id, carrierId = carrier?.id ?: _state.value.carrierId)
+        reprice()
+    }
+
+    /** Shipping and the payment methods depend on where the order goes. */
+    private fun reprice() {
+        val s = _state.value
+        val governorate = when (s.delivery) {
+            DeliveryMethods.PICKUP -> null
+            DeliveryMethods.OFFICE -> s.office?.governorate
+            else -> s.addresses?.firstOrNull { it.id == s.addressId }?.governorate
+        }
+        loadMethods(governorate)
+        viewModelScope.launch {
+            when (s.delivery) {
+                DeliveryMethods.PICKUP -> cartRepo.refresh(null, DeliveryMethods.PICKUP)
+                DeliveryMethods.OFFICE -> if (s.officeId != null) cartRepo.refresh(null, DeliveryMethods.OFFICE, s.officeId) else null
+                else -> s.addressId?.let { cartRepo.refresh(it) }
+            }?.orSay()
+        }
     }
 
     /** Balances for "pay from wallet"; reloaded when coming back from a top-up. */
@@ -130,15 +190,13 @@ class CheckoutViewModel(
             val current = _state.value.addressId?.takeIf { id -> list.any { it.id == id } }
             val chosen = current ?: (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.id
             _state.value = _state.value.copy(addresses = list, addressId = chosen)
-            loadMethods(list.firstOrNull { it.id == chosen }?.governorate)
-            chosen?.let { cartRepo.refresh(it).orSay() }
+            reprice()
         }
     }
 
     fun chooseAddress(id: String) {
         _state.value = _state.value.copy(addressId = id)
-        loadMethods(_state.value.addresses?.firstOrNull { it.id == id }?.governorate)
-        viewModelScope.launch { cartRepo.refresh(id).orSay() }
+        reprice()
     }
 
     /** The methods the store accepts for [governorate] (cash on delivery may be off there). */
@@ -167,12 +225,21 @@ class CheckoutViewModel(
     /** [method] overrides the chosen one (after a direct payment the order is paid from the wallet). */
     fun place(method: PaymentMethod? = null) {
         val s = _state.value
-        val addressId = s.addressId ?: return say("اختر عنوان التوصيل")
+        if (!s.ready) return say(if (s.delivery == DeliveryMethods.OFFICE) "اختر مكتب شركة الشحن" else "اختر عنوان التوصيل")
+        val addressId = if (s.delivery == DeliveryMethods.HOME) s.addressId else null
         if (s.placing) return
         _state.value = s.copy(placing = true, problems = emptyList())
         val paying = method ?: s.method.let { if (it == PaymentMethod.BANK_TRANSFER) PaymentMethod.CUSTOMER_ACCOUNT else it }
         viewModelScope.launch {
-            orders.checkout(addressId, paying, s.note, currencies.checkoutCurrency())
+            orders.checkout(
+                addressId,
+                paying,
+                s.note,
+                currencies.checkoutCurrency(),
+                deliveryMethod = s.delivery,
+                carrierId = if (s.delivery == DeliveryMethods.PICKUP) null else s.carrierId,
+                carrierOfficeId = if (s.delivery == DeliveryMethods.OFFICE) s.officeId else null,
+            )
                 .onSuccess { order ->
                     // The order exists either way; if the card page fails to open, it can be retried from the order.
                     val url = if (order.canPayByCard) orders.payByCard(order.number).orSay()?.checkoutUrl else null
@@ -182,7 +249,7 @@ class CheckoutViewModel(
                     val problems = (e as? ApiException)?.problems.orEmpty().map(ServerMessages::translate)
                     _state.value = _state.value.copy(problems = problems)
                     say(e.userMessage())
-                    cartRepo.refresh(addressId)
+                    reprice()
                 }
             _state.value = _state.value.copy(placing = false)
         }
@@ -204,7 +271,7 @@ fun CheckoutScreen(
     directPaid: Boolean = false,
     consumeDirectPaid: () -> Unit = {},
 ) {
-    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies, it.wallet) }
+    val vm = appViewModel { CheckoutViewModel(it.addresses, it.cart, it.orders, it.currencies, it.wallet, it.members) }
     val rates by appContainer().currencies.rates.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val cart by vm.cart.collectAsStateWithLifecycle()
@@ -284,7 +351,7 @@ fun CheckoutScreen(
                     }
                     Button(
                         onClick = confirm,
-                        enabled = !state.placing && state.addressId != null && cart?.canCheckout == true && state.method in state.methods &&
+                        enabled = !state.placing && state.ready && cart?.canCheckout == true && state.method in state.methods &&
                             !(state.method == PaymentMethod.CUSTOMER_ACCOUNT && walletShort),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
@@ -306,9 +373,62 @@ fun CheckoutScreen(
                     }
                 }
             }
-            item { SectionTitle("عنوان التوصيل") }
+            item { SectionTitle("طريقة الاستلام") }
+            item {
+                Choice(selected = state.delivery == DeliveryMethods.HOME, onClick = { vm.chooseDelivery(DeliveryMethods.HOME) }) {
+                    Text("توصيل إلى عنواني", style = MaterialTheme.typography.titleSmall)
+                }
+            }
+            if (state.carriers.any { it.offices.isNotEmpty() }) {
+                item {
+                    Choice(selected = state.delivery == DeliveryMethods.OFFICE, onClick = { vm.chooseDelivery(DeliveryMethods.OFFICE) }) {
+                        Text("استلام من مكتب شركة الشحن", style = MaterialTheme.typography.titleSmall)
+                        Text("اختر الشركة والمكتب الأقرب لك", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                Choice(selected = state.delivery == DeliveryMethods.PICKUP, onClick = { vm.chooseDelivery(DeliveryMethods.PICKUP) }) {
+                    Text("استلام من المحل", style = MaterialTheme.typography.titleSmall)
+                    Text("مجاناً، ونبلغك عندما يجهز طلبك", style = MaterialTheme.typography.bodySmall, color = Success)
+                }
+            }
+            if (state.delivery != DeliveryMethods.PICKUP && state.carriers.isNotEmpty()) {
+                item { SectionTitle(if (state.delivery == DeliveryMethods.OFFICE) "شركة الشحن" else "شركة الشحن (اختياري)") }
+                item {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.carriers.filter { state.delivery == DeliveryMethods.HOME || it.offices.isNotEmpty() }, key = { it.id }) { c ->
+                            FilterChip(
+                                selected = state.carrierId == c.id,
+                                onClick = { vm.chooseCarrier(if (state.carrierId == c.id && state.delivery == DeliveryMethods.HOME) null else c.id) },
+                                label = { Text(c.name) },
+                            )
+                        }
+                    }
+                }
+            }
+            if (state.delivery == DeliveryMethods.OFFICE) {
+                val carrier = state.carriers.firstOrNull { it.id == state.carrierId }
+                if (carrier == null) {
+                    item { Text("اختر شركة الشحن لعرض مكاتبها", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    // Offices in the customer's own governorate first.
+                    val home = state.addresses?.firstOrNull { it.id == state.addressId }?.governorate
+                    items(carrier.offices.sortedBy { if (it.governorate == home) 0 else 1 }, key = { "o:" + it.id }) { o ->
+                        Choice(selected = o.id == state.officeId, onClick = { vm.chooseOffice(o.id) }) {
+                            Text("${o.name} · ${o.governorate}${o.city?.let { " / $it" } ?: ""}", style = MaterialTheme.typography.titleSmall)
+                            Text(o.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val phones = o.phones.ifEmpty { carrier.phones }
+                            if (phones.isNotEmpty()) Text("📞 ${phones.joinToString(" / ")}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (state.delivery == DeliveryMethods.HOME) item { SectionTitle("عنوان التوصيل") }
             val addresses = state.addresses
-            if (addresses == null) {
+            if (state.delivery != DeliveryMethods.HOME) {
+                // No address needed.
+            } else if (addresses == null) {
                 item { CircularProgressIndicator(Modifier.padding(16.dp), color = Liquid.Gold) }
             } else {
                 items(addresses, key = { it.id }) { a ->
@@ -425,7 +545,7 @@ fun CheckoutScreen(
                         if (!Money.isZero(c.totals.discountTotal)) SummaryRow("الخصم", "- ${Money.format(c.totals.discountTotal)}", valueColor = Success)
                         if (c.shipping != null && !Money.isZero(c.totals.shippingFee)) SummaryRow("الشحن", Money.format(c.totals.shippingFee))
                         Text(
-                            "رسوم الشحن تُدفع للمندوب عند الاستلام",
+                            if (state.delivery == DeliveryMethods.PICKUP) "استلام مجاني من المحل" else "رسوم الشحن تُدفع للمندوب عند الاستلام",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),

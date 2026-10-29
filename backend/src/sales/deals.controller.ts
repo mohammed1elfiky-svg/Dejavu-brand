@@ -17,8 +17,8 @@ export class DealDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() atPos?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() online?: boolean;
-  @ApiPropertyOptional({ description: 'Only the first N pieces (null = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(1) maxPieces?: number | null;
-  @ApiPropertyOptional({ description: 'Only the first N customers (null = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(1) maxCustomers?: number | null;
+  @ApiPropertyOptional({ description: 'Only the first N pieces (null or 0 = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(0) maxPieces?: number | null;
+  @ApiPropertyOptional({ description: 'Only the first N customers (null or 0 = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(0) maxCustomers?: number | null;
 
   @ApiProperty({ type: [String] })
   @IsArray()

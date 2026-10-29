@@ -130,6 +130,32 @@ object Printers {
         return send(context, l.target, data)
     }
 
+    /**
+     * The parcel label: on the receipt printer when one is set (80 / 58 mm roll), otherwise on
+     * the label printer scaled to its label.
+     */
+    suspend fun printShippingLabel(context: Context, settings: PrinterSettings, label: ShippingLabel): Result<Unit> {
+        val r = settings.receipt
+        if (r.target.isSet) {
+            val data = withContext(Dispatchers.Default) { EscPos.receipt(shippingLabelBitmap(label, r.dots).toMono(), cut = r.cut) }
+            return send(context, r.target, data)
+        }
+        val l = settings.label
+        val data = withContext(Dispatchers.Default) {
+            val art = shippingLabelBitmap(label, 576)
+            val scale = minOf(l.widthDots / art.width.toFloat(), l.heightDots / art.height.toFloat())
+            val w = (art.width * scale).toInt().coerceAtLeast(1)
+            val h = (art.height * scale).toInt().coerceAtLeast(1)
+            val out = Bitmap.createBitmap(l.widthDots, l.heightDots, Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(out).apply {
+                drawColor(android.graphics.Color.WHITE)
+                drawBitmap(Bitmap.createScaledBitmap(art, w, h, true), (l.widthDots - w) / 2f, (l.heightDots - h) / 2f, null)
+            }
+            l.commands(out.toMono(), 1)
+        }
+        return send(context, l.target, data)
+    }
+
     suspend fun testReceipt(context: Context, settings: PrinterSettings): Result<Unit> {
         val r = settings.receipt
         val data = withContext(Dispatchers.Default) { EscPos.receipt(testBitmap(r.dots, "طابعة الفواتير تعمل ✓", "${r.paperMm} مم").toMono(), cut = r.cut) }

@@ -92,8 +92,19 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         area: String? = null,
         otp: String? = null,
         otpChannel: String? = null,
+        username: String? = null,
+        usernameIsInstagram: Boolean = false,
+        birthDate: String? = null,
     ): Result<SignUpResult> = apiCall {
-        api.register(RegisterRequest(name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }, otpChannel))
+        val user = username?.trim()?.removePrefix("@")?.ifBlank { null }
+        api.register(
+            RegisterRequest(
+                name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }, otpChannel,
+                username = user,
+                usernameIsInstagram = if (user != null && usernameIsInstagram) true else null,
+                birthDate = birthDate?.ifBlank { null },
+            ),
+        )
     }.map { r ->
         val customer = r.customer
         val access = r.accessToken
@@ -241,7 +252,8 @@ class CartRepository(private val api: DejavuApi) {
     private val _cart = MutableStateFlow<Cart?>(null)
     val cart: StateFlow<Cart?> = _cart.asStateFlow()
 
-    suspend fun refresh(addressId: String? = null) = update { api.cart(addressId) }
+    suspend fun refresh(addressId: String? = null, deliveryMethod: String? = null, carrierOfficeId: String? = null) =
+        update { api.cart(addressId, deliveryMethod, carrierOfficeId) }
     suspend fun add(variantId: String, quantity: Int) = update { api.addToCart(AddCartItemRequest(variantId, quantity)) }
     suspend fun setQuantity(variantId: String, quantity: Int) = update { api.setCartQuantity(variantId, QuantityRequest(quantity)) }
     suspend fun remove(variantId: String) = update { api.removeFromCart(variantId) }
@@ -267,8 +279,16 @@ class AddressRepository(private val api: DejavuApi) {
 // ------------------------------------------------------------------ orders ---
 
 class OrderRepository(private val api: DejavuApi, private val cart: CartRepository) {
-    suspend fun checkout(addressId: String, method: PaymentMethod, note: String?, currency: Currency? = null): Result<OrderDetail> =
-        apiCall { api.checkout(CheckoutRequest(addressId, method, note?.trim()?.ifBlank { null }, currency)) }
+    suspend fun checkout(
+        addressId: String?,
+        method: PaymentMethod,
+        note: String?,
+        currency: Currency? = null,
+        deliveryMethod: String? = null,
+        carrierId: String? = null,
+        carrierOfficeId: String? = null,
+    ): Result<OrderDetail> =
+        apiCall { api.checkout(CheckoutRequest(addressId, method, note?.trim()?.ifBlank { null }, currency, deliveryMethod, carrierId, carrierOfficeId)) }
             .onSuccess { cart.refresh() }
 
     suspend fun orders(page: Int = 1): Result<Page<OrderSummary>> = apiCall { api.orders(page) }
@@ -517,4 +537,33 @@ class StoreExtrasRepository(private val api: DejavuApi) {
     suspend fun preOrder(variantId: String, quantity: Int) = apiCall { api.preOrder(com.dejavu.core.model.PreOrderRequest(variantId, quantity)) }
     suspend fun cancelPreOrder(id: String) = apiCall { api.cancelPreOrder(id) }
     suspend fun confirmPreOrder(id: String) = apiCall { api.confirmPreOrder(id) }
+}
+
+/**
+ * Round 9 for customers: shipping companies and offices, the profile (username, Instagram
+ * check, photo, birthday), loyalty points, gifts received and group gifts among friends.
+ */
+class MembersRepository(private val api: DejavuApi) {
+    suspend fun carriers() = apiCall { api.carriers() }
+
+    suspend fun profile() = apiCall { api.profile() }
+    suspend fun updateProfile(request: com.dejavu.core.model.UpdateProfileRequest) = apiCall { api.updateProfile(request) }
+    suspend fun checkUsername(username: String) = apiCall { api.checkUsername(username.trim().removePrefix("@")) }
+
+    /** Uploads a photo anyone may see (the profile picture) and returns its address. */
+    suspend fun uploadPublicImage(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadPublicImage(MultipartBody.Part.createFormData("file", "photo.jpg", bytes.toRequestBody(mimeType.toMediaType()))).url
+    }
+
+    suspend fun loyalty() = apiCall { api.loyalty() }
+    suspend fun redeem(points: Int) = apiCall { api.redeemPoints(com.dejavu.core.model.RedeemPointsRequest(points)) }
+
+    suspend fun gifts() = apiCall { api.myGifts() }
+    suspend fun chooseGift(id: String, request: com.dejavu.core.model.GiftChoiceRequest) = apiCall { api.chooseGift(id, request) }
+
+    suspend fun myGroupGifts() = apiCall { api.myGroupGifts() }
+    suspend fun groupGiftsFor(username: String) = apiCall { api.groupGiftsFor(username.trim().removePrefix("@")) }
+    suspend fun startGroupGift(request: com.dejavu.core.model.StartGroupGiftRequest) = apiCall { api.startGroupGift(request) }
+    suspend fun contribute(id: String, amount: String, message: String?) = apiCall { api.contribute(id, com.dejavu.core.model.ContributeRequest(amount, message?.ifBlank { null })) }
+    suspend fun cancelGroupGift(id: String) = apiCall { api.cancelGroupGift(id) }
 }

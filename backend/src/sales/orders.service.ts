@@ -270,7 +270,14 @@ export class OrdersService {
     }
     const who = { recipient: address?.recipient ?? customer.name, phone: address?.phone ?? customer.phone };
     if (method === DeliveryMethod.PICKUP) {
-      return { address, governorate: null, carrierId: null, officeId: null, snapshot: { method, ...who, pickup: true } as Prisma.InputJsonObject };
+      return {
+        address,
+        governorate: null,
+        carrierId: null,
+        officeId: null,
+        // Address fields filled in so older app versions can still show the order.
+        snapshot: { method, ...who, governorate: 'استلام من المحل', city: 'المحل', street: 'يستلمه العميل من المحل', pickup: true } as Prisma.InputJsonObject,
+      };
     }
     if (method === DeliveryMethod.OFFICE) {
       const office = await tx.carrierOffice.findUnique({ where: { id: dto.carrierOfficeId! }, include: { carrier: true } });

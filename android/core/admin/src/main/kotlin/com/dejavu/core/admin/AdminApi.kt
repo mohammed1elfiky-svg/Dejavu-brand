@@ -368,4 +368,48 @@ interface AdminApi {
     @POST("admin/ai/product-draft") suspend fun productDraft(@Body body: ProductDraftRequest): ProductDraft
     @POST("admin/ai/marketing-text") suspend fun marketingText(@Body body: MarketingTextRequest): MarketingTexts
     @GET("admin/ai/weekly-summary") suspend fun weeklySummary(@Query("refresh") refresh: Boolean = false): WeeklySummary
+
+    // ---- round 9 ----
+    @GET("admin/carriers") suspend fun carriers(): List<Carrier>
+    @POST("admin/carriers") suspend fun createCarrier(@Body body: CarrierRequest): Carrier
+    @PATCH("admin/carriers/{id}") suspend fun updateCarrier(@Path("id") id: String, @Body body: CarrierRequest): Carrier
+    @DELETE("admin/carriers/{id}") suspend fun removeCarrier(@Path("id") id: String): CarrierRemoved
+    @POST("admin/carriers/{id}/offices") suspend fun addOffice(@Path("id") id: String, @Body body: CarrierOfficeRequest): Carrier
+    @PATCH("admin/carriers/offices/{id}") suspend fun updateOffice(@Path("id") id: String, @Body body: CarrierOfficeRequest): Carrier
+    @DELETE("admin/carriers/offices/{id}") suspend fun removeOffice(@Path("id") id: String): Carrier
+
+    @GET("admin/loyalty/settings") suspend fun loyaltySettings(): LoyaltySettings
+    @PUT("admin/loyalty/settings") suspend fun setLoyaltySettings(@Body body: LoyaltySettings): LoyaltySettings
+    @GET("admin/customers/{id}/loyalty") suspend fun customerLoyalty(@Path("id") id: String): CustomerLoyalty
+    @PATCH("admin/customers/{id}/loyalty") suspend fun setCustomerLoyalty(@Path("id") id: String, @Body body: CustomerLoyaltyRequest): CustomerLoyalty
+    @POST("admin/customers/{id}/loyalty/adjust") suspend fun adjustPoints(@Path("id") id: String, @Body body: AdjustPointsRequest): CustomerLoyalty
+
+    @GET("admin/customers/{id}/account/statement") suspend fun fullStatement(@Path("id") id: String, @Query("from") from: String?, @Query("to") to: String?): FullStatement
+
+    @POST("admin/customers/{id}/block") suspend fun blockCustomer(@Path("id") id: String, @Body body: BlockRequest): Blocked
+    @POST("admin/customers/{id}/unblock") suspend fun unblockCustomer(@Path("id") id: String): Blocked
+    @GET("admin/blocked-phones") suspend fun blockedPhones(): List<BlockedPhone>
+    @POST("admin/blocked-phones") suspend fun blockPhone(@Body body: BlockPhoneRequest): BlockedPhone
+    @DELETE("admin/blocked-phones/{id}") suspend fun unblockPhone(@Path("id") id: String): retrofit2.Response<Unit>
+    @GET("admin/carts") suspend fun customerCarts(): List<CustomerCart>
+    @GET("admin/instagram-verifications") suspend fun instagramPending(): List<Person>
+    @POST("admin/customers/{id}/instagram/verify") suspend fun verifyInstagram(@Path("id") id: String, @Body body: InstagramCodeRequest): InstagramResult
+    @POST("admin/customers/{id}/instagram/reject") suspend fun rejectInstagram(@Path("id") id: String): InstagramResult
+
+    @POST("admin/gifts") suspend fun markGift(@Body body: PosGiftRequest): AdminGift
+    @GET("admin/gifts") suspend fun gifts(@Query("status") status: String? = null): List<AdminGift>
+    @POST("admin/gifts/{id}/done") suspend fun giftDone(@Path("id") id: String, @Body body: GiftDoneRequest): AdminGift
+
+    @GET("admin/today") suspend fun today(): TodayTasks
+
+    @GET("admin/dormant-customers") suspend fun dormantCustomers(@Query("days") days: Int): List<DormantCustomer>
+    @POST("admin/dormant-customers/coupon") suspend fun dormantCoupon(@Body body: DormantCouponRequest): DormantCouponsSent
+
+    @GET("admin/social/posts") suspend fun adminPosts(@Query("page") page: Int = 1): List<AdminPost>
+    @PUT("admin/social/posts/{id}/hidden") suspend fun hidePost(@Path("id") id: String, @Body body: HiddenRequest): retrofit2.Response<Unit>
+    @GET("admin/social/ambassador-settings") suspend fun ambassadorSettings(): AmbassadorSettings
+    @PUT("admin/social/ambassador-settings") suspend fun setAmbassadorSettings(@Body body: AmbassadorSettings): AmbassadorSettings
+
+    @GET("admin/ai/product-prompt") suspend fun productPrompt(): ProductPrompt
+    @PUT("admin/ai/product-prompt") suspend fun setProductPrompt(@Body body: ProductPromptRequest): ProductPrompt
 }

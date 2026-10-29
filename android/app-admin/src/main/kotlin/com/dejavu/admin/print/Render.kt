@@ -163,6 +163,33 @@ fun testBitmap(width: Int, title: String, detail: String): Bitmap = Slip(width).
     gap(16f)
 }.draw()
 
+/** What goes on a parcel: who it is for and how to reach them. */
+data class ShippingLabel(
+    val orderNumber: String,
+    val name: String,
+    val phone: String,
+    val address: String,
+    val carrier: String? = null,
+    /** Cash to collect on delivery, already formatted (null when paid). */
+    val collect: String? = null,
+)
+
+/** The parcel label, [width] dots wide: big name and phone, the address and the order number. */
+fun shippingLabelBitmap(l: ShippingLabel, width: Int): Bitmap = Slip(width).apply {
+    center("DEJAVU", size = 36f, bold = true)
+    rule(dashed = false)
+    right("إلى:", size = 22f)
+    right(l.name, size = 34f, bold = true)
+    right(l.phone, size = 34f, bold = true)
+    gap(6f)
+    right(l.address, size = 26f)
+    l.carrier?.let { right("شركة الشحن: $it", size = 24f) }
+    rule()
+    row("رقم الطلب", l.orderNumber, size = 28f, bold = true)
+    l.collect?.let { row("المطلوب تحصيله", it, size = 28f, bold = true) }
+    gap(24f)
+}.draw()
+
 /** The barcode sticker scaled to the label: [width] × [height] dots. */
 fun labelBitmap(d: StickerData, width: Int, height: Int): Bitmap {
     val art = stickerBitmap(d)

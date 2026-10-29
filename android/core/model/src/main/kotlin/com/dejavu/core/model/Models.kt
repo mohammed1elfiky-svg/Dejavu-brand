@@ -25,6 +25,12 @@ data class RegisterRequest(
     val otp: String? = null,
     /** How the customer wants the code: SMS or WHATSAPP (they ask the store for it). */
     val otpChannel: String? = null,
+    /** Optional: two English letters, then letters, digits, "." or "_". */
+    val username: String? = null,
+    /** The username is the customer's Instagram account: they get a code to send to the store. */
+    val usernameIsInstagram: Boolean? = null,
+    /** yyyy-mm-dd. */
+    val birthDate: String? = null,
 )
 
 /** GET auth/governorates: Yemeni governorates and the rial each uses (Taiz is split in areas). */
@@ -106,6 +112,11 @@ data class Customer(
     val area: String? = null,
     /** The rial of the customer's region (YER old notes / YEQ new notes); null = unknown. */
     val preferredCurrency: String? = null,
+    val username: String? = null,
+    val avatarUrl: String? = null,
+    /** NONE, PENDING (send [igCode] to the store's Instagram) or VERIFIED. */
+    val igStatus: String = "NONE",
+    val igCode: String? = null,
 )
 
 // --------------------------------------------------------------- catalog ---
@@ -380,11 +391,16 @@ enum class PaymentMethod { CASH_ON_DELIVERY, CARD, WALLET, BANK_TRANSFER, INSTAP
 
 @Serializable
 data class CheckoutRequest(
-    val addressId: String,
+    /** Needed for HOME delivery only. */
+    val addressId: String?,
     val paymentMethod: PaymentMethod,
     val customerNote: String? = null,
     /** Invoice currency; the current rate is locked into the order. */
     val currency: Currency? = null,
+    /** [DeliveryMethods]: HOME (default), OFFICE or PICKUP. */
+    val deliveryMethod: String? = null,
+    val carrierId: String? = null,
+    val carrierOfficeId: String? = null,
 )
 
 @Serializable
@@ -483,6 +499,10 @@ data class OrderDetail(
     /** A merchant's order on credit waiting for the store's approval. */
     val needsApproval: Boolean = false,
     val approvedAt: String? = null,
+    /** [DeliveryMethods]: HOME, OFFICE or PICKUP. */
+    val deliveryMethod: String = DeliveryMethods.HOME,
+    val carrier: StoreCarrier? = null,
+    val carrierOffice: StoreCarrier.Office? = null,
 ) {
     /** A SAR amount of this order in its own currency, at the rate locked at checkout. */
     fun format(amountSar: String?): String = Money.format(amountSar, currency, exchangeRate)

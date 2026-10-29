@@ -110,6 +110,7 @@ class NotificationsViewModel(private val repo: NotificationRepository) : BaseVie
             category != null -> routes.openCategory(category)
             url != null -> routes.openUrl(url)
             n.data["screen"] == "cart" -> routes.openCart()
+            n.data["screen"] in setOf("gifts", "group-gift", "loyalty", "profile") -> routes.openScreen(n.data["screen"]!!)
             n.type == "WALLET" || n.data["topUp"] != null -> routes.openWallet()
         }
     }
@@ -144,6 +145,8 @@ class NotificationRoutes(
     val openReviews: (String) -> Unit,
     val openCategory: (String) -> Unit,
     val openUrl: (String) -> Unit,
+    /** Another screen by its name: gifts, group-gift, loyalty, profile. */
+    val openScreen: (String) -> Unit = {},
 )
 
 @Composable
@@ -155,6 +158,7 @@ fun NotificationsScreen(
     openCart: () -> Unit = {},
     openReviews: (String) -> Unit = openProduct,
     openCategory: (String) -> Unit = {},
+    openScreen: (String) -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     val routes = NotificationRoutes(
@@ -165,6 +169,7 @@ fun NotificationsScreen(
         openReviews = openReviews,
         openCategory = openCategory,
         openUrl = { runCatching { uriHandler.openUri(it) } },
+        openScreen = openScreen,
     )
     val vm = appViewModel { NotificationsViewModel(it.notifications) }
     val state by vm.state.collectAsStateWithLifecycle()

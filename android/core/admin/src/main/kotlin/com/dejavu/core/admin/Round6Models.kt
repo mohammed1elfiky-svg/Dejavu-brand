@@ -24,6 +24,13 @@ data class Deal(
     /** Active and within its dates. */
     val running: Boolean = false,
     val products: List<Product> = emptyList(),
+    /** Only the first N pieces / customers (null = no limit). */
+    val maxPieces: Int? = null,
+    val maxCustomers: Int? = null,
+    val usedPieces: Int = 0,
+    val usedCustomers: Int = 0,
+    /** The limit was reached. */
+    val exhausted: Boolean = false,
 ) {
     @Serializable
     data class Product(val id: String, val nameAr: String, val slug: String, val basePrice: String, val imageUrl: String? = null)
@@ -43,6 +50,9 @@ data class DealRequest(
     val atPos: Boolean? = null,
     val online: Boolean? = null,
     val productIds: List<String>,
+    /** 0 = no limit. */
+    val maxPieces: Int? = null,
+    val maxCustomers: Int? = null,
 )
 
 /** POST admin/pos/quote */
@@ -152,7 +162,7 @@ data class PreOrderConverted(val preOrder: AdminPreOrder, val layaway: Layaway)
 // ------------------------------------------------------------------- AI ---
 
 @Serializable
-data class ProductDraftRequest(val imageFileId: String)
+data class ProductDraftRequest(val imageFileId: String, val prompt: String? = null)
 
 /** POST admin/ai/product-draft: suggestions for a new product from its photo. */
 @Serializable

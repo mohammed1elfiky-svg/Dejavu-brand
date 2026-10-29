@@ -111,6 +111,11 @@ data class AdminOrderSummary(
     /** A merchant's order on credit waiting for the owner's approval. */
     val needsApproval: Boolean = false,
     val approvedAt: String? = null,
+    /** HOME, OFFICE (a carrier office the customer picks it up from) or PICKUP (from the store). */
+    val deliveryMethod: String = "HOME",
+    /** The shipping company the customer chose. */
+    val carrier: OrderCarrier? = null,
+    val carrierOffice: Carrier.Office? = null,
 ) {
     val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
 
@@ -210,6 +215,12 @@ data class Profit(val netRevenue: String, val costOfGoods: String, val grossProf
 @Serializable
 data class ShippingSnapshot(
     val recipient: String,
+    /** HOME, OFFICE or PICKUP. */
+    val method: String? = null,
+    /** OFFICE: the carrier and office the customer collects from. */
+    val carrier: String? = null,
+    val officeName: String? = null,
+    val officePhones: List<String> = emptyList(),
     val phone: String,
     val governorate: String,
     val city: String,
@@ -223,6 +234,9 @@ data class ShippingSnapshot(
     val latitude: String? = null,
     val longitude: String? = null,
 )
+
+@Serializable
+data class OrderCarrier(val id: String, val name: String, val phones: List<String> = emptyList())
 
 @Serializable
 data class AdminOrderDetail(

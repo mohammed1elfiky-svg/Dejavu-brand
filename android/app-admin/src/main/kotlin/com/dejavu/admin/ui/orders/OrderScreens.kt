@@ -127,6 +127,10 @@ import com.dejavu.core.ui.toLoad
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilterChip
 
 private val PAY_METHODS = listOf(PaymentMethod.CASH, PaymentMethod.INSTAPAY, PaymentMethod.WALLET, PaymentMethod.BANK_TRANSFER, PaymentMethod.CARD)
 private val REFUND_METHODS = listOf(PaymentMethod.CASH, PaymentMethod.CARD, PaymentMethod.INSTAPAY, PaymentMethod.WALLET, PaymentMethod.BANK_TRANSFER)
@@ -424,6 +428,18 @@ class OrderDetailViewModel(
             repo.changeStatus(id, status, note, carrier, tracking)
         }
 
+    /** Hands the order to the carrier; a receipt photo taken in the dialog is sent right after. */
+    fun ship(carrier: String, tracking: String, receipt: ByteArray?) =
+        act("تم: ${OrderStatus.SHIPPED.label}", then = { o ->
+            if (receipt != null) {
+                sendShippingReceipt(receipt)
+            } else if (o.isAppOrder) {
+                _suggestReceipt.value = true
+            }
+        }) {
+            repo.changeStatus(id, OrderStatus.SHIPPED, null, carrier, tracking)
+        }
+
     fun approve() = act("تمت الموافقة على طلب التاجر وتسجيله على حسابه") { repo.approve(id) }
     fun reject(reason: String?) = act("تم رفض الطلب") { repo.reject(id, reason) }
     fun editItems(quantities: Map<String, Int>) = act("تم تعديل الكميات") { repo.editItems(id, quantities) }
@@ -552,7 +568,19 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                         Text("العميل", style = MaterialTheme.typography.titleSmall)
                         Text("${o.customer.name} · ${o.customer.phone.orEmpty()}")
                         val a = o.shippingAddress
-                        Text(
+                        val office = o.carrierOffice
+                        when (o.deliveryMethod) {
+                            "PICKUP" -> Text("🏬 يستلمه العميل من المحل", color = Lux.GoldDeep, style = MaterialTheme.typography.titleSmall)
+                            "OFFICE" -> {
+                                Text("📦 استلام من مكتب ${o.carrier?.name ?: a.carrier ?: "شركة الشحن"}", color = Lux.GoldDeep, style = MaterialTheme.typography.titleSmall)
+                                if (office != null) {
+                                    Text("${office.name} · ${office.governorate}${office.city?.let { " / $it" } ?: ""} · ${office.address}", style = MaterialTheme.typography.bodySmall)
+                                    if (office.phones.isNotEmpty()) Text("هاتف المكتب: ${office.phones.joinToString(" / ")}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            else -> o.carrier?.let { Text("شركة الشحن المختارة: ${it.name}", style = MaterialTheme.typography.bodySmall, color = Lux.GoldDeep) }
+                        }
+                        if (o.deliveryMethod == "HOME") Text(
                             listOfNotNull(a.street, a.building?.let { "مبنى $it" }, a.floor?.let { "دور $it" }, a.apartment?.let { "شقة $it" }, a.district, a.city, a.governorate).joinToString("، "),
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -565,6 +593,7 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
                             }
                         }
                         o.customerNote?.let { Text("ملاحظة العميل: $it", color = MaterialTheme.colorScheme.secondary) }
+                        if (o.isAppOrder && o.deliveryMethod != "PICKUP") ShippingLabelButton(o)
                     }
                 }
                 item {
@@ -680,7 +709,7 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
 
             when (val d = dialog) {
                 is OrderDialog.Confirm -> ConfirmDialog(d.status.actionLabel, "${o.number} · ${o.customer.name}", "تأكيد", { dialog = null }) { vm.changeStatus(d.status) }
-                OrderDialog.Ship -> ShipDialog(o, onDismiss = { dialog = null }) { carrier, tracking -> vm.changeStatus(OrderStatus.SHIPPED, carrier = carrier, tracking = tracking) }
+                OrderDialog.Ship -> ShipDialog(o, onDismiss = { dialog = null }) { carrier, tracking, receipt -> vm.ship(carrier, tracking, receipt) }
                 OrderDialog.Cancel -> TextDialog("إلغاء الطلب", "سبب الإلغاء", "إلغاء الطلب", { dialog = null }) { vm.changeStatus(OrderStatus.CANCELLED, note = it) }
                 OrderDialog.Refuse -> TextDialog(
                     "رفض العميل الاستلام",
@@ -841,26 +870,80 @@ private fun PhotoZoomDialog(image: ImageBitmap, onDismiss: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (carrier: String, tracking: String) -> Unit) {
-    var carrier by rememberSaveable { mutableStateOf("Bosta") }
+private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (carrier: String, tracking: String, receipt: ByteArray?) -> Unit) {
+    val repo = adminContainer().round9
+    var carriers by remember { mutableStateOf<List<com.dejavu.core.admin.Carrier>>(emptyList()) }
+    LaunchedEffect(Unit) { carriers = repo.carriers().getOrNull().orEmpty().filter { it.isActive } }
+    var carrier by rememberSaveable { mutableStateOf(order.carrier?.name ?: order.shippingAddress.carrier ?: "") }
     var tracking by rememberSaveable { mutableStateOf("") }
+    var receipt by remember { mutableStateOf<ByteArray?>(null) }
+    val picker = rememberImagePicker { bytes -> receipt = bytes }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("تسليم لشركة الشحن") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("سيتم خصم المخزون وتسجيل قيد المبيعات والتكلفة.", style = MaterialTheme.typography.bodySmall)
                 if (order.paymentMethod == PaymentMethod.CASH_ON_DELIVERY) {
                     Text("المطلوب تحصيله: ${if (order.isForeign) order.inOrderCurrency(order.balanceDue) else Money.format(order.balanceDue)}", color = MaterialTheme.colorScheme.secondary)
                 }
+                if (carriers.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        carriers.forEach { c -> FilterChip(selected = carrier == c.name, onClick = { carrier = c.name }, label = { Text(c.name) }) }
+                    }
+                }
                 OutlinedTextField(value = carrier, onValueChange = { carrier = it }, label = { Text("شركة الشحن") }, singleLine = true)
                 OutlinedTextField(value = tracking, onValueChange = { tracking = it }, label = { Text("رقم التتبع (اختياري)") }, singleLine = true)
+                Text("صورة سند الشحن", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = picker.fromCamera) { Text("📷 تصوير") }
+                    OutlinedButton(onClick = picker.fromGallery) { Text("من المعرض") }
+                    if (receipt != null) Text("✓ أُرفقت", color = Success)
+                }
+                if (order.isAppOrder) Text("تُرسل صورة السند للعميل ويراها في تفاصيل طلبه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
         },
-        confirmButton = { TextButton(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim()) }, enabled = carrier.isNotBlank()) { Text("شحن") } },
+        confirmButton = { TextButton(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim(), receipt) }, enabled = carrier.isNotBlank()) { Text("شحن") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
+}
+
+/** Prints the parcel label: customer name, phone, address and the order number. */
+@Composable
+private fun ShippingLabelButton(o: AdminOrderDetail) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val container = adminContainer()
+    val settings by container.printers.settings.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var printing by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val a = o.shippingAddress
+    val office = o.carrierOffice
+    val address = if (o.deliveryMethod == "OFFICE" && office != null) {
+        "مكتب ${office.name} · ${office.governorate}${office.city?.let { "، $it" } ?: ""} · ${office.address}"
+    } else {
+        listOfNotNull(a.governorate, a.city, a.district, a.street, a.building?.let { "مبنى $it" }, a.landmark).joinToString("، ")
+    }
+    val collect = if (o.paymentMethod == PaymentMethod.CASH_ON_DELIVERY && !Money.isZero(o.balanceDue)) {
+        if (o.isForeign) o.inOrderCurrency(o.balanceDue) else Money.format(o.balanceDue)
+    } else {
+        null
+    }
+    OutlinedButton(
+        onClick = {
+            printing = true
+            scope.launch {
+                val label = com.dejavu.admin.print.ShippingLabel(o.number, a.recipient, a.phone, address, o.carrier?.name ?: a.carrier, collect)
+                status = com.dejavu.admin.print.Printers.printShippingLabel(context, settings, label).fold({ "طُبع ملصق الشحن ✓" }, { it.message ?: "تعذّرت الطباعة" })
+                printing = false
+            }
+        },
+        enabled = !printing,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text(if (printing) "جارٍ الطباعة…" else "🖨 طباعة ملصق الشحن") }
+    status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft) }
 }
 
 // ------------------------------------------------------------------ returns ---

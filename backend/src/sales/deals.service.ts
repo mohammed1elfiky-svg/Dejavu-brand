@@ -74,8 +74,8 @@ export class DealsService {
         isActive: dto.isActive ?? true,
         atPos: dto.atPos ?? true,
         online: dto.online ?? true,
-        maxPieces: dto.maxPieces ?? null,
-        maxCustomers: dto.maxCustomers ?? null,
+        maxPieces: dto.maxPieces || null,
+        maxCustomers: dto.maxCustomers || null,
         products: { create: [...new Set(dto.productIds)].map((productId) => ({ productId })) },
       },
     });
@@ -103,8 +103,8 @@ export class DealsService {
           isActive: dto.isActive,
           atPos: dto.atPos,
           online: dto.online,
-          maxPieces: dto.maxPieces,
-          maxCustomers: dto.maxCustomers,
+          maxPieces: dto.maxPieces === undefined ? undefined : dto.maxPieces || null,
+          maxCustomers: dto.maxCustomers === undefined ? undefined : dto.maxCustomers || null,
         },
       });
       if (dto.productIds) {

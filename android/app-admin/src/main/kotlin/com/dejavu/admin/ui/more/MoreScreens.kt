@@ -135,6 +135,8 @@ private const val SYSTEM = "النظام والإعدادات"
 private val sections = listOf(SALES, ORDERS, STOCK, PURCHASES, FINANCE, STORE, SYSTEM)
 
 private val menu = listOf(
+    MenuEntry(R.TODAY, "مهام اليوم", "كل ما ينتظر التنفيذ: شحن أرصدة، طلبات للشحن، حجوزات، هدايا، مرتجعات", Icons.Filled.CheckCircle, listOf(Perm.ORDERS_UPDATE, Perm.WALLET_MANAGE, "layaways.manage", Perm.RETURNS), SALES),
+    MenuEntry(R.GIFTS, "الهدايا", "هدايا الكاشير والهدايا الجماعية: تجهيزها وتسليمها", Icons.Filled.Favorite, listOf(Perm.ORDERS_READ), SALES),
     MenuEntry(R.POS_RETURNS, "مرتجعات واستبدال الكاشير", "إرجاع صنف مباع أو استبداله بمقاس/لون آخر مع تسوية الفارق", Icons.Filled.Refresh, listOf(Perm.POS_SELL), SALES),
     MenuEntry(R.SHIFT, "الوردية", "فتح وإقفال الوردية وعدّ النقد في الدرج", Icons.Filled.DateRange, listOf(Perm.POS_SELL), SALES, badge = { it.openShifts }),
     MenuEntry(R.PROMOTIONS, "العروض والخصومات", "خصم جماعي بنسبة مئوية على منتجات مختارة", Icons.Filled.Favorite, listOf(Perm.PRODUCTS_READ), SALES),
@@ -147,6 +149,10 @@ private val menu = listOf(
     MenuEntry(R.OFFERS, "المنتجات المعروضة بخصم", "كل المنتجات التي عليها عرض أو سعر مشطوب", Icons.Filled.Star, listOf(Perm.PRODUCTS_READ), SALES),
     MenuEntry(R.RETURNS, "المرتجعات", "طلبات الإرجاع والاسترداد", Icons.Filled.Refresh, listOf(Perm.RETURNS), ORDERS, badge = { it.returns }),
     MenuEntry(R.CUSTOMERS, "العملاء", "بيانات العملاء وأرصدتهم", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), ORDERS),
+    MenuEntry(R.CARTS, "سلات العملاء", "من أضاف أي منتجات وكمياتها في سلته", Icons.Filled.ShoppingCart, listOf(Perm.CUSTOMERS_READ), ORDERS),
+    MenuEntry(R.DORMANT, "العملاء الخاملون", "عملاء توقفوا عن الشراء وإرسال كود «وحشتنا»", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), ORDERS),
+    MenuEntry(R.INSTAGRAM, "توثيق يوزرات انستجرام", "مطابقة الكود الذي أرسله العميل من انستجرام", Icons.Filled.Star, listOf(Perm.CUSTOMERS_WRITE), ORDERS),
+    MenuEntry(R.BLOCKED, "الأرقام المحظورة", "منع أرقام من التسجيل نهائياً", Icons.Filled.Lock, listOf(Perm.CUSTOMERS_WRITE), ORDERS),
     MenuEntry(R.DEBTORS, "العملاء المدينون", "الديون المستحقة على العملاء وتذكيرهم برسالة", Icons.Filled.Face, listOf(Perm.CUSTOMERS_READ), ORDERS),
     MenuEntry(R.REVIEWS, "آراء العملاء", "مراجعة تقييمات المنتجات ونشرها أو إخفاؤها", Icons.Filled.Star, listOf(Perm.PRODUCTS_WRITE), ORDERS, badge = { it.reviews }),
     MenuEntry(R.TOP_UPS, "طلبات شحن حسابات العملاء", "سندات الإيداع والموافقة أو الرفض", Icons.Filled.Email, listOf(Perm.WALLET_MANAGE), ORDERS, badge = { it.topUps }),
@@ -165,6 +171,9 @@ private val menu = listOf(
     MenuEntry(R.CASH_BOXES, "الصناديق والخزائن", "صناديق الكاشير، الخزائن، البنوك والتحويل بينها", Icons.Filled.Lock, listOf(Perm.POS_SELL, Perm.CASHBOXES_MANAGE), FINANCE),
     MenuEntry(R.EXCHANGE, "صرف العملات", "شراء وبيع العملات بين الصناديق وأرباح فروق العملة", Icons.Filled.Refresh, listOf(Perm.CASHBOXES_MANAGE), FINANCE),
     MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE), FINANCE),
+    MenuEntry(R.CARRIERS, "شركات الشحن ومكاتبها", "الجوال القدسي وغيرها: المكاتب وعناوينها وأرقامها", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.LOYALTY, "نقاط الولاء", "تفعيل النقاط لكل العملاء أو التجار أو عملاء محددين", Icons.Filled.Star, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.SOCIAL, "السفراء ومنشورات العملاء", "مكافأة من يبيع منتجاتنا بصوره، وإخفاء المنشورات", Icons.Filled.Favorite, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.STORE_SETUP, "إعدادات تطبيق العملاء", "طرق الدفع والمحافظات والدفع عند الاستلام", Icons.Filled.Settings, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.CUSTOMER_APP, "صفحة المتجر والخوادم", "عن المتجر، تسجيل الدخول قبل التصفح، وعناوين الخادم", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.ASSISTANT, "مساعد الدردشة", "تعليمات البوت ورسالة الترحيب ومحادثات العملاء", Icons.Filled.Email, listOf("chat.manage"), STORE),

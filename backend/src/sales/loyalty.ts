@@ -35,10 +35,10 @@ export class LoyaltySettingsDto {
 }
 
 export class CustomerLoyaltyDto {
-  @ApiPropertyOptional({ description: 'true / false for this customer; null follows the store setting', nullable: true })
-  @ValidateIf((_, v) => v !== null)
+  @ApiPropertyOptional({ description: 'true / false for this customer; null or left out follows the store setting', nullable: true })
+  @IsOptional()
   @IsBoolean()
-  enabled: boolean | null;
+  enabled?: boolean | null;
 }
 
 export class AdjustPointsDto {
@@ -203,7 +203,7 @@ export class AdminLoyaltyController {
   @RequirePermissions('customers.write')
   @Patch('customers/:id/loyalty')
   setCustomer(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CustomerLoyaltyDto, @CurrentUser() u: AuthPrincipal) {
-    return this.loyalty.setCustomer(id, dto.enabled, u.id);
+    return this.loyalty.setCustomer(id, dto.enabled ?? null, u.id);
   }
 
   @RequirePermissions('customers.write')

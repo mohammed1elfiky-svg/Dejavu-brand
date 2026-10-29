@@ -77,7 +77,9 @@ class GiftViewModel(private val repo: WalletRepository) : BaseViewModel() {
     }
 }
 
-/** "إهداء رصيد": number, currency, amount, a note, and the password to confirm. */
+private val GIFT_USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
+
+/** "إهداء رصيد": number or username, currency, amount, a note, and the password to confirm. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.material3.SnackbarHostState, onSent: () -> Unit, onDismiss: () -> Unit) {
@@ -92,8 +94,10 @@ fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.
     var amount by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    val phoneOk = country.isValid(number)
-    val full = country.full(number)
+    var byUsername by rememberSaveable { mutableStateOf(false) }
+    var username by rememberSaveable { mutableStateOf("") }
+    val phoneOk = if (byUsername) GIFT_USERNAME.matches(username.trim()) else country.isValid(number)
+    val full = if (byUsername) username.trim().removePrefix("@") else country.full(number)
     LaunchedEffect(full, phoneOk) { if (phoneOk) vm.check(full) }
     val chosen = spendable.firstOrNull { it.currency.code == currencyCode }
     val amountValue = amount.toBigDecimalOrNull()
@@ -109,12 +113,28 @@ fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.
                     Text("لا يوجد رصيد متاح للإهداء.")
                     return@Column
                 }
-                PhoneField(country, number, null, onCountry = { country = it }, onNumber = { number = it }, enabled = !busy)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !byUsername, onClick = { byUsername = false }, label = { Text("برقم الجوال") }, colors = goldChipColors())
+                    FilterChip(selected = byUsername, onClick = { byUsername = true }, label = { Text("باليوزر") }, colors = goldChipColors())
+                }
+                if (byUsername) {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { v -> username = v.filter { !it.isWhitespace() }.take(30) },
+                        label = { Text("يوزر المستلم") },
+                        placeholder = { Text("مثل: sara.ali") },
+                        singleLine = true,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    PhoneField(country, number, null, onCountry = { country = it }, onNumber = { number = it }, enabled = !busy)
+                }
                 if (phoneOk) {
                     val r = recipient
                     Text(
                         when {
-                            r == null -> "جارٍ التحقق من الرقم…"
+                            r == null -> if (byUsername) "جارٍ التحقق من اليوزر…" else "جارٍ التحقق من الرقم…"
                             r.isSuccess -> "سيصل الرصيد إلى: ${r.getOrNull()}"
                             else -> r.exceptionOrNull()?.userMessage() ?: "الرقم غير مسجّل"
                         },

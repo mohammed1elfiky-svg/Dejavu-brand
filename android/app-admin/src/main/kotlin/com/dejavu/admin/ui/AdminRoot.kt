@@ -231,6 +231,16 @@ object R {
     const val WEEKLY = "weekly-summary"
     const val STORE_ORDER = "store-order"
     const val BANK_TRANSFERS = "bank-transfers"
+    const val TODAY = "today"
+    const val CARRIERS = "carriers"
+    const val LOYALTY = "loyalty"
+    const val CARTS = "carts"
+    const val BLOCKED = "blocked-phones"
+    const val INSTAGRAM = "instagram"
+    const val DORMANT = "dormant"
+    const val GIFTS = "gifts"
+    const val SOCIAL = "social"
+    const val STATEMENT = "statement/{id}"
     /** id "new" for a new employee. */
     const val STAFF_EDIT = "staff/{id}"
 
@@ -425,10 +435,20 @@ private fun AdminNavHost(session: StaffSession.LoggedIn) {
                 CustomersScreen(
                     back,
                     openCustomer = { open(R.CUSTOMER, it) },
-                    detailPane = { id, close -> CustomerDetailScreen(id, close, openOrder = { open(R.ORDER, it) }) },
+                    detailPane = { id, close -> CustomerDetailScreen(id, close, openOrder = { open(R.ORDER, it) }, openStatement = { open(R.STATEMENT, it) }) },
                 )
             }
-            page(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
+            page(R.CUSTOMER) { e -> CustomerDetailScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }, openStatement = { open(R.STATEMENT, it) }) }
+            page(R.TODAY) { com.dejavu.admin.ui.round9.TodayScreen(back, navigate = { nav.navigate(it) }) }
+            page(R.CARRIERS) { com.dejavu.admin.ui.round9.CarriersScreen(back) }
+            page(R.LOYALTY) { com.dejavu.admin.ui.round9.LoyaltySettingsScreen(back) }
+            page(R.CARTS) { com.dejavu.admin.ui.round9.CartsScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
+            page(R.BLOCKED) { com.dejavu.admin.ui.round9.BlockedPhonesScreen(back) }
+            page(R.INSTAGRAM) { com.dejavu.admin.ui.round9.InstagramScreen(back) }
+            page(R.DORMANT) { com.dejavu.admin.ui.round9.DormantCustomersScreen(back, openCustomer = { open(R.CUSTOMER, it) }) }
+            page(R.GIFTS) { com.dejavu.admin.ui.round9.GiftsScreen(back, openOrder = { open(R.ORDER, it) }) }
+            page(R.SOCIAL) { com.dejavu.admin.ui.round9.SocialAdminScreen(back) }
+            page(R.STATEMENT) { e -> com.dejavu.admin.ui.round9.StatementScreen(e.arguments?.getString("id").orEmpty(), back, openOrder = { open(R.ORDER, it) }) }
             page(R.MORE) { MoreScreen(session, navigate = { nav.navigate(it) }) }
             page(R.SERVER) { ServerScreen(back) }
             page(R.CURRENCY) { CurrencyScreen(session, back) }

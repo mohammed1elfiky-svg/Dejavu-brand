@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
@@ -137,6 +138,10 @@ fun AccountScreen(
     about: () -> Unit = {},
     chat: () -> Unit = {},
     preOrders: () -> Unit = {},
+    profile: () -> Unit = {},
+    loyalty: () -> Unit = {},
+    gifts: () -> Unit = {},
+    groupGifts: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
@@ -168,6 +173,9 @@ fun AccountScreen(
                         }
                         s.customer?.let { c ->
                             if (c.loyaltyPoints > 0) GoldBadge("نقاط الولاء: ${c.loyaltyPoints}", Modifier.padding(top = 10.dp))
+                            if (c.igStatus == "PENDING") {
+                                TextButton(onClick = profile) { Text("📷 وثّق يوزرك في انستجرام: أرسل الكود ${c.igCode.orEmpty()}", color = Liquid.GoldDeep) }
+                            }
                             if (c.isMerchant) {
                                 Row(
                                     Modifier.padding(top = 10.dp, bottom = 4.dp),
@@ -190,6 +198,7 @@ fun AccountScreen(
                         }
                     }
                     MenuHeader("حسابي")
+                    MenuRow(Icons.Filled.Person, "ملفي الشخصي واليوزر", profile)
                     MenuRow(Icons.AutoMirrored.Filled.List, "طلباتي", orders)
                     MenuRow(Icons.Filled.AccountBox, "المحفظة / رصيدي", wallet)
                     MenuRow(Icons.Filled.LocationOn, "عناويني", addresses)
@@ -197,6 +206,9 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Notifications, "تنبيهات التوفر", stockAlerts)
                     MenuRow(Icons.Filled.Favorite, "المفضلة", wishlist)
                     MenuRow(Icons.Filled.DateRange, "حجوزاتي المسبقة", preOrders)
+                    MenuRow(Icons.Filled.Star, "نقاطي", loyalty)
+                    MenuRow(Icons.Filled.Favorite, "هداياي", gifts)
+                    MenuRow(Icons.Filled.Favorite, "الهدايا الجماعية", groupGifts)
                     MenuHeader("المتجر")
                     if (config.chat.enabled) MenuRow(Icons.Filled.Face, "مساعد التسوق", chat)
                     MenuRow(Icons.Filled.Info, "عن المتجر", about)

@@ -302,10 +302,28 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
                 }
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
-                        Text("التوصيل إلى", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                         val a = order.shippingAddress
-                        Text("${a.recipient} · ${a.phone}", style = MaterialTheme.typography.bodyMedium)
-                        Text(listOfNotNull(a.street, a.district, a.city, a.governorate).joinToString("، "), style = MaterialTheme.typography.bodySmall)
+                        val office = order.carrierOffice
+                        when (order.deliveryMethod) {
+                            com.dejavu.core.model.DeliveryMethods.PICKUP -> {
+                                Text("الاستلام من المحل", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                Text("نبلغك عندما يجهز طلبك للاستلام", style = MaterialTheme.typography.bodySmall)
+                            }
+                            com.dejavu.core.model.DeliveryMethods.OFFICE -> {
+                                Text("الاستلام من مكتب ${order.carrier?.name ?: "شركة الشحن"}", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                if (office != null) {
+                                    Text("${office.name} · ${office.governorate}${office.city?.let { "، $it" } ?: ""}", style = MaterialTheme.typography.bodyMedium)
+                                    Text(office.address, style = MaterialTheme.typography.bodySmall)
+                                    if (office.phones.isNotEmpty()) Text("📞 ${office.phones.joinToString(" / ")}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            else -> {
+                                Text("التوصيل إلى", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                                Text("${a.recipient} · ${a.phone}", style = MaterialTheme.typography.bodyMedium)
+                                Text(listOfNotNull(a.street, a.district, a.city, a.governorate).joinToString("، "), style = MaterialTheme.typography.bodySmall)
+                                order.carrier?.let { Text("مع ${it.name}", style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
                     }
                 }
                 order.cancelReason?.let { item { Text("سبب الإلغاء: $it", color = MaterialTheme.colorScheme.error) } }

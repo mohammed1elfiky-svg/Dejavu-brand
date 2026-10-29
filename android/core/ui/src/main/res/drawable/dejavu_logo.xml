@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The DEJAVU logo of ic_launcher_foreground, cropped to the artwork for the in-app splash. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="120dp"
+    android:viewportWidth="480"
+    android:viewportHeight="240">
+    <group
+        android:translateX="-244.5"
+        android:translateY="-495.5">
+        <path
+            android:pathData="M272,522 H400 A37,37 0 0 1 400,596 H272 M472,522 H566 M472,559 H546 M472,596 H566 M291,635 V690 A19,19 0 0 1 272,709 M328,709 L372,642 Q383,627 394,642 L437,709 M454,635 L498,702 Q509,717 520,702 L563,635 M600,635 V680 A29,29 0 0 0 629,709 H668 A29,29 0 0 0 697,680 V635"
+            android:strokeColor="#FFB8862B"
+            android:strokeWidth="16"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

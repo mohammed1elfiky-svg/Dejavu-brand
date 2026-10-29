@@ -280,6 +280,13 @@ private fun DealCard(d: Deal, enabled: Boolean, onClick: () -> Unit, onToggle: (
         )
         val where = listOfNotNull(if (d.atPos) "الكاشير" else null, if (d.online) "التطبيق" else null).joinToString(" · ").ifBlank { "غير معروض في أي مكان" }
         Text("يُطبَّق في: $where", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+        val limits = listOfNotNull(
+            d.maxPieces?.let { "القطع ${d.usedPieces}/$it" },
+            d.maxCustomers?.let { "العملاء ${d.usedCustomers}/$it" },
+        )
+        if (limits.isNotEmpty()) {
+            Text("لأول المشترين: ${limits.joinToString(" · ")}${if (d.exhausted) " · نفد العرض" else ""}", style = MaterialTheme.typography.bodySmall, color = if (d.exhausted) MaterialTheme.colorScheme.error else Lux.GoldDeep)
+        }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val now = Instant.now()
             when {
@@ -317,6 +324,9 @@ data class DealForm(
     val atPos: Boolean = true,
     val online: Boolean = true,
     val products: List<DealPick> = emptyList(),
+    /** "" = no limit. */
+    val maxPieces: String = "",
+    val maxCustomers: String = "",
 )
 
 private fun suggestedName(f: DealForm): String = if (f.type == BUNDLE) {
@@ -345,6 +355,8 @@ private fun Deal.toForm() = DealForm(
     atPos = atPos,
     online = online,
     products = products.map { DealPick(it.id, it.nameAr, it.basePrice, it.imageUrl) },
+    maxPieces = maxPieces?.toString().orEmpty(),
+    maxCustomers = maxCustomers?.toString().orEmpty(),
 )
 
 class DealEditViewModel(
@@ -447,6 +459,9 @@ class DealEditViewModel(
             atPos = f.atPos,
             online = f.online,
             productIds = f.products.map { it.id },
+            // 0 = no limit.
+            maxPieces = f.maxPieces.toIntOrNull() ?: 0,
+            maxCustomers = f.maxCustomers.toIntOrNull() ?: 0,
         )
         viewModelScope.launch {
             try {
@@ -550,6 +565,28 @@ fun DealEditScreen(id: String?, onBack: () -> Unit) {
                         SwitchRow("تطبيق العملاء", form.online) { v -> vm.edit { it.copy(online = v) } }
                         HorizontalDivider(Modifier.padding(vertical = 4.dp))
                         SwitchRow("فعّال", form.isActive) { v -> vm.edit { it.copy(isActive = v) } }
+                    }
+                }
+                item {
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("لأول المشترين فقط (اختياري)", style = MaterialTheme.typography.titleSmall)
+                        Text("الأسبقية لمن يطلب أولاً؛ يتوقف العرض تلقائياً عند الوصول للعدد. اتركه فارغاً بدون حد.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                        com.dejavu.core.ui.theme.OutlinedTextField(
+                            value = form.maxPieces,
+                            onValueChange = { v -> vm.edit { it.copy(maxPieces = v.filter(Char::isDigit).take(6)) } },
+                            label = { Text("أول عدد من القطع") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        com.dejavu.core.ui.theme.OutlinedTextField(
+                            value = form.maxCustomers,
+                            onValueChange = { v -> vm.edit { it.copy(maxCustomers = v.filter(Char::isDigit).take(6)) } },
+                            label = { Text("أول عدد من العملاء") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
                 item {

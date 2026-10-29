@@ -146,6 +146,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import java.math.BigDecimal
 import android.graphics.Color as AndroidColor
 import java.math.RoundingMode
@@ -1350,7 +1351,7 @@ class CustomerDetailViewModel(private val id: String, private val repo: FinanceR
 }
 
 @Composable
-fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> Unit) {
+fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> Unit, openStatement: ((String) -> Unit)? = null) {
     val vm = adminViewModel(key = "customer:$id") { CustomerDetailViewModel(id, it.finance) }
     val state by vm.state.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
@@ -1414,6 +1415,18 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                 }
                 if (canEdit) {
                     item(key = "access:${c.status}") { CustomerAccessCard(c, onChanged = vm::load) }
+                }
+                item(key = "extras:${c.status}") {
+                    val scope = rememberCoroutineScope()
+                    com.dejavu.admin.ui.round9.CustomerExtrasCard(
+                        customerId = c.id,
+                        blocked = c.status == "BLOCKED",
+                        openStatement = { openStatement?.invoke(c.id) },
+                        onChanged = { message ->
+                            vm.load()
+                            scope.launch { snackbar.showSnackbar(message) }
+                        },
+                    )
                 }
                 if (canEdit || c.isMerchant) {
                     item(key = "merchant:${c.isMerchant}:${c.merchantDiscount}:${c.creditLimit}") {

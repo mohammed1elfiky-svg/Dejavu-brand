@@ -339,6 +339,16 @@ fun ProductScreen(
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
     CollectMessages(reviewsVm, snackbar)
+    var groupGiftFor by remember { mutableStateOf<String?>(null) }
+    val sessionState by container.session.state.collectAsStateWithLifecycle()
+    val signedIn = sessionState is com.dejavu.core.data.SessionState.LoggedIn
+    val giftScope = rememberCoroutineScope()
+    groupGiftFor?.let { variantId ->
+        com.dejavu.customer.ui.members.StartGroupGiftDialog(variantId, onDismiss = { groupGiftFor = null }) { message ->
+            groupGiftFor = null
+            giftScope.launch { snackbar.showSnackbar(message) }
+        }
+    }
 
     // Add-to-cart flow: the picture flies to the floating cart, the cart bumps, a card confirms.
     val cart by container.cart.cart.collectAsStateWithLifecycle()
@@ -477,6 +487,9 @@ fun ProductScreen(
                                     Spacer(Modifier.width(6.dp))
                                     Text("اسأل المساعد")
                                 }
+                            }
+                            if (variant != null && variant.inStock && signedIn) {
+                                OutlinedButton(onClick = { groupGiftFor = variant.id }) { Text("🎁 هدية جماعية مع صديقاتك") }
                             }
                         }
                     }

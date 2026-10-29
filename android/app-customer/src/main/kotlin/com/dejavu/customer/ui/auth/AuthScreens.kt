@@ -101,10 +101,16 @@ data class AuthForm(
     val pendingLogin: Boolean = false,
     /** How the code reaches the customer: SMS (default) or WHATSAPP (asked for from the store). */
     val otpChannel: String = "SMS",
+    /** Sign-up only: optional username (Instagram style), and whether it is their Instagram account. */
+    val username: String = "",
+    val usernameIsInstagram: Boolean = false,
     val submitted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 )
+
+/** Two English letters, then letters, digits, "." or "_" (like Instagram). */
+private val USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
 
 /** The number as the server takes it (+967…, +966…). */
 val AuthForm.full: String get() = country.full(phone)
@@ -188,6 +194,9 @@ class AuthViewModel(
         Validators.password(f.password)?.let { put("password", it) }
         if (registering) {
             Validators.name(f.name)?.let { put("name", it) }
+            if (f.username.isNotBlank() && !USERNAME.matches(f.username.trim())) {
+                put("username", "اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _")
+            }
             // Only Yemeni customers pick their governorate.
             if (f.country == Country.YE) {
                 if (f.governorate == null) put("governorate", "اختر المحافظة")
@@ -338,6 +347,8 @@ class AuthViewModel(
             governorate = f.governorate.takeIf { yemen },
             area = f.area.takeIf { yemen },
             otpChannel = f.otpChannel,
+            username = f.username.takeIf { it.isNotBlank() },
+            usernameIsInstagram = f.usernameIsInstagram,
         )
             .onSuccess { r ->
                 val c = r.customer
@@ -441,6 +452,26 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                     PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
                     Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
                     if (registering) {
+                        Input("اسم المستخدم (اختياري)", form.username, errors["username"], placeholder = "مثل: sara.ali") { v ->
+                            vm.update { copy(username = v.filter { c -> !c.isWhitespace() }.take(30)) }
+                        }
+                        if (form.username.isNotBlank()) {
+                            Row(
+                                Modifier.fillMaxWidth().toggleable(value = form.usernameIsInstagram, role = Role.Checkbox, onValueChange = { c -> vm.update { copy(usernameIsInstagram = c) } }),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = form.usernameIsInstagram, onCheckedChange = null, colors = CheckboxDefaults.colors(checkedColor = Liquid.GoldDeep))
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text("هذا يوزري في انستجرام", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "يصلك كود من 4 أرقام ترسله لحساب ديجافو في انستجرام، فيظهر بجانب اسمك شعار انستجرام ونجمة التوثيق. حسابك يعمل عادي حتى يتم التوثيق.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                         if (form.country == Country.YE) RegionFields(vm, form, errors)
                         CodeChannel(form) { c -> vm.update { copy(otpChannel = c) } }
                     }

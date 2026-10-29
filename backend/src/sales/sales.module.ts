@@ -1,3 +1,4 @@
+import { AdminTodayController, TodayService } from './today';
 import { AdminCustomerAccessController, CustomerAccessService } from './customer-access';
 import { AdminPreOrdersController, StorePreOrdersController } from './preorders.controller';
 import { PreOrdersService } from './preorders.service';
@@ -7,6 +8,9 @@ import { AdminGiftCardsController, AdminLayawaysController, StoreGiftCardsContro
 import { GiftCardsService } from './gift-cards.service';
 import { LayawayService } from './layaway.service';
 import { Module } from '@nestjs/common';
+import { AdminCustomerToolsController, CustomerAdminService } from './customer-admin';
+import { AdminLoyaltyController, LoyaltyService, StoreLoyaltyController } from './loyalty';
+import { AdminCarriersController, CarriersService, StoreCarriersController } from './carriers';
 import { InventoryModule } from '../inventory/inventory.module';
 import {
   AdminCourierSettlementsController,
@@ -42,6 +46,12 @@ import { StoreSettingsService } from './store-settings.service';
 @Module({
   imports: [InventoryModule],
   controllers: [
+    AdminTodayController,
+    AdminCustomerToolsController,
+    AdminLoyaltyController,
+    StoreLoyaltyController,
+    AdminCarriersController,
+    StoreCarriersController,
     AdminCustomerAccessController,
     StoreShippingController,
     StoreAddressesController,
@@ -66,6 +76,12 @@ import { StoreSettingsService } from './store-settings.service';
     StorePreOrdersController,
     AdminPreOrdersController,
   ],
-  providers: [CustomerAccessService, CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService, DealsService, PreOrdersService],
+  providers: [
+    TodayService,
+    CarriersService,
+    CustomerAdminService,
+    LoyaltyService,
+    CustomerAccessService, CartService, CourierSettlementsService, CustomersService, OnlinePaymentsService, OrdersService, PaymentsService, PosService, ReturnsService, ShiftService, EngagementService, StoreSettingsService, LayawayService, GiftCardsService, DealsService, PreOrdersService],
+  exports: [OrdersService, PosService, CartService, LoyaltyService, CarriersService],
 })
 export class SalesModule {}

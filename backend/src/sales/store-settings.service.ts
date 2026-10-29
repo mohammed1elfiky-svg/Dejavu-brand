@@ -62,9 +62,10 @@ export class StoreSettingsService {
   }
 
   /** Refuses a payment method that is switched off, or cash on delivery where it isn't offered. */
-  async assertMethod(tx: Tx, method: PaymentMethod, governorate: string) {
+  /** [governorate] null: picked up from the store (cash on delivery = paying at the store). */
+  async assertMethod(tx: Tx, method: PaymentMethod, governorate: string | null) {
     if (!(await this.enabledMethods(tx)).includes(method)) throw new UnprocessableEntityException('This payment method is not available');
-    if (method === PaymentMethod.CASH_ON_DELIVERY && !(await this.zoneOf(tx, governorate)).codEnabled) {
+    if (method === PaymentMethod.CASH_ON_DELIVERY && governorate && !(await this.zoneOf(tx, governorate)).codEnabled) {
       throw new UnprocessableEntityException(`Cash on delivery is not available in ${governorate}`);
     }
   }

@@ -25,6 +25,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
+import { SocialModule } from './social/social.module';
 import { SmsModule } from './sms/sms.module';
 import { SystemModule } from './system/system.module';
 import { HomeModule } from './home/home.module';
@@ -46,6 +47,7 @@ import { UsersModule } from './users/users.module';
     FilesModule,
     TreasuryModule,
     CatalogModule,
+    SocialModule,
     InventoryModule,
     SalesModule,
     PurchasingModule,

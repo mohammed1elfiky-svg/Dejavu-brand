@@ -1,7 +1,8 @@
 import { activeDeals } from './deals.db';
 import { AppliedDeal, applyDeals } from './deals';
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { Coupon, ProductStatus } from '../generated/prisma/client';
+import { Coupon, DeliveryMethod, ProductStatus } from '../generated/prisma/client';
+
 import { checkCoupon, liveCoupons } from './coupons';
 import { dec } from '../common/utils/money';
 import { PrismaService, Tx } from '../prisma/prisma.service';
@@ -10,6 +11,11 @@ import { priceOrder, PricingResult } from './pricing';
 import { activePromotions, buyerPrice } from '../catalog/promotions';
 import { storeVisibility } from '../catalog/catalog.service';
 import { getSetting } from './settings';
+
+export interface DeliveryChoice {
+  deliveryMethod?: DeliveryMethod;
+  carrierOfficeId?: string;
+}
 
 const MAX_LINE_QTY = 20;
 
@@ -61,6 +67,8 @@ export interface QuoteLine {
   availableQty: number;
   avgCost: string;
   problem?: string;
+  /** Added from this customer post (ambassador reward). */
+  viaPostId: string | null;
 }
 
 export interface Quote {
@@ -100,10 +108,16 @@ export class CartService {
     const quantity = (existing?.quantity ?? 0) + dto.quantity;
     if (quantity > MAX_LINE_QTY) throw new BadRequestException(`At most ${MAX_LINE_QTY} pieces per item`);
 
+    // From a post: the post's author earns the ambassador reward (never for their own post).
+    let viaPostId: string | undefined;
+    if (dto.viaPostId) {
+      const post = await this.prisma.post.findUnique({ where: { id: dto.viaPostId }, select: { authorId: true, isHidden: true } });
+      if (post && !post.isHidden && post.authorId !== customerId) viaPostId = dto.viaPostId;
+    }
     await this.prisma.cartItem.upsert({
       where: { cartId_variantId: { cartId: cart.id, variantId: dto.variantId } },
-      update: { quantity },
-      create: { cartId: cart.id, variantId: dto.variantId, quantity },
+      update: { quantity, ...(viaPostId && { viaPostId }) },
+      create: { cartId: cart.id, variantId: dto.variantId, quantity, viaPostId },
     });
   }
 
@@ -127,7 +141,11 @@ export class CartService {
     await this.prisma.cart.update({ where: { id: cart.id }, data: { couponCode: code } });
   }
 
-  async quote(tx: Tx, customerId: string, addressId?: string): Promise<Quote> {
+  /**
+   * [delivery]: PICKUP costs no shipping; OFFICE ships to the office's governorate; HOME (the
+   * default) to [addressId].
+   */
+  async quote(tx: Tx, customerId: string, addressId?: string, delivery: DeliveryChoice = {}): Promise<Quote> {
     const cart = await tx.cart.findUnique({ where: { customerId }, include: cartInclude });
     const items = cart?.items ?? [];
     const problems: string[] = [];
@@ -156,22 +174,33 @@ export class CartService {
         availableQty: Math.max(availableQty, 0),
         avgCost: v.avgCost.toString(),
         problem,
+        viaPostId: item.viaPostId,
       };
     });
 
     // Shipping
     let shipping: Quote['shipping'] = null;
     let shippingProblem: string | undefined;
-    if (addressId) {
+    let governorate: string | null = null;
+    if (delivery.deliveryMethod === DeliveryMethod.PICKUP) {
+      shipping = { governorate: '', fee: '0', estimatedDays: 0 };
+    } else if (delivery.deliveryMethod === DeliveryMethod.OFFICE && delivery.carrierOfficeId) {
+      const office = await tx.carrierOffice.findUnique({ where: { id: delivery.carrierOfficeId }, include: { carrier: { select: { isActive: true } } } });
+      if (!office || !office.isActive || !office.carrier.isActive) throw new NotFoundException('Shipping office not found');
+      governorate = office.governorate;
+    } else if (addressId) {
       const address = await tx.customerAddress.findFirst({ where: { id: addressId, customerId } });
       if (!address) throw new NotFoundException('Address not found');
+      governorate = address.governorate;
+    }
+    if (governorate) {
       // Every governorate is delivered to unless switched off. By default the customer pays the
       // courier for shipping, so the fee is not added to the order (store.chargeShipping).
-      const zone = await tx.shippingZone.findUnique({ where: { governorate: address.governorate } });
+      const zone = await tx.shippingZone.findUnique({ where: { governorate } });
       const charge = await getSetting(tx, 'store.chargeShipping', false);
-      if (zone && !zone.isActive) shippingProblem = `Delivery to ${address.governorate} is not available yet`;
-      else if (charge && !zone) shippingProblem = `Delivery to ${address.governorate} is not available yet`;
-      else shipping = { governorate: address.governorate, fee: charge && zone ? zone.fee.toString() : '0', estimatedDays: zone?.estimatedDays ?? 3 };
+      if (zone && !zone.isActive) shippingProblem = `Delivery to ${governorate} is not available yet`;
+      else if (charge && !zone) shippingProblem = `Delivery to ${governorate} is not available yet`;
+      else shipping = { governorate, fee: charge && zone ? zone.fee.toString() : '0', estimatedDays: zone?.estimatedDays ?? 3 };
     }
     if (shippingProblem) problems.push(shippingProblem);
 
@@ -186,7 +215,7 @@ export class CartService {
     }));
 
     // Quantity offers (not for merchants, who already pay wholesale prices).
-    const deals = buyer?.isMerchant ? [] : await activeDeals(tx, items.map((i) => i.variant.product.id), 'online');
+    const deals = buyer?.isMerchant ? [] : await activeDeals(tx, items.map((i) => i.variant.product.id), 'online', new Date(), customerId);
     const offers = applyDeals(
       items.map((item, i) => ({ productId: item.variant.product.id, quantity: item.quantity, unitPrice: pricingLines[i].unitPrice })),
       deals,
@@ -209,8 +238,8 @@ export class CartService {
     return { lines, pricing, coupon, couponCode, couponProblem, shipping, shippingProblem, problems, deals: offers.applied };
   }
 
-  async view(customerId: string, addressId?: string) {
-    const q = await this.quote(this.prisma, customerId, addressId);
+  async view(customerId: string, addressId?: string, delivery: DeliveryChoice = {}) {
+    const q = await this.quote(this.prisma, customerId, addressId, delivery);
     return {
       items: q.lines.map(({ avgCost: _cost, ...l }, i) => ({
         ...l,
@@ -221,7 +250,7 @@ export class CartService {
       couponCode: q.couponCode,
       couponProblem: q.couponProblem ?? null,
       /** Whether any coupon can be used now: the app shows the code field only then. */
-      couponsAvailable: (await liveCoupons(this.prisma)) > 0,
+      couponsAvailable: (await liveCoupons(this.prisma, customerId)) > 0,
       deals: q.deals,
       shipping: q.shipping,
       shippingProblem: q.shippingProblem ?? null,

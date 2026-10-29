@@ -81,6 +81,17 @@ export class FilesController {
     return { ...saved, url: fileUrl(requestBaseUrl(req), saved.id) };
   }
 
+  /** A public photo from the customer app: profile picture or a post's photo. */
+  @CustomerOnly()
+  @Post('store/me/images')
+  @UseInterceptors(upload)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody(uploadDoc)
+  async customerPublicUpload(@UploadedFile() file: UploadedPart, @CurrentUser() u: AuthPrincipal, @Req() req: Request) {
+    const saved = await this.files.saveImage(file, { customerId: u.id, isPublic: true });
+    return { ...saved, url: fileUrl(requestBaseUrl(req), saved.id) };
+  }
+
   @Public()
   @Get('files/:id')
   async publicFile(@Param('id', ParseUUIDPipe) id: string, @Req() req: Request, @Res() res: Response) {

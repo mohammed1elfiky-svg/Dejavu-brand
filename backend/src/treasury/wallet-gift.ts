@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Injec
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { normalizePhone, PHONE_REGEX } from '../auth/dto/auth.dto';
+import { isUsername, normalizeUsername } from '../common/username';
 import { verifyPassword } from '../auth/password';
 import { AuditService } from '../common/audit.service';
 import { CurrencyService, formatIn, inCurrency } from '../common/currency.service';
@@ -12,8 +13,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CustomerAccountsService } from './customer-accounts.service';
 
 export class WalletGiftDto {
-  @ApiProperty({ example: '777123456', description: "The receiver's mobile number" })
-  @Matches(PHONE_REGEX, { message: 'رقم الجوال غير صحيح' })
+  @ApiProperty({ example: '777123456', description: "The receiver's mobile number, or their username (@sara.ali)" })
+  @IsString()
+  @MaxLength(40)
   phone: string;
 
   @ApiProperty({ example: 'YER' })
@@ -54,18 +56,23 @@ export class WalletGiftService {
     private readonly audit: AuditService,
   ) {}
 
-  private async receiver(rawPhone: string, senderId: string) {
-    const phone = normalizePhone(rawPhone.replace(/[\s-]/g, ''));
-    const to = await this.prisma.customer.findUnique({ where: { phone }, select: { id: true, name: true, status: true, code: true } });
-    if (!to || to.status !== CustomerStatus.ACTIVE || to.code === 'CUS-WALKIN') throw new NotFoundException('لا يوجد عميل مسجّل بهذا الرقم');
+  /** [who]: a mobile number or a username (with or without @). */
+  private async receiver(who: string, senderId: string) {
+    const raw = who.trim();
+    const byName = /^@?[A-Za-z]/.test(raw);
+    if (byName ? !isUsername(raw) : !PHONE_REGEX.test(raw.replace(/[\s-]/g, ''))) throw new BadRequestException(byName ? 'اليوزر غير صحيح' : 'رقم الجوال غير صحيح');
+    const select = { id: true, name: true, status: true, code: true } as const;
+    const to = byName
+      ? await this.prisma.customer.findUnique({ where: { username: normalizeUsername(raw) }, select })
+      : await this.prisma.customer.findUnique({ where: { phone: normalizePhone(raw.replace(/[\s-]/g, '')) }, select });
+    if (!to || to.status !== CustomerStatus.ACTIVE || to.code === 'CUS-WALKIN') throw new NotFoundException(byName ? 'لا يوجد عميل بهذا اليوزر' : 'لا يوجد عميل مسجّل بهذا الرقم');
     if (to.id === senderId) throw new BadRequestException('لا يمكنك الإهداء لنفسك');
     return to;
   }
 
   /** Who gets the gift (masked name), before the sender confirms. */
   async recipient(senderId: string, phone: string) {
-    if (!PHONE_REGEX.test(phone.replace(/[\s-]/g, ''))) throw new BadRequestException('رقم الجوال غير صحيح');
-    const to = await this.receiver(phone, senderId);
+    const to = await this.receiver(phone ?? '', senderId);
     return { name: maskName(to.name) };
   }
 

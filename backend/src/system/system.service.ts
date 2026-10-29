@@ -21,11 +21,13 @@ const BUSINESS_TABLES = [
   'expenses', 'wallet_top_ups', 'stored_files', 'notifications', 'audit_logs', 'customer_addresses',
   'stock_alerts', 'cashier_shift_lines', 'cashier_shifts', 'outgoing_sms', 'phone_otps', 'document_sequences',
   'chat_messages', 'app_sessions', 'product_views', 'search_logs', 'campaigns', 'gift_cards', 'layaway_payments', 'layaways',
-  'stock_damages', 'owner_alerts', 'deal_products', 'deals', 'pre_orders',
+  'stock_damages', 'owner_alerts', 'deal_products', 'deal_usages', 'deals', 'pre_orders', 'bank_transfers', 'loyalty_entries',
+  'ambassador_rewards', 'group_gift_contributions', 'group_gifts', 'gifts', 'post_tags', 'post_likes', 'post_comments',
+  'post_mentions', 'posts', 'follows', 'blocked_phones',
 ];
 
 /** People and their numbering stay when only operations are wiped. */
-const PEOPLE_TABLES = new Set(['customer_addresses', 'suppliers', 'document_sequences']);
+const PEOPLE_TABLES = new Set(['customer_addresses', 'suppliers', 'document_sequences', 'posts', 'post_likes', 'post_comments', 'post_mentions', 'follows', 'blocked_phones']);
 
 class DryRun extends Error {}
 

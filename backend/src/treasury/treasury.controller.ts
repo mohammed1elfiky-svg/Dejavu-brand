@@ -139,6 +139,13 @@ export class AdminCustomerAccountController {
     return { balances: await this.accounts.balances(id), entries: await this.accounts.statement(id, q) };
   }
 
+  /** Statement for printing: per currency, invoice numbers and pieces, running balance. */
+  @RequirePermissions('customers.read')
+  @Get('statement')
+  statement(@Param('id', ParseUUIDPipe) id: string, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.accounts.fullStatement(id, { from: from ? new Date(from) : undefined, to: to ? new Date(new Date(to).getTime() + 86_400_000) : undefined });
+  }
+
   /** Money taken from the customer at the till: pays off debt, any excess becomes credit. */
   /** Converts part of the customer's balance into another currency. */
   @RequirePermissions('customers.write', 'payments.record')
@@ -284,6 +291,12 @@ export class StoreWalletController {
   @Get()
   get(@CurrentUser() u: AuthPrincipal) {
     return this.accounts.wallet(u.id);
+  }
+
+  /** Every movement per currency with its invoice number, to look each one up. */
+  @Get('statement')
+  statement(@CurrentUser() u: AuthPrincipal) {
+    return this.accounts.fullStatement(u.id);
   }
 
   @Get('top-ups')

@@ -33,6 +33,9 @@ export interface WeeklyStats {
  * The owner's helpers on Gemini: a product draft from a photo, wording for campaigns and a
  * weekly summary of the business with suggestions.
  */
+const PRODUCT_PROMPT_KEY = 'ai.productPrompt';
+const DEFAULT_PRODUCT_PROMPT = 'أنت تساعد متجر ديجافو للأحذية والشنط النسائية في إدخال المنتجات. أجب بالعربية.';
+
 @Injectable()
 export class AiService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger('AI');
@@ -76,8 +79,23 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
   // ------------------------------------------------------- product draft ---
 
+  /** The owner's own words for drafting products (style, what to mention); the JSON shape stays fixed. */
+  async productPrompt() {
+    const row = await this.prisma.setting.findUnique({ where: { key: PRODUCT_PROMPT_KEY } });
+    const saved = (row?.value as { prompt?: string } | null)?.prompt;
+    return { prompt: saved ?? DEFAULT_PRODUCT_PROMPT, isDefault: !saved, defaultPrompt: DEFAULT_PRODUCT_PROMPT };
+  }
+
+  /** "" restores the default. */
+  async setProductPrompt(prompt: string) {
+    const value = prompt.trim();
+    if (!value) await this.prisma.setting.deleteMany({ where: { key: PRODUCT_PROMPT_KEY } });
+    else await this.prisma.setting.upsert({ where: { key: PRODUCT_PROMPT_KEY }, update: { value: { prompt: value } }, create: { key: PRODUCT_PROMPT_KEY, value: { prompt: value } } });
+    return this.productPrompt();
+  }
+
   /** Name, description, category, brand and colour suggested from a product photo. */
-  async productDraft(imageFileId: string) {
+  async productDraft(imageFileId: string, prompt?: string) {
     this.requireKey();
     const file = await this.prisma.storedFile.findUnique({ where: { id: imageFileId }, select: { mimeType: true, data: true } });
     if (!file || !file.mimeType.startsWith('image/')) throw new NotFoundException('Image not found');
@@ -85,7 +103,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       this.prisma.category.findMany({ where: { isActive: true }, select: { id: true, nameAr: true } }),
       this.prisma.brand.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
     ]);
-    const system = `أنت تساعد متجر ديجافو للأحذية والشنط النسائية في إدخال المنتجات. أجب بالعربية وبصيغة JSON فقط.`;
+    const system = `${prompt?.trim() || (await this.productPrompt()).prompt}\nأجب بصيغة JSON فقط.`;
     const ask = `صف المنتج في الصورة وأعد JSON بهذا الشكل:
 {"nameAr": "اسم قصير وجذاب (3-6 كلمات)", "descriptionAr": "وصف تسويقي من جملتين أو ثلاث: الخامة، الشكل، المناسبات", "categoryId": "من القائمة أو null", "brandId": "من القائمة إن ظهر الشعار أو null", "color": "اللون بالعربي", "colorHex": "#RRGGBB", "kind": "نوع المنتج مثل كعب، صندل، شنطة يد", "heelHeightCm": "رقم أو null", "tags": ["كلمات بحث"]}
 الأقسام: ${JSON.stringify(categories)}

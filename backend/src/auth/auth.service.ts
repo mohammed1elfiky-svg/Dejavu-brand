@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SmsService } from '../sms/sms.service';
-import { CustomerStatus, UserStatus } from '../generated/prisma/client';
+import { CustomerStatus, InstagramStatus, UserStatus } from '../generated/prisma/client';
 import { AuditService } from '../common/audit.service';
 import { AuthPrincipal } from '../common/decorators/auth.decorators';
 import { SequenceService } from '../common/sequence.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, PasswordResetDto, PHONE_REGEX, StaffLoginDto } from './dto/auth.dto';
 import { hashPassword, verifyPassword } from './password';
+import { instagramCode, normalizeUsername, USERNAME_REGEX } from '../common/username';
 import { TokenService } from './token.service';
 
 const INVALID_CREDENTIALS = 'Invalid credentials';
@@ -97,6 +98,13 @@ export class AuthService {
     }
 
     if (dto.governorate === 'تعز' && !dto.area) throw new BadRequestException('Choose الحوبان or المدينة for Taiz');
+    await this.assertNotBlocked(phone);
+    const username = dto.username ? normalizeUsername(dto.username) : null;
+    if (username) {
+      if (!USERNAME_REGEX.test(username)) throw new BadRequestException('اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _');
+      const taken = await this.prisma.customer.findFirst({ where: { username, id: { not: pending?.id } }, select: { id: true } });
+      if (taken) throw new ConflictException({ statusCode: 409, code: 'USERNAME_TAKEN', message: 'اليوزر مستخدم، اختر يوزراً آخر' });
+    }
     const otpRequired = await this.sms.otpRequired();
     const passwordHash = await hashPassword(dto.password);
     const details = {
@@ -105,6 +113,10 @@ export class AuthService {
       passwordHash,
       governorate: dto.governorate,
       area: dto.governorate === 'تعز' ? dto.area : null,
+      username,
+      birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
+      // Instagram handle: verified by staff once the customer sends the code from Instagram.
+      ...(username && dto.usernameIsInstagram ? { igStatus: InstagramStatus.PENDING, igCode: instagramCode() } : {}),
     };
 
     if (otpRequired && !dto.otp) {
@@ -152,6 +164,9 @@ export class AuthService {
       // The app then asks for the code (or to request it on WhatsApp).
       throw new ForbiddenException({ statusCode: 403, code: 'PENDING', message: 'الحساب بانتظار تأكيد رقم الجوال', whatsapp: await this.sms.storeWhatsapp() });
     }
+    if (customer.status === CustomerStatus.BLOCKED) {
+      throw new ForbiddenException({ statusCode: 403, code: 'BLOCKED', message: 'تم إيقاف هذا الحساب، تواصل مع المتجر' });
+    }
     if (customer.status !== CustomerStatus.ACTIVE) throw new UnauthorizedException('Account is not active');
     return this.customerSession(customer.id);
   }
@@ -174,10 +189,22 @@ export class AuthService {
         phoneVerified: true,
         governorate: true,
         area: true,
+        username: true,
+        avatarUrl: true,
+        bio: true,
+        igStatus: true,
+        igCode: true,
       },
     });
     // Every shopper starts in Saudi riyals and picks another currency in the app if they like.
     return { ...c, preferredCurrency: 'SAR' };
+  }
+
+  /** Numbers the owner blocked can neither sign up nor sign in. */
+  private async assertNotBlocked(phone: string) {
+    if (await this.prisma.blockedPhone.findUnique({ where: { phone } })) {
+      throw new ForbiddenException({ statusCode: 403, code: 'BLOCKED', message: 'هذا الرقم محظور من التسجيل في المتجر' });
+    }
   }
 
   private async customerSession(customerId: string) {

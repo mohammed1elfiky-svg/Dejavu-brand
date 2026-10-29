@@ -236,6 +236,10 @@ enum JournalSourceType {
   WALLET_TOPUP
   GIFT_CARD
   WALLET_GIFT
+  /// Loyalty points or ambassador rewards turned into wallet credit.
+  LOYALTY_REWARD
+  /// A group gift: contributions held until the piece is bought.
+  GROUP_GIFT
 }
 
 enum NotificationType {
@@ -360,31 +364,42 @@ model RolePermission {
 
 /// Shoppers using the customer Android app.
 model Customer {
-  id               String         @id @default(uuid()) @db.Uuid
-  code             String         @unique // CUS-000123
+  id               String          @id @default(uuid()) @db.Uuid
+  code             String          @unique // CUS-000123
   name             String
-  phone            String         @unique
-  email            String?        @unique
-  passwordHash     String?        @map("password_hash")
-  phoneVerified    Boolean        @default(false) @map("phone_verified")
-  gender           Gender         @default(UNSPECIFIED)
-  birthDate        DateTime?      @map("birth_date") @db.Date
-  status           CustomerStatus @default(ACTIVE)
+  phone            String          @unique
+  email            String?         @unique
+  passwordHash     String?         @map("password_hash")
+  phoneVerified    Boolean         @default(false) @map("phone_verified")
+  gender           Gender          @default(UNSPECIFIED)
+  birthDate        DateTime?       @map("birth_date") @db.Date
+  status           CustomerStatus  @default(ACTIVE)
   /// Receivable sub-ledger account (optional; defaults to the global AR account).
-  accountId        String?        @map("account_id") @db.Uuid
-  loyaltyPoints    Int            @default(0) @map("loyalty_points")
+  accountId        String?         @map("account_id") @db.Uuid
+  loyaltyPoints    Int             @default(0) @map("loyalty_points")
   /// Yemeni governorate (and for Taiz: الحوبان / المدينة); decides which rial the customer uses.
   governorate      String?
   area             String?
   /// Wholesale buyer: gets wholesale prices and its own discount, and may buy on credit.
-  isMerchant       Boolean        @default(false) @map("is_merchant")
+  isMerchant       Boolean         @default(false) @map("is_merchant")
   /// Extra percent off for this merchant, on top of the wholesale price.
-  merchantDiscount Decimal        @default(0) @map("merchant_discount") @db.Decimal(5, 2)
+  merchantDiscount Decimal         @default(0) @map("merchant_discount") @db.Decimal(5, 2)
   /// Most a merchant may owe, in SAR (null = no limit).
-  creditLimit      Decimal?       @map("credit_limit") @db.Decimal(14, 2)
+  creditLimit      Decimal?        @map("credit_limit") @db.Decimal(14, 2)
   notes            String?
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
+  /// Public handle (lowercase, starts with two letters), like an Instagram username.
+  username         String?         @unique
+  /// Profile picture (a stored public image).
+  avatarUrl        String?         @map("avatar_url")
+  bio              String?
+  /// The customer says [username] is also their Instagram handle; staff verify it with [igCode].
+  igStatus         InstagramStatus @default(NONE) @map("ig_status")
+  igCode           String?         @map("ig_code")
+  igVerifiedAt     DateTime?       @map("ig_verified_at")
+  /// Loyalty points for this customer: null follows the store setting, true / false overrides it.
+  loyaltyEnabled   Boolean?        @map("loyalty_enabled")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
 
   account        Account?               @relation(fields: [accountId], references: [id])
   addresses      CustomerAddress[]
@@ -403,6 +418,11 @@ model Customer {
   chatMessages   ChatMessage[]
   layaways       Layaway[]
   preOrders      PreOrder[]
+  loyaltyEntries LoyaltyEntry[]
+  posts          Post[]
+  followers      Follow[]               @relation("Followed")
+  following      Follow[]               @relation("Follower")
+  giftsReceived  Gift[]                 @relation("GiftRecipient")
 
   @@index([name])
   @@map("customers")
@@ -564,6 +584,7 @@ model Product {
   promotions PromotionProduct[]
   views      ProductView[]
   deals      DealProduct[]
+  postTags   PostTag[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -795,6 +816,8 @@ model CartItem {
   variantId String   @map("variant_id") @db.Uuid
   quantity  Int
   addedAt   DateTime @default(now()) @map("added_at")
+  /// Added from a customer's post (its tag): that customer earns an ambassador reward on the sale.
+  viaPostId String?  @map("via_post_id") @db.Uuid
 
   cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
   variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
@@ -806,6 +829,8 @@ model CartItem {
 model Coupon {
   id               String     @id @default(uuid()) @db.Uuid
   code             String     @unique
+  /// A personal coupon (e.g. "we miss you"): only this customer may use it.
+  customerId       String?    @map("customer_id") @db.Uuid
   description      String?
   type             CouponType
   value            Decimal    @db.Decimal(14, 2)
@@ -854,50 +879,56 @@ model ShippingZone {
 
 /// Sales order = sales invoice once confirmed. Amounts are snapshotted at checkout.
 model Order {
-  id                    String        @id @default(uuid()) @db.Uuid
-  number                String        @unique // SO-2026-000123
-  customerId            String        @map("customer_id") @db.Uuid
-  addressId             String?       @map("address_id") @db.Uuid
-  warehouseId           String        @map("warehouse_id") @db.Uuid
-  couponId              String?       @map("coupon_id") @db.Uuid
-  status                OrderStatus   @default(PENDING)
-  paymentStatus         PaymentStatus @default(UNPAID) @map("payment_status")
-  paymentMethod         PaymentMethod @map("payment_method")
-  channel               OrderChannel  @default(ONLINE)
+  id                    String         @id @default(uuid()) @db.Uuid
+  number                String         @unique // SO-2026-000123
+  customerId            String         @map("customer_id") @db.Uuid
+  addressId             String?        @map("address_id") @db.Uuid
+  warehouseId           String         @map("warehouse_id") @db.Uuid
+  couponId              String?        @map("coupon_id") @db.Uuid
+  status                OrderStatus    @default(PENDING)
+  paymentStatus         PaymentStatus  @default(UNPAID) @map("payment_status")
+  paymentMethod         PaymentMethod  @map("payment_method")
+  channel               OrderChannel   @default(ONLINE)
   /// Staff member who rang up a POS sale.
-  cashierId             String?       @map("cashier_id") @db.Uuid
+  cashierId             String?        @map("cashier_id") @db.Uuid
   /// Currency the customer shops and pays in. Amounts below stay in SAR (base).
-  currency              String        @default("SAR")
+  currency              String         @default("SAR")
   /// Units of [currency] per 1 SAR, locked at checkout (1 for SAR).
-  exchangeRate          Decimal       @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  exchangeRate          Decimal        @default(1) @map("exchange_rate") @db.Decimal(18, 6)
   /// Snapshot of the address at order time (address rows can be edited later).
-  shippingAddress       Json          @map("shipping_address")
-  subtotal              Decimal       @db.Decimal(14, 2)
-  discountTotal         Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
-  shippingFee           Decimal       @default(0) @map("shipping_fee") @db.Decimal(14, 2)
-  taxTotal              Decimal       @default(0) @map("tax_total") @db.Decimal(14, 2)
-  grandTotal            Decimal       @map("grand_total") @db.Decimal(14, 2)
-  amountPaid            Decimal       @default(0) @map("amount_paid") @db.Decimal(14, 2)
+  shippingAddress       Json           @map("shipping_address")
+  subtotal              Decimal        @db.Decimal(14, 2)
+  discountTotal         Decimal        @default(0) @map("discount_total") @db.Decimal(14, 2)
+  shippingFee           Decimal        @default(0) @map("shipping_fee") @db.Decimal(14, 2)
+  taxTotal              Decimal        @default(0) @map("tax_total") @db.Decimal(14, 2)
+  grandTotal            Decimal        @map("grand_total") @db.Decimal(14, 2)
+  amountPaid            Decimal        @default(0) @map("amount_paid") @db.Decimal(14, 2)
   /// Value credited back to the customer through received sales returns.
-  returnedTotal         Decimal       @default(0) @map("returned_total") @db.Decimal(14, 2)
-  customerNote          String?       @map("customer_note")
-  internalNote          String?       @map("internal_note")
-  placedAt              DateTime      @default(now()) @map("placed_at")
-  confirmedAt           DateTime?     @map("confirmed_at")
-  deliveredAt           DateTime?     @map("delivered_at")
-  cancelledAt           DateTime?     @map("cancelled_at")
-  cancelReason          String?       @map("cancel_reason")
+  returnedTotal         Decimal        @default(0) @map("returned_total") @db.Decimal(14, 2)
+  customerNote          String?        @map("customer_note")
+  internalNote          String?        @map("internal_note")
+  placedAt              DateTime       @default(now()) @map("placed_at")
+  /// The "did it arrive?" reminder was sent (3 days after shipping).
+  receivedReminderAt    DateTime?      @map("received_reminder_at")
+  confirmedAt           DateTime?      @map("confirmed_at")
+  deliveredAt           DateTime?      @map("delivered_at")
+  cancelledAt           DateTime?      @map("cancelled_at")
+  cancelReason          String?        @map("cancel_reason")
   /// Till sales: the id the device gave the sale, so a sale sent again (offline queue) is not booked twice.
-  clientRef             String?       @unique @map("client_ref")
+  clientRef             String?        @unique @map("client_ref")
   /// Photo of the shipping receipt (سند الإرسال) shown to the customer in the app.
-  shippingReceiptFileId String?       @map("shipping_receipt_file_id") @db.Uuid
+  shippingReceiptFileId String?        @map("shipping_receipt_file_id") @db.Uuid
   /// When the customer was asked to review the delivered items.
-  reviewPromptedAt      DateTime?     @map("review_prompted_at")
+  reviewPromptedAt      DateTime?      @map("review_prompted_at")
+  /// Home delivery, delivery to a shipping company's office, or pickup from the store.
+  deliveryMethod        DeliveryMethod @default(HOME) @map("delivery_method")
+  carrierId             String?        @map("carrier_id") @db.Uuid
+  carrierOfficeId       String?        @map("carrier_office_id") @db.Uuid
   /// A merchant's order on credit waits for the owner (approve, edit quantities or reject).
-  needsApproval         Boolean       @default(false) @map("needs_approval")
-  approvedAt            DateTime?     @map("approved_at")
-  approvedById          String?       @map("approved_by_id") @db.Uuid
-  updatedAt             DateTime      @updatedAt @map("updated_at")
+  needsApproval         Boolean        @default(false) @map("needs_approval")
+  approvedAt            DateTime?      @map("approved_at")
+  approvedById          String?        @map("approved_by_id") @db.Uuid
+  updatedAt             DateTime       @updatedAt @map("updated_at")
 
   customer      Customer             @relation(fields: [customerId], references: [id])
   cashier       User?                @relation("OrderCashier", fields: [cashierId], references: [id])
@@ -905,6 +936,8 @@ model Order {
   address       CustomerAddress?     @relation(fields: [addressId], references: [id], onDelete: SetNull)
   warehouse     Warehouse            @relation(fields: [warehouseId], references: [id])
   coupon        Coupon?              @relation(fields: [couponId], references: [id])
+  carrier       Carrier?             @relation(fields: [carrierId], references: [id], onDelete: SetNull)
+  carrierOffice CarrierOffice?       @relation(fields: [carrierOfficeId], references: [id], onDelete: SetNull)
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   payments      Payment[]
@@ -938,6 +971,8 @@ model OrderItem {
   /// Cost at the moment of sale — used for COGS and gross-profit reports.
   unitCost    Decimal @map("unit_cost") @db.Decimal(14, 4)
   returnedQty Int     @default(0) @map("returned_qty")
+  /// Bought from a customer's post (ambassador reward).
+  viaPostId   String? @map("via_post_id") @db.Uuid
 
   order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant     ProductVariant    @relation(fields: [variantId], references: [id])
@@ -996,19 +1031,23 @@ model Payment {
 }
 
 model Shipment {
-  id             String         @id @default(uuid()) @db.Uuid
-  orderId        String         @map("order_id") @db.Uuid
-  carrier        String // "Bosta", "Aramex", "in-house"
-  trackingNumber String?        @map("tracking_number")
-  status         ShipmentStatus @default(PENDING)
-  shippingCost   Decimal        @default(0) @map("shipping_cost") @db.Decimal(14, 2) // what we pay the carrier
-  codAmount      Decimal        @default(0) @map("cod_amount") @db.Decimal(14, 2) // cash to collect
-  shippedAt      DateTime?      @map("shipped_at")
-  deliveredAt    DateTime?      @map("delivered_at")
+  id              String         @id @default(uuid()) @db.Uuid
+  orderId         String         @map("order_id") @db.Uuid
+  carrier         String // "Bosta", "Aramex", "in-house"
+  trackingNumber  String?        @map("tracking_number")
+  /// Photo of the carrier's receipt (سند الشحن), taken under the tracking number.
+  receiptImageUrl String?        @map("receipt_image_url")
+  /// Photos of the packed order before it left.
+  photoUrls       String[]       @default([]) @map("photo_urls")
+  status          ShipmentStatus @default(PENDING)
+  shippingCost    Decimal        @default(0) @map("shipping_cost") @db.Decimal(14, 2) // what we pay the carrier
+  codAmount       Decimal        @default(0) @map("cod_amount") @db.Decimal(14, 2) // cash to collect
+  shippedAt       DateTime?      @map("shipped_at")
+  deliveredAt     DateTime?      @map("delivered_at")
   /// Set once the courier has handed over the collected cash.
-  settlementId   String?        @map("settlement_id") @db.Uuid
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+  settlementId    String?        @map("settlement_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   order      Order              @relation(fields: [orderId], references: [id])
   settlement CourierSettlement? @relation(fields: [settlementId], references: [id])
@@ -2129,22 +2168,28 @@ enum DealType {
 
 /// Quantity offers on chosen products: "قطعة وقطعة مجاناً", "قطعتين والثالثة مجاناً", or a set (طقم) at one price.
 model Deal {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  type        DealType
-  buyQty      Int       @default(1) @map("buy_qty")
-  freeQty     Int       @default(1) @map("free_qty")
-  bundlePrice Decimal?  @map("bundle_price") @db.Decimal(14, 2)
-  startsAt    DateTime  @default(now()) @map("starts_at")
-  endsAt      DateTime? @map("ends_at")
-  isActive    Boolean   @default(true) @map("is_active")
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String
+  type          DealType
+  buyQty        Int       @default(1) @map("buy_qty")
+  freeQty       Int       @default(1) @map("free_qty")
+  bundlePrice   Decimal?  @map("bundle_price") @db.Decimal(14, 2)
+  startsAt      DateTime  @default(now()) @map("starts_at")
+  endsAt        DateTime? @map("ends_at")
+  isActive      Boolean   @default(true) @map("is_active")
   /// Where the offer applies.
-  atPos       Boolean   @default(true) @map("at_pos")
-  online      Boolean   @default(true)
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  atPos         Boolean   @default(true) @map("at_pos")
+  online        Boolean   @default(true)
+  /// First come, first served: the offer stops after this many pieces / customers (null = no limit).
+  maxPieces     Int?      @map("max_pieces")
+  maxCustomers  Int?      @map("max_customers")
+  usedPieces    Int       @default(0) @map("used_pieces")
+  usedCustomers Int       @default(0) @map("used_customers")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   products DealProduct[]
+  usages   DealUsage[]
 
   @@map("deals")
 }
@@ -2234,4 +2279,315 @@ model BankTransfer {
   @@index([createdAt])
   @@index([customerId])
   @@map("bank_transfers")
+}
+
+enum DeliveryMethod {
+  HOME
+  /// To an office of the shipping company, where the customer collects it.
+  OFFICE
+  PICKUP
+}
+
+enum InstagramStatus {
+  NONE
+  PENDING
+  VERIFIED
+}
+
+/// A local shipping company (e.g. الجوال القدسي) with its phones and offices.
+model Carrier {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  phones    String[] @default([])
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  offices CarrierOffice[]
+  orders  Order[]
+
+  @@map("carriers")
+}
+
+model CarrierOffice {
+  id          String   @id @default(uuid()) @db.Uuid
+  carrierId   String   @map("carrier_id") @db.Uuid
+  name        String
+  governorate String
+  city        String?
+  address     String
+  phones      String[] @default([])
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  orders  Order[]
+
+  @@index([carrierId])
+  @@map("carrier_offices")
+}
+
+/// Who used a limited offer, and how many pieces it took.
+model DealUsage {
+  id         String   @id @default(uuid()) @db.Uuid
+  dealId     String   @map("deal_id") @db.Uuid
+  customerId String?  @map("customer_id") @db.Uuid
+  orderId    String?  @map("order_id") @db.Uuid
+  pieces     Int
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  @@index([dealId, customerId])
+  @@index([orderId])
+  @@map("deal_usages")
+}
+
+/// Loyalty points earned, spent or adjusted (+ / -).
+model LoyaltyEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  points      Int
+  /// EARN, REDEEM, ADJUST, REVERSE, AMBASSADOR
+  kind        String
+  orderId     String?  @map("order_id") @db.Uuid
+  note        String?
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@index([orderId])
+  @@map("loyalty_entries")
+}
+
+/// Numbers that may not sign up (or sign in) again.
+model BlockedPhone {
+  id          String   @id @default(uuid()) @db.Uuid
+  phone       String   @unique
+  reason      String?
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("blocked_phones")
+}
+
+enum GiftSource {
+  POS
+  GROUP
+}
+
+enum GiftStatus {
+  /// Waiting for the receiver to choose delivery or pickup.
+  WAITING
+  PICKUP
+  DELIVERY
+  /// Handed over in the store or shipped.
+  DONE
+  CANCELLED
+}
+
+/// A present bought for a customer (at the till or by a group): the receiver chooses how to get it.
+model Gift {
+  id              String          @id @default(uuid()) @db.Uuid
+  number          String          @unique
+  recipientId     String          @map("recipient_id") @db.Uuid
+  giverCustomerId String?         @map("giver_customer_id") @db.Uuid
+  giverName       String          @map("giver_name")
+  occasion        String?
+  message         String?
+  source          GiftSource
+  status          GiftStatus      @default(WAITING)
+  /// [{ variantId, quantity, name, size, color, imageUrl }]
+  items           Json
+  saleOrderId     String?         @map("sale_order_id") @db.Uuid
+  deliveryMethod  DeliveryMethod? @map("delivery_method")
+  /// Address / office / pickup details chosen by the receiver.
+  delivery        Json?
+  carrierId       String?         @map("carrier_id") @db.Uuid
+  carrierOfficeId String?         @map("carrier_office_id") @db.Uuid
+  trackingNumber  String?         @map("tracking_number")
+  chosenAt        DateTime?       @map("chosen_at")
+  doneAt          DateTime?       @map("done_at")
+  createdById     String?         @map("created_by_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  recipient Customer   @relation("GiftRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  groupGift GroupGift?
+
+  @@index([recipientId, status])
+  @@index([status, createdAt])
+  @@map("gifts")
+}
+
+enum GroupGiftStatus {
+  OPEN
+  FUNDED
+  CANCELLED
+}
+
+/// Friends chipping in for one piece for someone (their birthday). Paid from wallets in SAR.
+model GroupGift {
+  id          String          @id @default(uuid()) @db.Uuid
+  number      String          @unique
+  organizerId String          @map("organizer_id") @db.Uuid
+  recipientId String          @map("recipient_id") @db.Uuid
+  variantId   String          @map("variant_id") @db.Uuid
+  title       String
+  occasion    String?
+  message     String?
+  /// SAR needed (the piece's price when the collection started) and collected so far.
+  target      Decimal         @db.Decimal(14, 2)
+  raised      Decimal         @default(0) @db.Decimal(14, 2)
+  status      GroupGiftStatus @default(OPEN)
+  endsAt      DateTime        @map("ends_at")
+  giftId      String?         @unique @map("gift_id") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  gift          Gift?                   @relation(fields: [giftId], references: [id])
+  contributions GroupGiftContribution[]
+
+  @@index([status, endsAt])
+  @@index([recipientId])
+  @@map("group_gifts")
+}
+
+model GroupGiftContribution {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupGiftId String   @map("group_gift_id") @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  amount      Decimal  @db.Decimal(14, 2)
+  message     String?
+  refunded    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  groupGift GroupGift @relation(fields: [groupGiftId], references: [id], onDelete: Cascade)
+
+  @@index([groupGiftId])
+  @@map("group_gift_contributions")
+}
+
+// ------------------------------------------------------------------ social ---
+
+model Follow {
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  Customer @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following Customer @relation("Followed", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+  @@map("follows")
+}
+
+enum PostKind {
+  /// A photo of an outfit / purchase.
+  LOOK
+  /// "أمنيات عيد ميلادي": the products the author wishes for.
+  WISHLIST
+}
+
+model Post {
+  id           String   @id @default(uuid()) @db.Uuid
+  authorId     String   @map("author_id") @db.Uuid
+  kind         PostKind @default(LOOK)
+  caption      String?
+  /// Public image URLs, in order.
+  images       String[] @default([])
+  likeCount    Int      @default(0) @map("like_count")
+  commentCount Int      @default(0) @map("comment_count")
+  /// Hidden by staff (moderation).
+  isHidden     Boolean  @default(false) @map("is_hidden")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  author   Customer      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  tags     PostTag[]
+  likes    PostLike[]
+  comments PostComment[]
+  mentions PostMention[]
+
+  @@index([authorId, createdAt])
+  @@index([createdAt])
+  @@map("posts")
+}
+
+/// A product pinned on a post's photo (x, y from 0 to 1 on [imageIndex]).
+model PostTag {
+  id         String  @id @default(uuid()) @db.Uuid
+  postId     String  @map("post_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  variantId  String? @map("variant_id") @db.Uuid
+  imageIndex Int     @default(0) @map("image_index")
+  x          Float?
+  y          Float?
+
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([productId])
+  @@map("post_tags")
+}
+
+model PostLike {
+  postId     String   @map("post_id") @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, customerId])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  postId    String   @map("post_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  body      String
+  isHidden  Boolean  @default(false) @map("is_hidden")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@map("post_comments")
+}
+
+model PostMention {
+  postId     String @map("post_id") @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, customerId])
+  @@map("post_mentions")
+}
+
+/// What a post author earns when someone buys through the post's tags.
+model AmbassadorReward {
+  id        String    @id @default(uuid()) @db.Uuid
+  postId    String    @map("post_id") @db.Uuid
+  posterId  String    @map("poster_id") @db.Uuid
+  buyerId   String    @map("buyer_id") @db.Uuid
+  orderId   String    @map("order_id") @db.Uuid
+  /// SAR value of the pieces bought through the post, and the reward on it.
+  salesSar  Decimal   @map("sales_sar") @db.Decimal(14, 2)
+  rewardSar Decimal   @map("reward_sar") @db.Decimal(14, 2)
+  /// POINTS or WALLET
+  kind      String
+  /// PENDING (until the order is received), PAID, CANCELLED
+  status    String    @default("PENDING")
+  createdAt DateTime  @default(now()) @map("created_at")
+  paidAt    DateTime? @map("paid_at")
+
+  @@unique([orderId, postId])
+  @@index([posterId, status])
+  @@map("ambassador_rewards")
 }

@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  DeliveryMethod,
   NotificationType,
   Order,
   OrderChannel,
@@ -31,6 +32,8 @@ import { PrismaService, Tx } from '../prisma/prisma.service';
 import { FilesService, UploadedPart } from '../files/files.service';
 import { StoreSettingsService } from './store-settings.service';
 import { CustomerAccountsService } from '../treasury/customer-accounts.service';
+import { recordDealUsage, releaseDealUsage } from './deals.db';
+import { LoyaltyService } from './loyalty';
 import { CartService } from './cart.service';
 import { AdminOrdersQueryDto, ChangeOrderStatusDto, CheckoutDto, RecordPaymentDto, RefundDto } from './dto/sales.dto';
 import { balanceDue, PaymentsService } from './payments.service';
@@ -72,6 +75,9 @@ const customerOrderSelect = {
   returnedTotal: true,
   customerNote: true,
   shippingReceiptFileId: true,
+  deliveryMethod: true,
+  carrier: { select: { id: true, name: true, phones: true } },
+  carrierOffice: { select: { id: true, name: true, governorate: true, city: true, address: true, phones: true } },
   /** A merchant's order on credit waiting for the owner. */
   needsApproval: true,
   approvedAt: true,
@@ -98,11 +104,13 @@ const customerOrderSelect = {
     },
   },
   statusHistory: { orderBy: { createdAt: 'asc' }, select: { toStatus: true, createdAt: true } },
-  shipments: { select: { carrier: true, trackingNumber: true, status: true, shippedAt: true, deliveredAt: true } },
+  shipments: { select: { carrier: true, trackingNumber: true, receiptImageUrl: true, photoUrls: true, status: true, shippedAt: true, deliveredAt: true } },
 } satisfies Prisma.OrderSelect;
 
 const adminOrderInclude = {
   customer: { select: { id: true, code: true, name: true, phone: true } },
+  carrier: { select: { id: true, name: true, phones: true } },
+  carrierOffice: { select: { id: true, name: true, governorate: true, city: true, address: true, phones: true } },
   coupon: { select: { id: true, code: true } },
   items: true,
   payments: { orderBy: { createdAt: 'asc' } },
@@ -125,6 +133,7 @@ export class OrdersService {
     private readonly files: FilesService,
     private readonly storeSettings: StoreSettingsService,
     private readonly accounts: CustomerAccountsService,
+    private readonly loyalty: LoyaltyService,
   ) {}
 
   // ------------------------------------------------------------- checkout ---
@@ -133,13 +142,14 @@ export class OrdersService {
     const placed = await this.prisma.$transaction(async (tx) => {
       // Serialise checkouts of the same cart (e.g. a double-tapped "Place order").
       await tx.$queryRaw`SELECT id FROM carts WHERE customer_id = ${customerId}::uuid FOR UPDATE`;
-      const quote = await this.cart.quote(tx, customerId, dto.addressId);
+      const method = dto.deliveryMethod ?? DeliveryMethod.HOME;
+      const quote = await this.cart.quote(tx, customerId, dto.addressId, { deliveryMethod: method, carrierOfficeId: dto.carrierOfficeId });
       this.cart.assertCheckoutable(quote);
 
       const warehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isActive: true } });
       if (!warehouse) throw new UnprocessableEntityException('No default warehouse is configured');
-      const address = await tx.customerAddress.findUniqueOrThrow({ where: { id: dto.addressId } });
-      await this.storeSettings.assertMethod(tx, dto.paymentMethod, address.governorate);
+      const { address, snapshot, governorate, carrierId, officeId } = await this.deliveryOf(tx, customerId, dto, method);
+      await this.storeSettings.assertMethod(tx, dto.paymentMethod, governorate);
 
       // Reserve in a stable order; the conditional UPDATE is the real oversell guard.
       for (const line of [...quote.lines].sort((a, b) => a.variantId.localeCompare(b.variantId))) {
@@ -163,13 +173,16 @@ export class OrdersService {
         data: {
           number: await this.sequences.next(tx, 'SO'),
           customerId,
-          addressId: address.id,
+          addressId: address?.id ?? null,
           warehouseId: warehouse.id,
           couponId: quote.coupon?.id,
+          deliveryMethod: method,
+          carrierId,
+          carrierOfficeId: officeId,
           paymentMethod: dto.paymentMethod,
           currency,
           exchangeRate,
-          shippingAddress: snapshotAddress(address),
+          shippingAddress: snapshot,
           subtotal: p.subtotal,
           discountTotal: p.discountTotal,
           shippingFee: p.shippingFee,
@@ -192,6 +205,7 @@ export class OrdersService {
               lineTotal: p.lines[i].lineTotal,
               // Provisional; replaced with the actual issue cost when shipped.
               unitCost: l.avgCost,
+              viaPostId: l.viaPostId,
             })),
           },
           statusHistory: { create: { toStatus: OrderStatus.PENDING } },
@@ -201,6 +215,8 @@ export class OrdersService {
       if (quote.coupon) {
         await tx.couponUsage.create({ data: { couponId: quote.coupon.id, customerId, orderId: order.id } });
       }
+      if (quote.deals.length) await recordDealUsage(tx, quote.deals, customerId, order.id);
+      await this.onPlaced?.(tx, order.id);
       const cart = await tx.cart.findUniqueOrThrow({ where: { customerId } });
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponCode: null } });
@@ -236,6 +252,48 @@ export class OrdersService {
       data: { orderId: placed.id, order: placed.number },
     });
     return this.customerOrderById(customerId, placed.id);
+  }
+
+  /**
+   * Where the order goes: HOME (the address; the shipping company is optional), OFFICE (the
+   * company's office: its governorate decides cash on delivery), or PICKUP from the store.
+   */
+  private async deliveryOf(tx: Tx, customerId: string, dto: CheckoutDto, method: DeliveryMethod) {
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { name: true, phone: true } });
+    const address = dto.addressId ? await tx.customerAddress.findFirst({ where: { id: dto.addressId, customerId } }) : null;
+    if (dto.addressId && !address) throw new NotFoundException('Address not found');
+    let carrierId: string | null = null;
+    if (dto.carrierId) {
+      const carrier = await tx.carrier.findUnique({ where: { id: dto.carrierId } });
+      if (!carrier || !carrier.isActive) throw new NotFoundException('Shipping company not found');
+      carrierId = carrier.id;
+    }
+    const who = { recipient: address?.recipient ?? customer.name, phone: address?.phone ?? customer.phone };
+    if (method === DeliveryMethod.PICKUP) {
+      return { address, governorate: null, carrierId: null, officeId: null, snapshot: { method, ...who, pickup: true } as Prisma.InputJsonObject };
+    }
+    if (method === DeliveryMethod.OFFICE) {
+      const office = await tx.carrierOffice.findUnique({ where: { id: dto.carrierOfficeId! }, include: { carrier: true } });
+      if (!office || !office.isActive || !office.carrier.isActive) throw new NotFoundException('Shipping office not found');
+      return {
+        address,
+        governorate: office.governorate,
+        carrierId: office.carrierId,
+        officeId: office.id,
+        snapshot: {
+          method,
+          ...who,
+          governorate: office.governorate,
+          city: office.city ?? office.governorate,
+          street: office.address,
+          carrier: office.carrier.name,
+          officeName: office.name,
+          officePhones: office.phones,
+        } as Prisma.InputJsonObject,
+      };
+    }
+    if (!address) throw new BadRequestException('Choose the delivery address');
+    return { address, governorate: address.governorate, carrierId, officeId: null, snapshot: { ...snapshotAddress(address), method } as Prisma.InputJsonObject };
   }
 
   // -------------------------------------------------------- customer side ---
@@ -290,6 +348,39 @@ export class OrdersService {
       await this.cancel(tx, order, reason, null, { notify: false });
     });
     return this.customerOrder(customerId, number);
+  }
+
+  /** The customer confirms the shipped order arrived ("استلمت الطلب"). */
+  async customerReceived(customerId: string, number: string) {
+    const found = await this.prisma.order.findFirst({ where: { number, customerId }, select: { id: true } });
+    if (!found) throw new NotFoundException('Order not found');
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, found.id);
+      if (order.status !== OrderStatus.SHIPPED) throw new UnprocessableEntityException('الطلب لم يُشحن بعد أو تم استلامه');
+      await this.deliver(tx, order, 'استلمه العميل', null);
+    });
+    return this.customerOrder(customerId, number);
+  }
+
+  /** Asks once, 3 days after shipping, whether the order arrived. */
+  async remindReceived(now = new Date()) {
+    const rows = await this.prisma.order.findMany({
+      where: { status: OrderStatus.SHIPPED, receivedReminderAt: null, shipments: { some: { shippedAt: { lt: new Date(now.getTime() - 3 * 86_400_000) } } } },
+      select: { id: true, number: true, customerId: true },
+      take: 200,
+    });
+    for (const o of rows) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({ where: { id: o.id }, data: { receivedReminderAt: now } });
+        await this.notifications.notifyCustomer(tx, o.customerId, {
+          type: NotificationType.ORDER_STATUS,
+          title: 'هل وصلك طلبك؟ 📦',
+          body: `اضغط «استلمت الطلب» في ${o.number} إذا وصلك.`,
+          data: { orderNumber: o.number, screen: 'order' },
+        });
+      });
+    }
+    return rows.length;
   }
 
   // ----------------------------------------------------------- admin side ---
@@ -591,6 +682,8 @@ export class OrdersService {
       await tx.couponUsage.deleteMany({ where: { orderId: order.id } });
       await tx.coupon.update({ where: { id: order.couponId }, data: { usedCount: { decrement: 1 } } });
     }
+    await releaseDealUsage(tx, order.id);
+    await this.onVoided?.(tx, order.id);
     await this.transition(
       tx,
       order,
@@ -660,6 +753,8 @@ export class OrdersService {
         orderId: order.id,
         carrier: dto.carrier ?? 'in-house',
         trackingNumber: dto.trackingNumber,
+        receiptImageUrl: dto.receiptImageUrl?.trim() || null,
+        photoUrls: dto.photoUrls ?? [],
         status: ShipmentStatus.IN_TRANSIT,
         codAmount: isCod ? money(dec(order.grandTotal).sub(prepaid)) : 0,
         shippedAt: new Date(),
@@ -672,7 +767,7 @@ export class OrdersService {
   }
 
   /** On delivery, cash collected by the courier becomes a receivable from the courier. */
-  private async deliver(tx: Tx, order: Order, note: string | undefined, userId: string) {
+  private async deliver(tx: Tx, order: Order, note: string | undefined, userId: string | null) {
     await tx.shipment.updateMany({
       where: { orderId: order.id, status: { not: ShipmentStatus.DELIVERED } },
       data: { status: ShipmentStatus.DELIVERED, deliveredAt: new Date() },
@@ -683,7 +778,16 @@ export class OrdersService {
       current = (await this.payments.receive(tx, order, { method: PaymentMethod.CASH_ON_DELIVERY, amount: due }, userId)).order;
     }
     await this.transition(tx, current, OrderStatus.DELIVERED, note, userId, { deliveredAt: new Date() });
+    await this.loyalty.earnForOrder(tx, order.id);
+    await this.onReceived?.(tx, order.id);
   }
+
+  /** Extra work once an app order is placed (ambassador rewards); set by the social module. */
+  onPlaced?: (tx: Tx, orderId: string) => Promise<void>;
+  /** Extra work once an order is received (ambassador rewards); set by the social module. */
+  onReceived?: (tx: Tx, orderId: string) => Promise<void>;
+  /** Extra work once an order is cancelled or refused (ambassador rewards). */
+  onVoided?: (tx: Tx, orderId: string) => Promise<void>;
 
   /**
    * The courier brings the parcel back undelivered: the sales invoice is reversed
@@ -716,6 +820,8 @@ export class OrdersService {
       data: { status: ShipmentStatus.RETURNED_TO_SENDER, codAmount: 0 },
     });
     await this.transition(tx, order, OrderStatus.RETURNED, reason, userId);
+    await this.loyalty.reverseForOrder(tx, order.id);
+    await this.onVoided?.(tx, order.id);
   }
 
   private async autoConfirm(tx: Tx, order: Order, userId: string | null) {

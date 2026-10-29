@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDes
 import { NotificationType, ProductStatus } from '../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrdersService } from './orders.service';
 
 /** A cart left this long is worth a reminder; at most one reminder per change of the cart. */
 const CART_IDLE_HOURS = 6;
@@ -9,8 +10,8 @@ const CART_IDLE_HOURS = 6;
 const CART_REMIND_EVERY_DAYS = 3;
 
 /**
- * Bringing shoppers back: a reminder for carts left with items in them, and a message
- * when a size/colour someone was waiting for is back in stock.
+ * Bringing shoppers back: a reminder for carts left with items in them, a message when a
+ * size/colour someone was waiting for is back in stock, and "did your order arrive?".
  */
 @Injectable()
 export class EngagementService implements OnModuleInit, OnModuleDestroy {
@@ -20,6 +21,7 @@ export class EngagementService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly orders: OrdersService,
   ) {}
 
   onModuleInit() {
@@ -32,7 +34,7 @@ export class EngagementService implements OnModuleInit, OnModuleDestroy {
   }
 
   async run() {
-    return { carts: await this.remindCarts(), backInStock: await this.notifyBackInStock() };
+    return { carts: await this.remindCarts(), backInStock: await this.notifyBackInStock(), received: await this.orders.remindReceived() };
   }
 
   /** Reminds customers of carts they left with items in them. Returns how many were reminded. */

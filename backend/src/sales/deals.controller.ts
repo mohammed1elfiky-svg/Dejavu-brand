@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags, PartialType } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DealType } from '../generated/prisma/client';
 import { AuthPrincipal, CurrentUser, RequirePermissions } from '../common/decorators/auth.decorators';
 import { IsAmount } from '../common/decorators/validation.decorators';
@@ -17,6 +17,8 @@ export class DealDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() atPos?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() online?: boolean;
+  @ApiPropertyOptional({ description: 'Only the first N pieces (null = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(1) maxPieces?: number | null;
+  @ApiPropertyOptional({ description: 'Only the first N customers (null = no limit)' }) @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(1) maxCustomers?: number | null;
 
   @ApiProperty({ type: [String] })
   @IsArray()

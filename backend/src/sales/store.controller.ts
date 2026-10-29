@@ -88,7 +88,7 @@ export class StoreCartController {
 
   @Get()
   view(@CurrentUser() u: AuthPrincipal, @Query() q: CartQueryDto) {
-    return this.cart.view(u.id, q.addressId);
+    return this.cart.view(u.id, q.addressId, { deliveryMethod: q.deliveryMethod, carrierOfficeId: q.carrierOfficeId });
   }
 
   @Post('items')
@@ -167,6 +167,13 @@ export class StoreOrdersController {
   @HttpCode(HttpStatus.OK)
   cancel(@CurrentUser() u: AuthPrincipal, @Param('number') number: string, @Body() dto: CancelOrderDto) {
     return this.orders.customerCancel(u.id, number, dto.reason);
+  }
+
+  /** "استلمت الطلب": the customer confirms a shipped order arrived. */
+  @Post(':number/received')
+  @HttpCode(HttpStatus.OK)
+  received(@CurrentUser() u: AuthPrincipal, @Param('number') number: string) {
+    return this.orders.customerReceived(u.id, number);
   }
 
   @Post(':number/returns')

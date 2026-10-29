@@ -118,6 +118,68 @@ export class CustomerAccountsService {
     return paginated(items, total, q);
   }
 
+  /**
+   * The full statement for printing: one section per currency the customer dealt in, oldest
+   * first with a running balance, each line with its invoice number and pieces so the invoice
+   * can be looked up. [owes] = على العميل, [credit] = للعميل, balance > 0 = the customer owes.
+   */
+  async fullStatement(customerId: string, range: { from?: Date; to?: Date } = {}) {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, code: true, name: true, phone: true, username: true } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    const entries = await this.prisma.customerAccountEntry.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, currency: true, amount: true, sourceType: true, sourceId: true, note: true, createdAt: true },
+    });
+    const ids = [...new Set(entries.map((e) => e.sourceId).filter((x): x is string => !!x))];
+    const [orders, topUps, layaways, returns] = await Promise.all([
+      this.prisma.order.findMany({ where: { id: { in: ids } }, select: { id: true, number: true, channel: true, items: { select: { quantity: true } } } }),
+      this.prisma.walletTopUp.findMany({ where: { id: { in: ids } }, select: { id: true, number: true } }),
+      this.prisma.layaway.findMany({ where: { id: { in: ids } }, select: { id: true, number: true } }),
+      this.prisma.salesReturn.findMany({ where: { id: { in: ids } }, select: { id: true, number: true, orderId: true } }),
+    ]);
+    const order = new Map(orders.map((o) => [o.id, o]));
+    const topUp = new Map(topUps.map((t) => [t.id, t.number]));
+    const layaway = new Map(layaways.map((l) => [l.id, l.number]));
+    const ret = new Map(returns.map((r) => [r.id, r]));
+    const sections = new Map<string, { currency: string; opening: Decimal; rows: unknown[]; owes: Decimal; credit: Decimal; balance: Decimal }>();
+    for (const e of entries) {
+      const s = sections.get(e.currency) ?? { currency: e.currency, opening: dec(0), rows: [], owes: dec(0), credit: dec(0), balance: dec(0) };
+      sections.set(e.currency, s);
+      const amount = dec(e.amount);
+      s.balance = s.balance.add(amount);
+      if (range.from && e.createdAt < range.from) {
+        s.opening = s.balance;
+        continue;
+      }
+      if (range.to && e.createdAt >= range.to) continue;
+      const o = e.sourceId ? order.get(e.sourceId) : undefined;
+      const r = e.sourceId ? ret.get(e.sourceId) : undefined;
+      if (amount.gt(0)) s.owes = s.owes.add(amount);
+      else s.credit = s.credit.add(amount.neg());
+      s.rows.push({
+        id: e.id,
+        date: e.createdAt,
+        description: STATEMENT_LABELS[e.sourceType] ?? walletNote(e.sourceType),
+        note: e.note,
+        /** The invoice (or top-up / reservation / return) number, to look it up. */
+        reference: o?.number ?? (e.sourceId && (topUp.get(e.sourceId) ?? layaway.get(e.sourceId))) ?? r?.number ?? null,
+        orderId: o?.id ?? r?.orderId ?? null,
+        pieces: o ? o.items.reduce((n, i) => n + i.quantity, 0) : null,
+        owes: amount.gt(0) ? amount : dec(0),
+        credit: amount.lt(0) ? amount.neg() : dec(0),
+        balance: s.balance,
+      });
+    }
+    return {
+      customer,
+      from: range.from ?? null,
+      to: range.to ?? null,
+      // Only the currencies the customer dealt in, each on its own page.
+      currencies: [...sections.values()].map((s) => ({ ...s, closing: s.rows.length ? (s.rows[s.rows.length - 1] as { balance: Decimal }).balance : s.opening })),
+    };
+  }
+
   /** Customer's wallet: spendable balances and recent movements. */
   async wallet(customerId: string) {
     const [balances, recent, buyer] = await Promise.all([
@@ -354,11 +416,31 @@ export class CustomerAccountsService {
   }
 
   /**
+   * Wallet credit the store gives away (loyalty points turned into money, ambassador rewards):
+   *   Dr Sales discounts  —  Cr Customer accounts (the customer, SAR).
+   */
+  async reward(tx: Tx, p: { customerId: string; amountSar: Decimal; description: string; sourceId?: string; userId?: string | null }) {
+    const amount = money(p.amountSar);
+    if (!amount.gt(0)) return null;
+    const lines = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId: p.customerId, currency: BASE_CURRENCY, amount: amount.neg(), sar: amount.neg(), description: p.description });
+    return this.ledger.post(tx, {
+      description: p.description,
+      sourceType: 'LOYALTY_REWARD',
+      sourceId: p.sourceId,
+      userId: p.userId ?? undefined,
+      lines: [...lines, { account: 'SALES_DISCOUNTS', debit: amount }],
+    });
+  }
+
+  /**
    * Moves wallet money from one customer to another, same currency. Both sides sit on the
    * customer-accounts ledger account, tagged with each customer; the receiver takes the
    * sender's book value, so no exchange difference arises.
    */
-  async transfer(tx: Tx, p: { fromId: string; toId: string; currency: string; amount: Decimal; description: string; userId?: string }) {
+  async transfer(
+    tx: Tx,
+    p: { fromId: string; toId: string; currency: string; amount: Decimal; description: string; userId?: string; sourceType?: 'WALLET_GIFT' | 'GROUP_GIFT' },
+  ) {
     const rate = await this.currencies.rate(p.currency, tx);
     const sar = toBase(p.amount, p.currency, rate);
     const out = await this.treasury.moneyLines(tx, { account: 'CUSTOMER_ACCOUNTS', customerId: p.fromId, currency: p.currency, amount: p.amount, sar, description: p.description });
@@ -367,7 +449,7 @@ export class CustomerAccountsService {
     const diff = [...out, ...inn].reduce((sum, l) => sum.add(dec(l.debit ?? 0)).sub(dec(l.credit ?? 0)), dec(0));
     return this.ledger.post(tx, {
       description: p.description,
-      sourceType: 'WALLET_GIFT',
+      sourceType: p.sourceType ?? 'WALLET_GIFT',
       sourceId: p.fromId,
       userId: p.userId,
       lines: [...out, ...inn, ...(diff.isZero() ? [] : [diff.gt(0) ? { account: 'FX_DIFFERENCE' as const, credit: diff } : { account: 'FX_DIFFERENCE' as const, debit: diff.neg() }])],
@@ -385,7 +467,21 @@ const WALLET_NOTES: Record<string, string> = {
   OPENING_BALANCE: 'رصيد افتتاحي',
   WALLET_TOPUP: 'شحن رصيد',
   WALLET_GIFT: 'إهداء رصيد',
+  LOYALTY_REWARD: 'مكافأة نقاط / سفير',
+  GROUP_GIFT: 'هدية جماعية',
   CUSTOMER_PAYMENT: 'دفعة / مشتريات',
   SALES_RETURN: 'مرتجع',
 };
 const walletNote = (sourceType: string) => WALLET_NOTES[sourceType] ?? 'حركة';
+
+const STATEMENT_LABELS: Record<string, string> = {
+  SALES_ORDER: 'فاتورة مبيعات',
+  CUSTOMER_PAYMENT: 'دفعة / فاتورة',
+  OPENING_BALANCE: 'رصيد افتتاحي',
+  WALLET_TOPUP: 'شحن رصيد',
+  WALLET_GIFT: 'إهداء رصيد',
+  SALES_RETURN: 'مرتجع',
+  LOYALTY_REWARD: 'مكافأة نقاط / سفير',
+  GROUP_GIFT: 'هدية جماعية',
+  GIFT_CARD: 'بطاقة هدية',
+};

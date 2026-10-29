@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomInt } from 'node:crypto';
 import { Prisma, SmsStatus } from '../generated/prisma/client';
 import { normalizePhone } from '../auth/dto/auth.dto';
@@ -94,6 +94,9 @@ export class SmsService {
    */
   async sendOtp(rawPhone: string, purpose: OtpPurpose = 'REGISTER', channel: 'SMS' | 'WHATSAPP' = 'SMS') {
     const phone = normalizePhone(rawPhone);
+    if (await this.prisma.blockedPhone.findUnique({ where: { phone } })) {
+      throw new ForbiddenException({ statusCode: 403, code: 'BLOCKED', message: 'هذا الرقم محظور من التسجيل في المتجر' });
+    }
     const customer = await this.prisma.customer.findUnique({ where: { phone }, select: { status: true } });
     // A sign-up still waiting for its code may ask again.
     const registered = !!customer && customer.status !== 'PENDING';

@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsArray,
   IsIn,
   IsInt,
   IsLatitude,
@@ -22,7 +23,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { CouponType, OrderChannel, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
+import { CouponType, DeliveryMethod, OrderChannel, OrderStatus, PaymentMethod, PaymentStatus, ReturnStatus } from '../../generated/prisma/client';
 import { PHONE_REGEX } from '../../auth/dto/auth.dto';
 import { IsAmount, IsCurrencyCode } from '../../common/decorators/validation.decorators';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
@@ -126,6 +127,11 @@ export class AddCartItemDto {
   @Min(1)
   @Max(20)
   quantity: number;
+
+  @ApiPropertyOptional({ description: "Added from a customer's post (its product tag): that customer earns an ambassador reward" })
+  @IsOptional()
+  @IsUUID()
+  viaPostId?: string;
 }
 
 export class UpdateCartItemDto {
@@ -150,6 +156,16 @@ export class CartQueryDto {
   @IsOptional()
   @IsUUID()
   addressId?: string;
+
+  @ApiPropertyOptional({ enum: DeliveryMethod })
+  @IsOptional()
+  @IsEnum(DeliveryMethod)
+  deliveryMethod?: DeliveryMethod;
+
+  @ApiPropertyOptional({ description: 'OFFICE: the shipping company office' })
+  @IsOptional()
+  @IsUUID()
+  carrierOfficeId?: string;
 }
 
 // --------------------------------------------------------------- checkout ---
@@ -163,9 +179,25 @@ export const CHECKOUT_METHODS = [
 ] as const;
 
 export class CheckoutDto {
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'HOME: the delivery address (required); OFFICE: optional, for the recipient name and phone' })
+  @ValidateIf((o: CheckoutDto) => (o.deliveryMethod ?? DeliveryMethod.HOME) === DeliveryMethod.HOME || o.addressId !== undefined)
   @IsUUID()
-  addressId: string;
+  addressId?: string;
+
+  @ApiPropertyOptional({ enum: DeliveryMethod, default: DeliveryMethod.HOME, description: 'Home, a shipping company office, or pickup from the store' })
+  @IsOptional()
+  @IsEnum(DeliveryMethod)
+  deliveryMethod?: DeliveryMethod;
+
+  @ApiPropertyOptional({ description: 'The shipping company the customer chose' })
+  @IsOptional()
+  @IsUUID()
+  carrierId?: string;
+
+  @ApiPropertyOptional({ description: 'OFFICE: the office to deliver to (required)' })
+  @ValidateIf((o: CheckoutDto) => o.deliveryMethod === DeliveryMethod.OFFICE)
+  @IsUUID()
+  carrierOfficeId?: string;
 
   @ApiProperty({ enum: CHECKOUT_METHODS })
   @IsIn(CHECKOUT_METHODS)
@@ -258,6 +290,20 @@ export class ChangeOrderStatusDto {
   @IsString()
   @MaxLength(100)
   trackingNumber?: string;
+
+  @ApiPropertyOptional({ description: "SHIPPED only: photo of the carrier's receipt (URL from POST admin/files)" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  receiptImageUrl?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'SHIPPED only: photos of the packed order' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  photoUrls?: string[];
 }
 
 export class RecordPaymentDto {

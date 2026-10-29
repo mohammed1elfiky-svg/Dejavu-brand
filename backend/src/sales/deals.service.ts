@@ -16,6 +16,8 @@ export interface DealInput {
   isActive?: boolean;
   atPos?: boolean;
   online?: boolean;
+  maxPieces?: number | null;
+  maxCustomers?: number | null;
   productIds: string[];
 }
 
@@ -72,6 +74,8 @@ export class DealsService {
         isActive: dto.isActive ?? true,
         atPos: dto.atPos ?? true,
         online: dto.online ?? true,
+        maxPieces: dto.maxPieces ?? null,
+        maxCustomers: dto.maxCustomers ?? null,
         products: { create: [...new Set(dto.productIds)].map((productId) => ({ productId })) },
       },
     });
@@ -99,6 +103,8 @@ export class DealsService {
           isActive: dto.isActive,
           atPos: dto.atPos,
           online: dto.online,
+          maxPieces: dto.maxPieces,
+          maxCustomers: dto.maxCustomers,
         },
       });
       if (dto.productIds) {
@@ -136,8 +142,16 @@ export class DealsService {
       isActive: d.isActive,
       atPos: d.atPos,
       online: d.online,
+      maxPieces: d.maxPieces,
+      maxCustomers: d.maxCustomers,
+      usedPieces: d.usedPieces,
+      usedCustomers: d.usedCustomers,
+      /** Sold out: the pieces or customers it was limited to are taken. */
+      exhausted: (d.maxPieces !== null && d.usedPieces >= d.maxPieces) || (d.maxCustomers !== null && d.usedCustomers >= d.maxCustomers),
       label: dealLabel(d),
-      running: d.isActive && d.startsAt <= now && (!d.endsAt || d.endsAt > now),
+      running:
+        d.isActive && d.startsAt <= now && (!d.endsAt || d.endsAt > now) &&
+        !((d.maxPieces !== null && d.usedPieces >= d.maxPieces) || (d.maxCustomers !== null && d.usedCustomers >= d.maxCustomers)),
       products: d.products.map((p) => ({ id: p.product.id, nameAr: p.product.nameAr, slug: p.product.slug, basePrice: p.product.basePrice, imageUrl: p.product.images[0]?.url ?? null })),
     };
   }

@@ -152,8 +152,11 @@ export class ExcelService {
       const customers = await this.prisma.customer.findMany({
         where: { code: { not: 'CUS-WALKIN' } },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, code: true, name: true, phone: true, governorate: true, isMerchant: true, createdAt: true },
+        select: { id: true, code: true, name: true, phone: true, governorate: true, isMerchant: true, createdAt: true, username: true, birthDate: true, status: true, loyaltyPoints: true, email: true },
       });
+      const last = new Map(
+        (await this.prisma.order.groupBy({ by: ['customerId'], where: { status: { not: 'CANCELLED' } }, _max: { placedAt: true } })).map((s) => [s.customerId, s._max.placedAt]),
+      );
       const spent = new Map(
         (
           await this.prisma.order.groupBy({ by: ['customerId'], where: { status: { not: 'CANCELLED' } }, _sum: { grandTotal: true }, _count: { _all: true } })
@@ -170,6 +173,12 @@ export class ExcelService {
           { header: 'عدد الطلبات', key: 'orders', width: 12 },
           { header: 'إجمالي المشتريات (ر.س)', key: 'spent', width: 18 },
           { header: 'تاريخ التسجيل', key: 'joined', width: 14 },
+          { header: 'اليوزر', key: 'username', width: 16 },
+          { header: 'تاريخ الميلاد', key: 'birth', width: 14 },
+          { header: 'البريد', key: 'email', width: 20 },
+          { header: 'نقاط الولاء', key: 'points', width: 12 },
+          { header: 'آخر شراء', key: 'lastOrder', width: 14 },
+          { header: 'الحالة', key: 'status', width: 12 },
         ],
         customers.map((c) => ({
           code: c.code,
@@ -180,6 +189,12 @@ export class ExcelService {
           orders: spent.get(c.id)?._count._all ?? 0,
           spent: Number(spent.get(c.id)?._sum.grandTotal ?? 0),
           joined: c.createdAt.toISOString().slice(0, 10),
+          username: c.username ? `@${c.username}` : '',
+          birth: c.birthDate ? c.birthDate.toISOString().slice(0, 10) : '',
+          email: c.email ?? '',
+          points: c.loyaltyPoints,
+          lastOrder: last.get(c.id)?.toISOString().slice(0, 10) ?? '',
+          status: c.status === 'ACTIVE' ? 'نشط' : c.status === 'BLOCKED' ? 'محظور' : c.status === 'PENDING' ? 'بانتظار التحقق' : c.status,
         })),
       );
     }

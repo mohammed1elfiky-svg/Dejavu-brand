@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { GOVERNORATE_NAMES } from '../../common/yemen';
 
 /**
@@ -60,6 +60,21 @@ export class CustomerRegisterDto {
   @IsOptional()
   @IsIn(['الحوبان', 'المدينة'])
   area?: string;
+
+  @ApiPropertyOptional({ example: 'sara.ali', description: 'Public username: two English letters first, then letters, digits, . or _' })
+  @IsOptional()
+  @Matches(/^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$/, { message: 'اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _' })
+  username?: string;
+
+  @ApiPropertyOptional({ description: 'The username is also the customer\'s Instagram handle (verified with a code sent from Instagram)' })
+  @IsOptional()
+  @IsBoolean()
+  usernameIsInstagram?: boolean;
+
+  @ApiPropertyOptional({ example: '1998-05-14' })
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
 
   @ApiPropertyOptional({ enum: ['SMS', 'WHATSAPP'], default: 'SMS', description: 'How the sign-up code is sent' })
   @IsOptional()

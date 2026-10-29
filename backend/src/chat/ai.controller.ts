@@ -1,6 +1,6 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
-import { ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Query } from '@nestjs/common';
+import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { RequirePermissions } from '../common/decorators/auth.decorators';
 import { AiService } from './ai.service';
 
@@ -8,6 +8,16 @@ export class ProductDraftDto {
   @ApiProperty({ description: 'The photo, uploaded with POST admin/files (or admin/files/private)' })
   @IsUUID()
   imageFileId: string;
+
+  @ApiPropertyOptional({ description: 'Instructions for this photo only (instead of the saved prompt)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  prompt?: string;
+}
+
+export class ProductPromptDto {
+  @ApiProperty({ description: '"" restores the default' }) @IsString() @MaxLength(2000) prompt: string;
 }
 
 export class MarketingTextDto {
@@ -25,7 +35,20 @@ export class AdminAiController {
   @Post('product-draft')
   @HttpCode(HttpStatus.OK)
   productDraft(@Body() dto: ProductDraftDto) {
-    return this.ai.productDraft(dto.imageFileId);
+    return this.ai.productDraft(dto.imageFileId, dto.prompt);
+  }
+
+  /** The saved instructions used when drafting products from photos. */
+  @RequirePermissions('products.write')
+  @Get('product-prompt')
+  productPrompt() {
+    return this.ai.productPrompt();
+  }
+
+  @RequirePermissions('products.write')
+  @Put('product-prompt')
+  setProductPrompt(@Body() dto: ProductPromptDto) {
+    return this.ai.setProductPrompt(dto.prompt);
   }
 
   /** Three wordings for a notification or SMS. */

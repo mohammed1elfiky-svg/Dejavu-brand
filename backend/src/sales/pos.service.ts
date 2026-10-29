@@ -1,4 +1,5 @@
-import { activeDeals } from './deals.db';
+import { activeDeals, recordDealUsage, releaseDealUsage } from './deals.db';
+import { LoyaltyService } from './loyalty';
 import { applyDeals } from './deals';
 import { OwnerAlertsService } from '../notifications/owner-alerts.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -93,6 +94,7 @@ export class PosService {
     private readonly shifts: ShiftService,
     private readonly ownerAlerts: OwnerAlertsService,
     private readonly transfers: TransfersService,
+    private readonly loyalty: LoyaltyService,
   ) {}
 
   // -------------------------------------------------------------- catalog ---
@@ -207,7 +209,7 @@ export class PosService {
       quantity: quantities.get(v.id)!,
       unitPrice: buyerPrice(v.price ?? v.product.basePrice, v.product.wholesalePrice, promos.get(v.product.id), buyer),
     }));
-    const offers = buyer?.isMerchant ? null : applyDeals(lines, await activeDeals(this.prisma, lines.map((l) => l.productId), 'pos'));
+    const offers = buyer?.isMerchant ? null : applyDeals(lines, await activeDeals(this.prisma, lines.map((l) => l.productId), 'pos', new Date(), dto.customerId));
     const subtotal = money(sum(lines.map((l) => dec(l.unitPrice).mul(l.quantity))));
     const dealDiscount = offers?.total ?? ZERO;
     return {
@@ -259,7 +261,7 @@ export class PosService {
           ? null
           : applyDeals(
               basket.map((b) => ({ productId: variants.find((v) => v.id === b.variantId)!.product.id, quantity: b.quantity, unitPrice: b.unitPrice })),
-              await activeDeals(tx, variants.map((v) => v.product.id), 'pos'),
+              await activeDeals(tx, variants.map((v) => v.product.id), 'pos', new Date(), customerId),
             );
       // A coupon code (only when the store has live coupons) instead of a typed discount.
       let coupon: Coupon | null = null;
@@ -419,6 +421,10 @@ export class PosService {
             : {}),
         });
       }
+      if (offers?.applied.length) {
+        const walkIn = customerId === (await this.walkInId(tx));
+        await recordDealUsage(tx, offers.applied, walkIn ? null : customerId, order.id);
+      }
       if (coupon) {
         const claimed = await tx.$executeRaw`
           UPDATE coupons SET used_count = used_count + 1
@@ -471,6 +477,7 @@ export class PosService {
         lines: [...lines, { account: 'AR', credit: total, customerId }],
       });
       await this.audit.log({ userId: cashierId, action: 'CREATE', entityType: 'PosSale', entityId: order.id, after: dto }, tx);
+      await this.loyalty.earnForOrder(tx, order.id);
       return order.id;
     }
   }
@@ -824,6 +831,8 @@ export class PosService {
     }
     await tx.payment.updateMany({ where: { orderId: id }, data: { status: TransactionStatus.CANCELLED } });
     await this.transfers.release(tx, { orderId: id });
+    await releaseDealUsage(tx, id);
+    await this.loyalty.reverseForOrder(tx, id);
     if (order.couponId) {
       await tx.couponUsage.deleteMany({ where: { orderId: id } });
       await tx.coupon.update({ where: { id: order.couponId }, data: { usedCount: { decrement: 1 } } });

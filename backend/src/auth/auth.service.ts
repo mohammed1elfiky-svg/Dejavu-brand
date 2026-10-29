@@ -7,7 +7,7 @@ import { SequenceService } from '../common/sequence.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto, CustomerLoginDto, CustomerRegisterDto, normalizePhone, PasswordResetDto, PHONE_REGEX, StaffLoginDto } from './dto/auth.dto';
 import { hashPassword, verifyPassword } from './password';
-import { instagramCode, normalizeUsername, USERNAME_REGEX } from '../common/username';
+import { instagramCode, normalizeUsername, USERNAME_MESSAGE, USERNAME_REGEX } from '../common/username';
 import { TokenService } from './token.service';
 
 const INVALID_CREDENTIALS = 'Invalid credentials';
@@ -101,8 +101,9 @@ export class AuthService {
     await this.assertNotBlocked(phone);
     const username = dto.username ? normalizeUsername(dto.username) : null;
     if (username) {
-      if (!USERNAME_REGEX.test(username)) throw new BadRequestException('اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _');
-      const taken = await this.prisma.customer.findFirst({ where: { username, id: { not: pending?.id } }, select: { id: true } });
+      if (!USERNAME_REGEX.test(username)) throw new BadRequestException(USERNAME_MESSAGE);
+      // Only a checked username is taken; asking for one reserves nothing until the store verifies it.
+      const taken = await this.prisma.customer.findFirst({ where: { username }, select: { id: true } });
       if (taken) throw new ConflictException({ statusCode: 409, code: 'USERNAME_TAKEN', message: 'اليوزر مستخدم، اختر يوزراً آخر' });
     }
     const otpRequired = await this.sms.otpRequired();
@@ -113,10 +114,10 @@ export class AuthService {
       passwordHash,
       governorate: dto.governorate,
       area: dto.governorate === 'تعز' ? dto.area : null,
-      username,
       birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
-      // Instagram handle: verified by staff once the customer sends the code from Instagram.
-      ...(username && dto.usernameIsInstagram ? { igStatus: InstagramStatus.PENDING, igCode: instagramCode() } : {}),
+      gender: dto.gender ?? undefined,
+      // The Instagram handle waits for the store to check the code the customer sends from Instagram.
+      ...(username ? { pendingUsername: username, igStatus: InstagramStatus.PENDING, igCode: instagramCode() } : {}),
     };
 
     if (otpRequired && !dto.otp) {
@@ -190,6 +191,8 @@ export class AuthService {
         governorate: true,
         area: true,
         username: true,
+        pendingUsername: true,
+        findableByPhone: true,
         avatarUrl: true,
         bio: true,
         igStatus: true,

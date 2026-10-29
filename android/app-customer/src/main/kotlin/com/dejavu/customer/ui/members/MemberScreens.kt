@@ -118,8 +118,6 @@ open class LoadViewModel<T>(private val loader: suspend () -> Result<T>) : BaseV
     }
 }
 
-private val USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
-
 // ---------------------------------------------------------------- profile ---
 
 class ProfileViewModel(private val repo: MembersRepository) : LoadViewModel<MyProfile>({ repo.profile() }) {
@@ -161,11 +159,12 @@ fun ProfileScreen(onBack: () -> Unit) {
         Column(Modifier.padding(padding).fillMaxSize()) {
             LoadContent(state, onRetry = vm::load) { p ->
                 var name by rememberSaveable(p) { mutableStateOf(p.name) }
-                var username by rememberSaveable(p) { mutableStateOf(p.username.orEmpty()) }
-                var isInstagram by rememberSaveable(p) { mutableStateOf(p.igStatus != "NONE") }
+                var username by rememberSaveable(p) { mutableStateOf(p.username ?: p.pendingUsername.orEmpty()) }
+                var gender by rememberSaveable(p) { mutableStateOf(p.gender?.takeIf { it == "MALE" || it == "FEMALE" }) }
+                var findable by rememberSaveable(p) { mutableStateOf(p.findableByPhone) }
                 var bio by rememberSaveable(p) { mutableStateOf(p.bio.orEmpty()) }
                 var birth by rememberSaveable(p) { mutableStateOf(p.birthDate?.take(10).orEmpty()) }
-                val usernameError = username.isNotBlank() && !USERNAME.matches(username.trim())
+                val usernameError = username.isNotBlank() && !com.dejavu.core.model.UsernameRule.valid(username)
                 val birthError = birth.isNotBlank() && runCatching { java.time.LocalDate.parse(birth.trim()) }.isFailure
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     GlassCard(Modifier.fillMaxWidth()) {
@@ -173,7 +172,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                             AsyncImage(model = p.avatarUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(72.dp).clip(CircleShape))
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(p.username?.let { "@$it" } ?: p.name, style = MaterialTheme.typography.titleMedium)
+                                    Text(p.username?.let { "@$it" } ?: p.pendingUsername?.let { "@$it (قيد التوثيق)" } ?: p.name, style = MaterialTheme.typography.titleMedium)
                                     VerifiedBadge(p.instagramVerified)
                                 }
                                 Text("${p.counts.followers} متابِع · ${p.counts.following} متابَع · ${p.counts.posts} منشور", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -181,11 +180,11 @@ fun ProfileScreen(onBack: () -> Unit) {
                             }
                         }
                     }
-                    if (p.igStatus == "PENDING" && p.igCode != null) {
+                    if (p.igStatus == "PENDING" && p.igCode != null && p.pendingUsername != null) {
                         GlassCard(Modifier.fillMaxWidth()) {
                             Text("وثّق يوزرك في انستجرام", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "أرسل هذا الكود من حسابك @${p.username} في انستجرام إلى حساب المتجر${p.storeInstagram?.let { " @${it.removePrefix("@")}" } ?: ""}، وسيوثّقه فريقنا. حسابك يعمل عادي حتى ذلك الحين.",
+                                "أرسل هذا الكود من حسابك @${p.pendingUsername} في انستجرام إلى حساب المتجر${p.storeInstagram?.let { " @${it.removePrefix("@")}" } ?: ""}، فيتأكد فريقنا أن اليوزر لك ويظهر بشارة التوثيق. لا يظهر اليوزر لأحد قبل ذلك، وحسابك يعمل عادي.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Text(p.igCode!!, style = MaterialTheme.typography.headlineMedium, color = Liquid.GoldDeep)
@@ -203,18 +202,21 @@ fun ProfileScreen(onBack: () -> Unit) {
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it.filter { c -> !c.isWhitespace() }.take(30) },
-                                label = { Text("اسم المستخدم") },
+                                label = { Text("يوزر انستجرام") },
                                 placeholder = { Text("مثل: sara.ali") },
                                 isError = usernameError,
-                                supportingText = { Text(if (usernameError) "يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _" else "تغيير اليوزر يلغي التوثيق ويحتاج كوداً جديداً") },
+                                supportingText = { Text(if (usernameError) com.dejavu.core.model.UsernameRule.HINT else "تغيير اليوزر يخفي القديم ويحتاج كوداً جديداً للتوثيق") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            if (username.isNotBlank()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = isInstagram, onCheckedChange = { isInstagram = it })
-                                    Text("هذا يوزري في انستجرام", style = MaterialTheme.typography.bodyMedium)
-                                }
+                            Text("الجنس", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(selected = gender == "FEMALE", onClick = { gender = "FEMALE" }, label = { Text("أنثى") })
+                                FilterChip(selected = gender == "MALE", onClick = { gender = "MALE" }, label = { Text("ذكر") })
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("السماح للآخرين بالعثور علي برقم جوالي", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                androidx.compose.material3.Switch(checked = findable, onCheckedChange = { findable = it })
                             }
                             OutlinedTextField(value = bio, onValueChange = { bio = it.take(160) }, label = { Text("نبذة (اختياري)") }, modifier = Modifier.fillMaxWidth())
                             com.dejavu.customer.ui.components.BirthDateField(value = birth, onChange = { birth = it }, error = null, modifier = Modifier.fillMaxWidth())
@@ -226,8 +228,9 @@ fun ProfileScreen(onBack: () -> Unit) {
                             vm.save(
                                 UpdateProfileRequest(
                                     name = name.trim().takeIf { it != p.name },
-                                    username = if (newName != p.username.orEmpty()) newName else null,
-                                    usernameIsInstagram = if (newName.isNotBlank() && isInstagram != (p.igStatus != "NONE")) isInstagram else null,
+                                    username = if (newName != (p.username ?: p.pendingUsername).orEmpty()) newName else null,
+                                    gender = gender?.takeIf { it != p.gender },
+                                    findableByPhone = findable.takeIf { it != p.findableByPhone },
                                     bio = bio.trim().takeIf { it != p.bio.orEmpty() },
                                     birthDate = birth.trim().takeIf { it.isNotEmpty() && it != p.birthDate?.take(10) },
                                 ),
@@ -607,5 +610,43 @@ fun StartGroupGiftDialog(variantId: String, onDismiss: () -> Unit, onStarted: (S
             ) { Text(if (busy) "…" else "ابدأ") }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("تراجع") } },
+    )
+}
+
+/**
+ * Accounts made before gender was asked: once, a small question so the store knows who it is
+ * serving. It closes for good after an answer; "later" only hides it until the app restarts.
+ */
+@Composable
+fun GenderPrompt() {
+    val container = appContainer()
+    val session by container.session.state.collectAsStateWithLifecycle()
+    val customer = (session as? com.dejavu.core.data.SessionState.LoggedIn)?.customer ?: return
+    var later by rememberSaveable { mutableStateOf(false) }
+    var saved by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    if (later || saved || customer.gender == "MALE" || customer.gender == "FEMALE") return
+    var busy by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { later = true },
+        title = { Text("أكمل بياناتك") },
+        text = { Text("اختر الجنس ليناسبك المتجر. تظهر هذه الرسالة مرة واحدة.") },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("FEMALE" to "أنثى", "MALE" to "ذكر").forEach { (code, label) ->
+                    Button(
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                container.members.updateProfile(UpdateProfileRequest(gender = code)).onSuccess { saved = true }
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                    ) { Text(label) }
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = { later = true }) { Text("لاحقاً") } },
     )
 }

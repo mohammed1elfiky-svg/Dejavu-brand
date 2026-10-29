@@ -25,12 +25,12 @@ data class RegisterRequest(
     val otp: String? = null,
     /** How the customer wants the code: SMS or WHATSAPP (they ask the store for it). */
     val otpChannel: String? = null,
-    /** Optional: two English letters, then letters, digits, "." or "_". */
+    /** Optional: the customer's Instagram handle; it shows after the store checks the code they send. */
     val username: String? = null,
-    /** The username is the customer's Instagram account: they get a code to send to the store. */
-    val usernameIsInstagram: Boolean? = null,
     /** yyyy-mm-dd. */
     val birthDate: String? = null,
+    /** MALE or FEMALE. */
+    val gender: String? = null,
 )
 
 /** GET auth/governorates: Yemeni governorates and the rial each uses (Taiz is split in areas). */
@@ -112,11 +112,17 @@ data class Customer(
     val area: String? = null,
     /** The rial of the customer's region (YER old notes / YEQ new notes); null = unknown. */
     val preferredCurrency: String? = null,
+    /** The checked Instagram username (shown to others). */
     val username: String? = null,
+    /** The handle asked for, waiting for the store to check [igCode]. */
+    val pendingUsername: String? = null,
     val avatarUrl: String? = null,
     /** NONE, PENDING (send [igCode] to the store's Instagram) or VERIFIED. */
     val igStatus: String = "NONE",
     val igCode: String? = null,
+    /** MALE, FEMALE or UNSPECIFIED (asked once for older accounts). */
+    val gender: String? = null,
+    val birthDate: String? = null,
 )
 
 // --------------------------------------------------------------- catalog ---
@@ -765,6 +771,8 @@ data class UploadedFile(val id: String, val url: String, val mimeType: String, v
 @Serializable
 data class StoreConfig(
     val requireLogin: Boolean = false,
+    /** Show the community (customers' posts). Usernames, wish lists and gifts work either way. */
+    val socialEnabled: Boolean = false,
     val chat: ChatConfig = ChatConfig(),
 )
 

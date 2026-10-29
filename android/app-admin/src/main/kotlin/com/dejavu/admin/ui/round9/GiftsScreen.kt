@@ -95,7 +95,7 @@ fun GiftsScreen(onBack: () -> Unit, openOrder: (String) -> Unit) {
                 if (list.isEmpty()) {
                     EmptyList(Icons.Filled.Favorite, "لا توجد هدايا هنا", "سجّل فاتورة الكاشير كهدية من شاشة الفاتورة، ويختار المستلم التوصيل أو الاستلام من المحل")
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(list, key = { it.id }) { g ->
                             GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp, onClick = g.saleOrderId?.let { id -> { openOrder(id) } }) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -257,6 +257,8 @@ fun DashboardScreen(
             modifier = Modifier.padding(padding).fillMaxSize(),
         ) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // The day's work comes first, whatever order the cards are in.
+                item(key = "today") { com.dejavu.admin.ui.round9.TodayCard { navigate(R.TODAY) } }
                 shown.forEach { id ->
                     item(key = id) {
                         when (id) {

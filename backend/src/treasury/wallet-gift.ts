@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Injec
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { normalizePhone, PHONE_REGEX } from '../auth/dto/auth.dto';
-import { isUsername, normalizeUsername } from '../common/username';
+import { isUsername, looksLikePhone, normalizeUsername } from '../common/username';
 import { verifyPassword } from '../auth/password';
 import { AuditService } from '../common/audit.service';
 import { CurrencyService, formatIn, inCurrency } from '../common/currency.service';
@@ -59,7 +59,7 @@ export class WalletGiftService {
   /** [who]: a mobile number or a username (with or without @). */
   private async receiver(who: string, senderId: string) {
     const raw = who.trim();
-    const byName = /^@?[A-Za-z]/.test(raw);
+    const byName = !looksLikePhone(raw);
     if (byName ? !isUsername(raw) : !PHONE_REGEX.test(raw.replace(/[\s-]/g, ''))) throw new BadRequestException(byName ? 'اليوزر غير صحيح' : 'رقم الجوال غير صحيح');
     const select = { id: true, name: true, status: true, code: true } as const;
     const to = byName

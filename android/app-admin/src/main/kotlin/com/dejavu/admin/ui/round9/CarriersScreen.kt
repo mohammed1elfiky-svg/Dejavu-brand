@@ -94,7 +94,7 @@ fun CarriersScreen(onBack: () -> Unit) {
                 if (list.isEmpty()) {
                     EmptyList(Icons.Filled.Home, "لا توجد شركات شحن", "أضف شركات الشحن المحلية (مثل الجوال القدسي) ومكاتبها مع أرقام التواصل", "إضافة شركة") { dialog = CarrierDialog.EditCarrier(null) }
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(list, key = { it.id }) { c ->
                             GlassCard(Modifier.fillMaxWidth(), elevation = 4.dp, contentPadding = 12.dp) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

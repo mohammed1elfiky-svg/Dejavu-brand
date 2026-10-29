@@ -2,6 +2,7 @@
 
 package com.dejavu.customer.ui.social
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -300,41 +301,69 @@ private fun PostsShimmer() {
     }
 }
 
-/** Finds a customer by typing the start of their username. */
+/** Finds a friend by the start of a username, or by a full mobile number. */
 @Composable
-fun UserSearchDialog(onDismiss: () -> Unit, openUser: (String) -> Unit) {
-    val repo = appContainer().social
+fun FindContent(openUser: (String) -> Unit, modifier: Modifier = Modifier) {
+    val repo = appContainer().members
     var q by rememberSaveable { mutableStateOf("") }
-    var found by remember { mutableStateOf<List<Poster>>(emptyList()) }
+    var found by remember { mutableStateOf<List<com.dejavu.core.model.FoundPerson>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun run(text: String) {
+        job?.cancel()
+        job = scope.launch {
+            delay(350)
+            message = null
+            if (text.trim().removePrefix("@").length < 2) { found = emptyList(); return@launch }
+            repo.find(text).onSuccess { found = it }.onFailure { found = emptyList(); message = it.message }
+        }
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = q,
+            onValueChange = { q = it.filter { c -> !c.isWhitespace() }.take(32); run(q) },
+            label = { Text("يوزر انستجرام أو رقم الجوال كاملاً") },
+            placeholder = { Text("@sara.ali  أو  777123456") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        found.forEach { p ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp).then(if (p.username != null) Modifier.clickable { openUser(p.username!!) } else Modifier),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Avatar(p.avatarUrl, 40.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(p.username?.let { "@$it" } ?: p.name, style = MaterialTheme.typography.titleSmall)
+                    if (p.username == null) Text("${p.name} · بلا يوزر موثّق، يمكنك إهداؤه رصيداً من المحفظة برقمه", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else if (p.viaPhone) Text(p.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (p.instagramVerified) com.dejavu.customer.ui.members.VerifiedBadge(true)
+            }
+        }
+        if (found.isEmpty() && q.trim().removePrefix("@").length >= 2 && message == null) {
+            Text("لا نتائج. تأكد من اليوزر، أو أن الرقم كامل، وأن صاحبه يسمح بالبحث برقمه.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun UserSearchDialog(onDismiss: () -> Unit, openUser: (String) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ابحث بيوزر") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = q,
-                    onValueChange = {
-                        q = it.filter { c -> !c.isWhitespace() }.take(30)
-                        job?.cancel()
-                        job = scope.launch {
-                            delay(300)
-                            found = if (q.trim().removePrefix("@").length >= 2) repo.searchUsers(q).getOrDefault(emptyList()) else emptyList()
-                        }
-                    },
-                    placeholder = { Text("@sara") },
-                    singleLine = true,
-                )
-                found.forEach { p ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Avatar(p.avatarUrl, 36.dp, p.stylist)
-                        UserLine(p, onClick = { p.username?.let(openUser) })
-                    }
-                }
-                if (found.isEmpty() && q.trim().removePrefix("@").length >= 2) Text("لا نتائج", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
+        title = { Text("ابحث عن صديقة") },
+        text = { FindContent(openUser) },
         confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
     )
+}
+
+/** "ابحث عن صديقة": for gifts and wishlists, with or without the community. */
+@Composable
+fun FindFriendsScreen(onBack: () -> Unit, openUser: (String) -> Unit) {
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = { com.dejavu.core.ui.BackTopBar("ابحث عن صديقة", onBack) }) { padding ->
+        Column(Modifier.padding(padding).padding(16.dp).fillMaxSize()) { FindContent(openUser) }
+    }
 }

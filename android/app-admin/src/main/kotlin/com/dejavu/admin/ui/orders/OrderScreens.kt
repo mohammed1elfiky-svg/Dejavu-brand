@@ -878,12 +878,17 @@ private fun PhotoZoomDialog(image: ImageBitmap, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * Handing an order to the carrier, in three steps on a bottom sheet: the company and tracking,
+ * the carrier's receipt photo, then photos of the packed order and the confirmation.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (carrier: String, tracking: String, receipt: ByteArray?, photos: List<ByteArray>) -> Unit) {
     val repo = adminContainer().round9
     var carriers by remember { mutableStateOf<List<com.dejavu.core.admin.Carrier>>(emptyList()) }
     LaunchedEffect(Unit) { carriers = repo.carriers().getOrNull().orEmpty().filter { it.isActive } }
+    var step by rememberSaveable { mutableStateOf(0) }
     var carrier by rememberSaveable { mutableStateOf(order.carrier?.name ?: order.shippingAddress.carrier ?: "") }
     var tracking by rememberSaveable { mutableStateOf("") }
     var receipt by remember { mutableStateOf<ByteArray?>(null) }
@@ -892,51 +897,70 @@ private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (
     val photos = remember { androidx.compose.runtime.mutableStateListOf<ByteArray>() }
     val photoCamera = rememberImagePicker { bytes -> if (photos.size < 5) photos.add(bytes) }
     val photoGallery = com.dejavu.core.ui.media.rememberMultiImagePicker(maxCount = { 5 - photos.size }) { list -> photos.addAll(list) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("تسليم لشركة الشحن") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("سيتم خصم المخزون وتسجيل قيد المبيعات والتكلفة.", style = MaterialTheme.typography.bodySmall)
-                if (order.paymentMethod == PaymentMethod.CASH_ON_DELIVERY) {
-                    Text("المطلوب تحصيله: ${if (order.isForeign) order.inOrderCurrency(order.balanceDue) else Money.format(order.balanceDue)}", color = MaterialTheme.colorScheme.secondary)
-                }
-                if (carriers.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        carriers.forEach { c -> FilterChip(selected = carrier == c.name, onClick = { carrier = c.name }, label = { Text(c.name) }) }
-                    }
-                }
-                OutlinedTextField(value = carrier, onValueChange = { carrier = it }, label = { Text("شركة الشحن") }, singleLine = true)
-                OutlinedTextField(value = tracking, onValueChange = { tracking = it }, label = { Text("رقم التتبع (اختياري)") }, singleLine = true)
-                Text("صورة سند الشحن", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = picker.fromCamera) { Text("📷 تصوير") }
-                    OutlinedButton(onClick = picker.fromGallery) { Text("من المعرض") }
-                    if (receipt != null) Text("✓ أُرفقت", color = Success)
-                }
-                Text("صورة الطلب جاهزاً", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = photoCamera.fromCamera, enabled = photos.size < 5) { Text("📷 تصوير") }
-                    OutlinedButton(onClick = photoGallery.open, enabled = photos.size < 5) { Text("من المعرض") }
-                    if (photos.isNotEmpty()) Text("✓ ${photos.size}", color = Success)
-                }
-                if (photos.isNotEmpty()) {
-                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        itemsIndexed(photos.toList()) { i, bytes ->
-                            Box {
-                                val bmp = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 120, (120f * b.height / b.width).toInt().coerceAtLeast(1), true).asImageBitmap() } }
-                                bmp?.let { androidx.compose.foundation.Image(it, null, Modifier.size(64.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
-                                Text("✕", Modifier.align(Alignment.TopEnd).clickable { photos.removeAt(i) }.padding(4.dp), color = Color.White)
+    val titles = listOf("١ شركة الشحن", "٢ سند الشحن", "٣ صور الطلب")
+
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("تسليم ${order.number} لشركة الشحن", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                titles.forEachIndexed { i, t -> FilterChip(selected = step == i, onClick = { if (i == 0 || carrier.isNotBlank()) step = i }, label = { Text(t) }) }
+            }
+            Column(Modifier.verticalScroll(rememberScrollState()).heightIn(min = 200.dp, max = 420.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                when (step) {
+                    0 -> {
+                        Text("سيتم خصم المخزون وتسجيل قيد المبيعات والتكلفة.", style = MaterialTheme.typography.bodySmall)
+                        if (order.paymentMethod == PaymentMethod.CASH_ON_DELIVERY) {
+                            Text("المطلوب تحصيله: ${if (order.isForeign) order.inOrderCurrency(order.balanceDue) else Money.format(order.balanceDue)}", color = MaterialTheme.colorScheme.secondary)
+                        }
+                        if (carriers.isNotEmpty()) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                carriers.forEach { c -> FilterChip(selected = carrier == c.name, onClick = { carrier = c.name }, label = { Text(c.name) }) }
                             }
                         }
+                        OutlinedTextField(value = carrier, onValueChange = { carrier = it }, label = { Text("شركة الشحن") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = tracking, onValueChange = { tracking = it }, label = { Text("رقم التتبع (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    }
+                    1 -> {
+                        Text("صوّر السند الذي أعطتك إياه شركة الشحن. يراه العميل في طلبه.", style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(onClick = picker.fromCamera) { Text("📷 تصوير") }
+                            OutlinedButton(onClick = picker.fromGallery) { Text("من المعرض") }
+                            if (receipt != null) Text("✓ أُرفق", color = Success)
+                        }
+                        Text("يمكنك تخطي هذه الخطوة وإضافة السند لاحقاً.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    }
+                    else -> {
+                        Text("صورة الطلب جاهزاً (حتى 5 صور)", style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(onClick = photoCamera.fromCamera, enabled = photos.size < 5) { Text("📷 تصوير") }
+                            OutlinedButton(onClick = photoGallery.open, enabled = photos.size < 5) { Text("من المعرض") }
+                            if (photos.isNotEmpty()) Text("✓ ${photos.size}", color = Success)
+                        }
+                        if (photos.isNotEmpty()) {
+                            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                itemsIndexed(photos.toList()) { i, bytes ->
+                                    Box {
+                                        val bmp = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 160, (160f * b.height / b.width).toInt().coerceAtLeast(1), true).asImageBitmap() } }
+                                        bmp?.let { androidx.compose.foundation.Image(it, null, Modifier.size(80.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+                                        Text("✕", Modifier.align(Alignment.TopEnd).clickable { photos.removeAt(i) }.padding(6.dp), color = Color.White)
+                                    }
+                                }
+                            }
+                        }
+                        if (order.isAppOrder) Text("يرى العميل الصور وسند الشحن في تفاصيل طلبه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                     }
                 }
-                if (order.isAppOrder) Text("يرى العميل صور الطلب وسند الشحن في تفاصيل طلبه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
-        },
-        confirmButton = { TextButton(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim(), receipt, photos.toList()) }, enabled = carrier.isNotBlank()) { Text("شحن") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
-    )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (step > 0) OutlinedButton(onClick = { step -= 1 }, modifier = Modifier.weight(1f)) { Text("رجوع") }
+                if (step < 2) {
+                    Button(onClick = { step += 1 }, enabled = carrier.isNotBlank(), modifier = Modifier.weight(1f)) { Text("التالي") }
+                } else {
+                    Button(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim(), receipt, photos.toList()) }, enabled = carrier.isNotBlank(), modifier = Modifier.weight(1f)) { Text("تأكيد الشحن") }
+                }
+            }
+        }
+    }
 }
 
 /** Prints the parcel label: customer name, phone, address and the order number. */

@@ -173,7 +173,7 @@ private val menu = listOf(
     MenuEntry(R.CURRENCY, "العملات وأسعار الصرف", "إضافة العملات وتعديل أسعارها وإظهارها للعملاء", Icons.Filled.Info, listOf(Perm.ORDERS_READ, Perm.SETTINGS_MANAGE), FINANCE),
     MenuEntry(R.CARRIERS, "شركات الشحن ومكاتبها", "الجوال القدسي وغيرها: المكاتب وعناوينها وأرقامها", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.LOYALTY, "نقاط الولاء", "تفعيل النقاط لكل العملاء أو التجار أو عملاء محددين", Icons.Filled.Star, listOf(Perm.SETTINGS_MANAGE), STORE),
-    MenuEntry(R.SOCIAL, "السفراء ومنشورات العملاء", "مكافأة من يبيع منتجاتنا بصوره، وإخفاء المنشورات", Icons.Filled.Favorite, listOf(Perm.SETTINGS_MANAGE), STORE),
+    MenuEntry(R.SOCIAL, "المجتمع والسفراء", "تفعيل أو إخفاء «المجتمع» عن العملاء، مكافأة السفراء، وإخفاء منشورات", Icons.Filled.Favorite, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.STORE_SETUP, "إعدادات تطبيق العملاء", "طرق الدفع والمحافظات والدفع عند الاستلام", Icons.Filled.Settings, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.CUSTOMER_APP, "صفحة المتجر والخوادم", "عن المتجر، تسجيل الدخول قبل التصفح، وعناوين الخادم", Icons.Filled.Home, listOf(Perm.SETTINGS_MANAGE), STORE),
     MenuEntry(R.ASSISTANT, "مساعد الدردشة", "تعليمات البوت ورسالة الترحيب ومحادثات العملاء", Icons.Filled.Email, listOf("chat.manage"), STORE),

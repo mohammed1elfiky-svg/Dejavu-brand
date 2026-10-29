@@ -693,7 +693,7 @@ private fun CountDetail(vm: StockCountsViewModel, id: String, session: StaffSess
             val surplusValue = surplus.fold(BigDecimal.ZERO) { acc, i -> acc + Money.parse(i.differenceValue).abs() }
             val shortageValue = shortage.fold(BigDecimal.ZERO) { acc, i -> acc + Money.parse(i.differenceValue).abs() }
             val net = surplusValue - shortageValue
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
                     InfoCard {

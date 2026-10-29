@@ -40,6 +40,9 @@ data class MyProfile(
     val name: String,
     val phone: String = "",
     val username: String? = null,
+    val pendingUsername: String? = null,
+    val gender: String? = null,
+    val findableByPhone: Boolean = true,
     val avatarUrl: String? = null,
     val bio: String? = null,
     val birthDate: String? = null,
@@ -60,10 +63,11 @@ data class MyProfile(
 data class UpdateProfileRequest(
     val name: String? = null,
     val username: String? = null,
-    val usernameIsInstagram: Boolean? = null,
     val bio: String? = null,
     val avatarUrl: String? = null,
     val birthDate: String? = null,
+    val gender: String? = null,
+    val findableByPhone: Boolean? = null,
 )
 
 @Serializable
@@ -297,7 +301,16 @@ data class SocialProfile(
 @Serializable
 data class WishlistOf(val owner: Poster, val items: List<Item> = emptyList()) {
     @Serializable
-    data class Item(val productId: String, val name: String = "", val slug: String = "", val price: String = "0", val imageUrl: String? = null, val giftVariantId: String? = null)
+    data class Item(
+        val productId: String,
+        val name: String = "",
+        val slug: String = "",
+        val price: String = "0",
+        val imageUrl: String? = null,
+        val giftVariantId: String? = null,
+        /** A friend is already collecting for it ("قيد الإهداء"). */
+        val pendingGift: Boolean = false,
+    )
 }
 
 @Serializable
@@ -306,3 +319,23 @@ data class ShopResult(val added: Int = 0, val skipped: List<String> = emptyList(
 /** Ambassador rewards from my posts: [paid] and [pending] in SAR. */
 @Serializable
 data class MyRewards(val paid: String = "0", val pending: String = "0")
+
+/** The username a customer uses is their Instagram handle, so it follows Instagram's rule. */
+object UsernameRule {
+    private val regex = Regex("^(?!.*\\.\\.)(?!.*\\.$)[A-Za-z0-9._]{1,30}$")
+
+    fun clean(raw: String): String = raw.trim().removePrefix("@")
+    fun valid(raw: String): Boolean = regex.matches(clean(raw))
+    const val HINT = "حروف إنجليزية وأرقام ونقطة أو _ (حتى 30)، بلا نقطتين متتاليتين ولا نقطة في آخره"
+}
+
+/** GET store/me/find: a friend found by username or full mobile number. [username] is null without a checked one. */
+@Serializable
+data class FoundPerson(
+    val id: String,
+    val username: String? = null,
+    val name: String = "",
+    val avatarUrl: String? = null,
+    val instagramVerified: Boolean = false,
+    val viaPhone: Boolean = false,
+)

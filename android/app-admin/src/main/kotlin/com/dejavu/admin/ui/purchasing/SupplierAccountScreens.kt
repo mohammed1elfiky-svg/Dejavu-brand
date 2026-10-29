@@ -259,7 +259,7 @@ fun SupplierAccountScreen(supplierId: String, session: StaffSession.LoggedIn, on
                 ?: account.vouchers.firstNotNullOfOrNull { v -> v.foreignCurrency?.takeIf { it != "USD" } }
                 ?: "CNY"
             val party = if (shipping) "شركة الشحن" else "المورد"
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {

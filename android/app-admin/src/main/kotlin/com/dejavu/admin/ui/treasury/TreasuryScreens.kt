@@ -726,7 +726,7 @@ fun CashBoxScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> Unit
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { box ->
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

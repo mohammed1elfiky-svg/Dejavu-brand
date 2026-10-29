@@ -93,16 +93,16 @@ class SessionRepository(private val api: DejavuApi, private val tokens: TokenSto
         otp: String? = null,
         otpChannel: String? = null,
         username: String? = null,
-        usernameIsInstagram: Boolean = false,
         birthDate: String? = null,
+        gender: String? = null,
     ): Result<SignUpResult> = apiCall {
         val user = username?.trim()?.removePrefix("@")?.ifBlank { null }
         api.register(
             RegisterRequest(
                 name.trim(), phone.normalizedPhone(), password, email?.trim()?.ifBlank { null }, governorate, area, otp?.trim()?.ifBlank { null }, otpChannel,
                 username = user,
-                usernameIsInstagram = if (user != null && usernameIsInstagram) true else null,
                 birthDate = birthDate?.ifBlank { null },
+                gender = gender,
             ),
         )
     }.map { r ->
@@ -553,6 +553,7 @@ class MembersRepository(private val api: DejavuApi) {
     suspend fun profile() = apiCall { api.profile() }
     suspend fun updateProfile(request: com.dejavu.core.model.UpdateProfileRequest) = apiCall { api.updateProfile(request) }
     suspend fun checkUsername(username: String) = apiCall { api.checkUsername(username.trim().removePrefix("@")) }
+    suspend fun find(q: String) = apiCall { api.findPeople(q.trim()) }
 
     /** Uploads a photo anyone may see (the profile picture) and returns its address. */
     suspend fun uploadPublicImage(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {

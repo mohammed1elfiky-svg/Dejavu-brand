@@ -1129,6 +1129,8 @@ data class AdminCustomerDetail(
     val phone: String,
     val email: String? = null,
     val status: String = "ACTIVE",
+    /** MALE, FEMALE or UNSPECIFIED. */
+    val gender: String? = null,
     val ledgerBalance: String,
     val lifetime: Lifetime,
     val orders: List<Order> = emptyList(),

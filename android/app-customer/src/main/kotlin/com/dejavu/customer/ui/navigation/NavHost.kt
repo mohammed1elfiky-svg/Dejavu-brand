@@ -99,6 +99,7 @@ object Routes {
     const val WISHLIST = "wishlist"
     const val PRE_ORDERS = "pre-orders"
     const val FEED = "feed"
+    const val FIND = "find-friends"
     const val USER = "user/{username}?tab={tab}"
     const val POST = "post/{id}"
     const val NEW_POST = "new-post"
@@ -230,17 +231,21 @@ fun DejavuNavHost() {
         container.walletOpened()
     }
     // Needed both for push and for the background inbox checks used without Firebase.
-    if (session is SessionState.LoggedIn) AskNotificationPermission()
+    if (session is SessionState.LoggedIn) {
+        AskNotificationPermission()
+        com.dejavu.customer.ui.members.GenderPrompt()
+    }
 
+    val shownTabs = tabs.filter { it.route != Routes.FEED || config.socialEnabled }
     val transitions = remember { IosTransitions(tabs.map { it.route }.toSet()) }
     Scaffold(
         // Screens draw their own top bars; here only the bottom inset is handled.
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (!signInFirst && tabs.any { it.route == route }) {
+            if (!signInFirst && shownTabs.any { it.route == route }) {
                 FloatingGlassBar {
-                    tabs.forEach { tab ->
+                    shownTabs.forEach { tab ->
                         GlassNavItem(
                             selected = route == tab.route,
                             onClick = { nav.switchTab(tab.route) },
@@ -367,6 +372,7 @@ fun DejavuNavHost() {
                     groupGifts = { nav.navigate(Routes.GROUP_GIFTS) },
                     birthdays = { nav.navigate(Routes.BIRTHDAYS) },
                     birthdayCard = { nav.navigate(Routes.BIRTHDAY_CARD) },
+                    findFriends = { nav.navigate(Routes.FIND) },
                 )
             }
             page(Routes.FEED) {
@@ -421,6 +427,9 @@ fun DejavuNavHost() {
             }
             page(Routes.BIRTHDAY_CARD) {
                 com.dejavu.customer.ui.social.BirthdayCardScreen(onBack = { nav.popBackStack() }, openMyPage = { nav.navigate(Routes.user(it, tab = 1)) })
+            }
+            page(Routes.FIND) {
+                com.dejavu.customer.ui.social.FindFriendsScreen(onBack = { nav.popBackStack() }, openUser = { nav.navigate(Routes.user(it, tab = 1)) })
             }
             page(Routes.PROFILE) { com.dejavu.customer.ui.members.ProfileScreen(onBack = { nav.popBackStack() }) }
             page(Routes.LOYALTY) { com.dejavu.customer.ui.members.LoyaltyScreen(onBack = { nav.popBackStack() }) }

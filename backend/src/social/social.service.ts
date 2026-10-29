@@ -31,7 +31,7 @@ const AMBASSADOR_DEFAULTS: AmbassadorSettings = { enabled: true, percent: 3, kin
 /** "منسّق متميز": this many followers, or this many likes on all posts. */
 const STYLIST_FOLLOWERS = 50;
 const STYLIST_LIKES = 200;
-const MENTION = /@([A-Za-z]{2}[A-Za-z0-9._]{1,28})/g;
+const MENTION = /@([A-Za-z0-9._]{1,30})/g;
 
 const tagInclude = {
   product: { select: { id: true, nameAr: true, slug: true, basePrice: true, status: true, images: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true } } } },
@@ -91,6 +91,16 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
     return c;
   }
 
+  /** The community can be switched off by the owner; usernames, wish lists and gifts keep working. */
+  async enabled() {
+    const row = await this.prisma.setting.findUnique({ where: { key: 'store.app' } });
+    return !!(row?.value as { socialEnabled?: boolean } | null)?.socialEnabled;
+  }
+
+  private async assertEnabled() {
+    if (!(await this.enabled())) throw new ForbiddenException({ statusCode: 403, code: 'SOCIAL_OFF', message: 'المجتمع غير مفعّل حالياً' });
+  }
+
   private async requireUsername(customerId: string) {
     const c = await this.me(customerId);
     if (!c.username) throw new UnprocessableEntityException({ statusCode: 422, code: 'NO_USERNAME', message: 'اختر يوزراً لحسابك أولاً من «حسابي»' });
@@ -100,6 +110,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   // ---------------------------------------------------------------- posts ---
 
   async createPost(customerId: string, dto: NewPost) {
+    await this.assertEnabled();
     const me = await this.requireUsername(customerId);
     const images = dto.images.map((u) => u.trim()).filter(Boolean);
     if (!images.length) throw new BadRequestException('أضف صورة واحدة على الأقل');
@@ -125,13 +136,14 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
 
   /** Customers named with @username in [text] (not [selfId]). */
   private async mentionedIn(text: string | undefined | null, selfId: string) {
-    const names = [...new Set([...(text ?? '').matchAll(MENTION)].map((m) => normalizeUsername(m[1])))].slice(0, 20);
+    const names = [...new Set([...(text ?? '').matchAll(MENTION)].map((m) => normalizeUsername(m[1]).replace(/\.+$/, '')))].slice(0, 20);
     if (!names.length) return [];
     const rows = await this.prisma.customer.findMany({ where: { username: { in: names }, id: { not: selfId } }, select: { id: true } });
     return rows.map((r) => r.id);
   }
 
   async deletePost(customerId: string, postId: string) {
+    await this.assertEnabled();
     const p = await this.prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
     if (!p) throw new NotFoundException('Post not found');
     if (p.authorId !== customerId) throw new ForbiddenException('You can only delete your own posts');
@@ -139,6 +151,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getPost(postId: string, viewerId?: string) {
+    await this.assertEnabled();
     const p = await this.prisma.post.findUnique({ where: { id: postId }, include: postInclude });
     if (!p || p.isHidden) throw new NotFoundException('Post not found');
     return (await this.present([p], viewerId))[0];
@@ -146,6 +159,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
 
   /** FOLLOWING: posts of the people I follow, newest first. EXPLORE: the most liked and commented lately. */
   async feed(viewerId: string | undefined, tab: 'FOLLOWING' | 'EXPLORE', page = 1, pageSize = 20) {
+    await this.assertEnabled();
     const take = Math.min(Math.max(pageSize, 1), 50);
     const skip = (Math.max(page, 1) - 1) * take;
     let rows: PostRow[];
@@ -170,6 +184,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async userPosts(username: string, viewerId?: string, page = 1) {
+    await this.assertEnabled();
     const author = await this.byUsername(username);
     const rows = await this.prisma.post.findMany({ where: { authorId: author.id, isHidden: false }, include: postInclude, orderBy: { createdAt: 'desc' }, skip: (page - 1) * 30, take: 30 });
     return this.present(rows, viewerId);
@@ -224,6 +239,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async like(customerId: string, postId: string) {
+    await this.assertEnabled();
     const me = await this.requireUsername(customerId);
     const post = await this.prisma.post.findUnique({ where: { id: postId }, select: { authorId: true, isHidden: true } });
     if (!post || post.isHidden) throw new NotFoundException('Post not found');
@@ -236,6 +252,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async unlike(customerId: string, postId: string) {
+    await this.assertEnabled();
     const removed = await this.prisma.postLike.deleteMany({ where: { postId, customerId } });
     if (removed.count) await this.prisma.post.update({ where: { id: postId }, data: { likeCount: { decrement: 1 } } });
     return this.counts(postId, customerId);
@@ -248,6 +265,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async comments(postId: string, page = 1) {
+    await this.assertEnabled();
     const rows = await this.prisma.postComment.findMany({ where: { postId, isHidden: false }, orderBy: { createdAt: 'asc' }, skip: (page - 1) * 50, take: 50 });
     const authors = new Map(
       (await this.prisma.customer.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.authorId))] } }, select: publicSelect })).map((c) => [c.id, publicCard(c)]),
@@ -256,6 +274,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async comment(customerId: string, postId: string, body: string) {
+    await this.assertEnabled();
     const me = await this.requireUsername(customerId);
     const text = body.trim();
     if (!text) throw new BadRequestException('اكتب التعليق');
@@ -274,6 +293,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   async deleteComment(customerId: string, commentId: string) {
+    await this.assertEnabled();
     const c = await this.prisma.postComment.findUnique({ where: { id: commentId }, include: { post: { select: { authorId: true } } } });
     if (!c) throw new NotFoundException('Comment not found');
     // The writer, or the post's author, may remove it.
@@ -345,7 +365,12 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
       select: { product: { select: { id: true, nameAr: true, slug: true, basePrice: true, images: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true } } } } },
     });
     const variants = await this.giftVariants(rows.map((r) => r.product.id));
-    return { owner: publicCard(c), items: rows.map((r) => ({ giftVariantId: variants.get(r.product.id) ?? null, productId: r.product.id, name: r.product.nameAr, slug: r.product.slug, price: r.product.basePrice, imageUrl: r.product.images[0]?.url ?? null })) };
+    // Pieces a friend is already collecting for: shown as "قيد الإهداء" so two gifts do not arrive.
+    const open = await this.prisma.groupGift.findMany({ where: { recipientId: c.id, status: 'OPEN', endsAt: { gt: new Date() } }, select: { variantId: true } });
+    const inProgress = new Set(
+      (await this.prisma.productVariant.findMany({ where: { id: { in: open.map((g) => g.variantId) } }, select: { productId: true } })).map((v) => v.productId),
+    );
+    return { owner: publicCard(c), items: rows.map((r) => ({ pendingGift: inProgress.has(r.product.id), giftVariantId: variants.get(r.product.id) ?? null, productId: r.product.id, name: r.product.nameAr, slug: r.product.slug, price: r.product.basePrice, imageUrl: r.product.images[0]?.url ?? null })) };
   }
 
   // ------------------------------------------------------------ birthdays ---
@@ -424,6 +449,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
 
   /** Every product tagged on the post into the cart (one each, the tagged size or the first in stock). */
   async shopTheLook(customerId: string, postId: string) {
+    await this.assertEnabled();
     const post = await this.prisma.post.findUnique({ where: { id: postId }, include: { tags: true } });
     if (!post || post.isHidden) throw new NotFoundException('Post not found');
     let added = 0;
@@ -469,6 +495,8 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   private async recordAmbassador(tx: Tx, orderId: string) {
     const s = await this.ambassadorSettings(tx);
     if (!s.enabled || s.percent <= 0) return;
+    const app = await tx.setting.findUnique({ where: { key: 'store.app' } });
+    if (!(app?.value as { socialEnabled?: boolean } | null)?.socialEnabled) return;
     const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { customerId: true, items: { where: { viaPostId: { not: null } }, select: { viaPostId: true, lineTotal: true } } } });
     const byPost = new Map<string, Prisma.Decimal>();
     for (const i of order.items) byPost.set(i.viaPostId!, (byPost.get(i.viaPostId!) ?? dec(0)).add(i.lineTotal));

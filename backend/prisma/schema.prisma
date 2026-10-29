@@ -389,6 +389,10 @@ model Customer {
   notes            String?
   /// Public handle (lowercase, starts with two letters), like an Instagram username.
   username         String?         @unique
+  /// The Instagram handle the customer asked to use; becomes [username] once the store checks it.
+  pendingUsername  String?         @map("pending_username")
+  /// Others may find this customer by their mobile number (exact match).
+  findableByPhone  Boolean         @default(true) @map("findable_by_phone")
   /// Profile picture (a stored public image).
   avatarUrl        String?         @map("avatar_url")
   bio              String?

@@ -75,7 +75,7 @@ import com.dejavu.customer.ui.appContainer
 import com.dejavu.customer.ui.members.VerifiedBadge
 import kotlinx.coroutines.launch
 
-private val MENTION = Regex("@([A-Za-z][A-Za-z0-9._]{1,29})")
+private val MENTION = Regex("@([A-Za-z0-9._]{1,30})")
 
 /** The gold gradient ring around the avatar of a "مُنسِّق متميز". */
 private val StylistRing = Brush.sweepGradient(listOf(Color(0xFFFFE08A), Color(0xFFB8862B), Color(0xFFFFE08A), Color(0xFFE6B84A), Color(0xFFFFE08A)))
@@ -121,7 +121,7 @@ fun Caption(text: String, openUser: (String) -> Unit, modifier: Modifier = Modif
             var last = 0
             for (m in MENTION.findAll(text)) {
                 append(text.substring(last, m.range.first))
-                withLink(LinkAnnotation.Clickable(m.groupValues[1], TextLinkStyles(SpanStyle(color = gold, fontWeight = FontWeight.Bold))) { openUser(m.groupValues[1]) }) { append(m.value) }
+                withLink(LinkAnnotation.Clickable(m.groupValues[1].trimEnd('.'), TextLinkStyles(SpanStyle(color = gold, fontWeight = FontWeight.Bold))) { openUser(m.groupValues[1].trimEnd('.')) }) { append(m.value) }
                 last = m.range.last + 1
             }
             append(text.substring(last))

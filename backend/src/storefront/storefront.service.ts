@@ -10,6 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 /** How the customer app behaves: sign-in before browsing, Google ads. */
 export interface StoreAppSettings {
   requireLogin: boolean;
+  /** The community (customers' posts, likes, comments) is shown. Usernames, wish lists and gifts work either way. */
+  socialEnabled: boolean;
   ads: {
     enabled: boolean;
     /** AdMob ad unit ids (ca-app-pub-…/…); empty = Google's test ads. */
@@ -46,6 +48,7 @@ const ABOUT_KEY = 'store.about';
 
 const APP_DEFAULTS: StoreAppSettings = {
   requireLogin: false,
+  socialEnabled: false,
   ads: { enabled: false, bannerUnitId: '', interstitialUnitId: '', homeBanner: true, productBanner: true, interstitialEvery: 0 },
 };
 
@@ -112,9 +115,9 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     return { ...APP_DEFAULTS, ...saved, ads: { ...APP_DEFAULTS.ads, ...(saved.ads ?? {}) } };
   }
 
-  async setAppSettings(dto: { requireLogin?: boolean; ads?: Partial<StoreAppSettings['ads']> }) {
+  async setAppSettings(dto: { requireLogin?: boolean; socialEnabled?: boolean; ads?: Partial<StoreAppSettings['ads']> }) {
     const current = await this.appSettings();
-    const value: StoreAppSettings = { ...current, ...(dto.requireLogin !== undefined ? { requireLogin: dto.requireLogin } : {}), ads: { ...current.ads, ...(dto.ads ?? {}) } };
+    const value: StoreAppSettings = { ...current, ...(dto.requireLogin !== undefined ? { requireLogin: dto.requireLogin } : {}), ...(dto.socialEnabled !== undefined ? { socialEnabled: dto.socialEnabled } : {}), ads: { ...current.ads, ...(dto.ads ?? {}) } };
     for (const id of [value.ads.bannerUnitId, value.ads.interstitialUnitId]) {
       if (id && !/^ca-app-pub-\d{16}\/\d{10}$/.test(id)) throw new BadRequestException('رقم الإعلان يجب أن يكون بصيغة ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX');
     }
@@ -141,6 +144,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     const c = (chat?.value ?? {}) as { enabled?: boolean; welcome?: string };
     return {
       requireLogin: app.requireLogin,
+      socialEnabled: app.socialEnabled,
       ads: app.ads,
       chat: { enabled: !!c.enabled && !!process.env.GEMINI_API_KEY, welcome: c.welcome ?? '' },
     };

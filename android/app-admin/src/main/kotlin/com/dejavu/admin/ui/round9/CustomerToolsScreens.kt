@@ -96,7 +96,7 @@ fun CartsScreen(onBack: () -> Unit, openCustomer: (String) -> Unit) {
                 if (carts.isEmpty()) {
                     EmptyList(Icons.Filled.ShoppingCart, "لا توجد سلات", "تظهر هنا المنتجات التي أضافها العملاء ولم يطلبوها بعد")
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         item {
                             val pieces = carts.sumOf { it.pieces }
                             Text("${carts.size} سلة · $pieces قطعة", style = MaterialTheme.typography.titleSmall, color = Lux.InkSoft)

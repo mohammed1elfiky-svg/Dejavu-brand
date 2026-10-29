@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -144,6 +145,7 @@ fun AccountScreen(
     groupGifts: () -> Unit = {},
     birthdays: () -> Unit = {},
     birthdayCard: () -> Unit = {},
+    findFriends: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
@@ -175,8 +177,8 @@ fun AccountScreen(
                         }
                         s.customer?.let { c ->
                             if (c.loyaltyPoints > 0) GoldBadge("نقاط الولاء: ${c.loyaltyPoints}", Modifier.padding(top = 10.dp))
-                            if (c.igStatus == "PENDING") {
-                                TextButton(onClick = profile) { Text("📷 وثّق يوزرك في انستجرام: أرسل الكود ${c.igCode.orEmpty()}", color = Liquid.GoldDeep) }
+                            if (c.igStatus == "PENDING" && c.pendingUsername != null) {
+                                TextButton(onClick = profile) { Text("📷 وثّق يوزرك @${c.pendingUsername.orEmpty()}: أرسل الكود ${c.igCode.orEmpty()}", color = Liquid.GoldDeep) }
                             }
                             if (c.isMerchant) {
                                 Row(
@@ -211,6 +213,7 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Star, "نقاطي", loyalty)
                     MenuRow(Icons.Filled.Favorite, "هداياي", gifts)
                     MenuRow(Icons.Filled.Favorite, "الهدايا الجماعية", groupGifts)
+                    MenuRow(Icons.Filled.Search, "ابحث عن صديقة (يوزر أو رقم)", findFriends)
                     MenuRow(Icons.Filled.DateRange, "أعياد ميلاد اليوم 🎂", birthdays)
                     MenuRow(Icons.Filled.Star, "بطاقة عيد ميلادي للمشاركة", birthdayCard)
                     MenuHeader("المتجر")

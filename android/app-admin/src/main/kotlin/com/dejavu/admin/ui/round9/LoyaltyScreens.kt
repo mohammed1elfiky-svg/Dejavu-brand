@@ -54,6 +54,7 @@ import com.dejavu.core.ui.formatDate
 import com.dejavu.core.ui.theme.Button
 import com.dejavu.core.ui.theme.OutlinedButton
 import com.dejavu.core.ui.theme.OutlinedTextField
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -170,9 +171,13 @@ fun SocialAdminScreen(onBack: () -> Unit) {
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectMessages(vm, snackbar)
+    val appRepo = com.dejavu.admin.ui.adminContainer().customerApp
+    var app by remember { mutableStateOf<com.dejavu.core.admin.StoreAppSettings?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    LaunchedEffect(Unit) { app = appRepo.appSettings().getOrNull() }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { BackTopBar("السفراء ومنشورات العملاء", onBack) },
+        topBar = { BackTopBar("المجتمع والسفراء", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -180,7 +185,26 @@ fun SocialAdminScreen(onBack: () -> Unit) {
                 var enabled by rememberSaveable(settings) { mutableStateOf(settings.enabled) }
                 var percent by rememberSaveable(settings) { mutableStateOf(trimNumber(settings.percent)) }
                 var kind by rememberSaveable(settings) { mutableStateOf(settings.kind) }
-                LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    item {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("إظهار «المجتمع» للعملاء", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "تبويب المنشورات والتعليقات والإعجابات. عند الإيقاف يختفي تماماً من تطبيق العملاء، ويبقى اليوزر وقائمة الأمنيات والهدايا وأعياد الميلاد.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Lux.InkSoft,
+                                    )
+                                }
+                                Switch(
+                                    checked = app?.socialEnabled == true,
+                                    enabled = app != null,
+                                    onCheckedChange = { on -> app?.let { cur -> scope.launch { appRepo.setAppSettings(cur.copy(socialEnabled = on)).onSuccess { app = it } } } },
+                                )
+                            }
+                        }
+                    }
                     item {
                         GlassCard(Modifier.fillMaxWidth()) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -1,6 +1,9 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.dejavu.core.admin
 
 import com.dejavu.core.network.apiCall
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -43,13 +46,13 @@ data class CarrierRemoved(val deleted: Boolean = false, val hidden: Boolean = fa
 /** [scope]: ALL, RETAIL, MERCHANTS or SELECTED (only customers switched on one by one). */
 @Serializable
 data class LoyaltySettings(
-    val enabled: Boolean = false,
-    val scope: String = "ALL",
-    val pointsPerSar: Double = 1.0,
-    val sarPer100Points: Double = 5.0,
+    @EncodeDefault val enabled: Boolean = false,
+    @EncodeDefault val scope: String = "ALL",
+    @EncodeDefault val pointsPerSar: Double = 1.0,
+    @EncodeDefault val sarPer100Points: Double = 5.0,
     /** Purchases count from this day (ISO). */
     val startsAt: String? = null,
-    val minRedeemPoints: Int = 100,
+    @EncodeDefault val minRedeemPoints: Int = 100,
 )
 
 @Serializable
@@ -322,7 +325,7 @@ data class HiddenRequest(val hidden: Boolean)
 
 /** Reward to a customer whose post sold something: [percent] of the sale, as POINTS or WALLET credit. */
 @Serializable
-data class AmbassadorSettings(val enabled: Boolean = true, val percent: Double = 3.0, val kind: String = "POINTS")
+data class AmbassadorSettings(@EncodeDefault val enabled: Boolean = true, @EncodeDefault val percent: Double = 3.0, @EncodeDefault val kind: String = "POINTS")
 
 // ------------------------------------------------------------------- AI ---
 

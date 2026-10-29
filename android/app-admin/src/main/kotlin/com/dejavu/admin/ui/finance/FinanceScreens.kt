@@ -1410,7 +1410,7 @@ fun CustomerDetailScreen(id: String, onBack: () -> Unit, openOrder: (String) -> 
                             Text(c.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
                             if (c.isMerchant) MerchantBadge()
                         }
-                        Text(listOfNotNull(c.code, c.phone, c.email).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        Text(listOfNotNull(c.code, c.phone, c.email, when (c.gender) { "MALE" -> "ذكر"; "FEMALE" -> "أنثى"; else -> null }).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (canEdit) {

@@ -1,6 +1,9 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.dejavu.core.admin
 
 import com.dejavu.core.model.Currency
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -307,15 +310,19 @@ data class ProductImportResult(
 
 /** GET/PUT admin/store-app */
 @Serializable
-data class StoreAppSettings(val requireLogin: Boolean = false, val ads: Ads = Ads()) {
+data class StoreAppSettings(
+    @EncodeDefault val requireLogin: Boolean = false,
+    @EncodeDefault val socialEnabled: Boolean = false,
+    @EncodeDefault val ads: Ads = Ads(),
+) {
     @Serializable
     data class Ads(
-        val enabled: Boolean = false,
-        val bannerUnitId: String = "",
-        val interstitialUnitId: String = "",
-        val homeBanner: Boolean = true,
-        val productBanner: Boolean = true,
-        val interstitialEvery: Int = 0,
+        @EncodeDefault val enabled: Boolean = false,
+        @EncodeDefault val bannerUnitId: String = "",
+        @EncodeDefault val interstitialUnitId: String = "",
+        @EncodeDefault val homeBanner: Boolean = true,
+        @EncodeDefault val productBanner: Boolean = true,
+        @EncodeDefault val interstitialEvery: Int = 0,
     )
 }
 

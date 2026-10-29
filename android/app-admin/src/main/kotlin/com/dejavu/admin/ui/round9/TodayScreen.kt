@@ -22,7 +22,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -122,3 +124,49 @@ private fun groupsOf(t: TodayTasks): List<Pair<String, List<Task>>> = listOf(
         Task("k:${it.variantId}", it.name, "${it.sku} · المتاح ${it.available} (الحد ${it.threshold})", R.STOCK)
     },
 )
+
+private val TODAY_LABELS = linkedMapOf(
+    "topUps" to "شحن أرصدة",
+    "approvals" to "موافقات التجار",
+    "toShip" to "للشحن",
+    "layaways" to "حجوزات",
+    "gifts" to "هدايا",
+    "preOrders" to "حجز مسبق",
+    "returns" to "مرتجعات",
+    "instagram" to "توثيق انستجرام",
+    "lowStock" to "نقص مخزون",
+)
+
+/** The first card of the admin home: how much is waiting today, and a tap to the list. */
+@Composable
+fun TodayCard(open: () -> Unit) {
+    val repo = com.dejavu.admin.ui.adminContainer().round9
+    var tasks by remember { mutableStateOf<TodayTasks?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    var tick by remember { mutableStateOf(0) }
+    // Reloaded each time the home comes back into view.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        tick++
+        onPauseOrDispose {}
+    }
+    androidx.compose.runtime.LaunchedEffect(tick) { repo.today().onSuccess { tasks = it; failed = false }.onFailure { failed = true } }
+    GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp, onClick = open) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("مهام اليوم", style = MaterialTheme.typography.titleMedium)
+                val t = tasks
+                when {
+                    t == null && !failed -> com.dejavu.core.ui.ShimmerLine(width = 160.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
+                    t == null -> Text("تعذّر التحميل، اضغط للمحاولة", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    t.total == 0 -> Text("لا شيء ينتظرك الآن 👌", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                    else -> Text(
+                        TODAY_LABELS.mapNotNull { (k, label) -> t.counts[k]?.takeIf { it > 0 }?.let { "$label $it" } }.take(4).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Lux.InkSoft,
+                    )
+                }
+            }
+            tasks?.takeIf { it.total > 0 }?.let { StatusChip("${it.total}", Lux.GoldDeep) }
+        }
+    }
+}

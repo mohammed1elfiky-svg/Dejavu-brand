@@ -34,12 +34,14 @@ describe('Round 9 (e2e)', () => {
   const address = async (token: string) =>
     (await http.post('/store/me/addresses', { recipient: 'عميلة', phone: '771234567', governorate: 'تعز', city: 'تعز', street: 'شارع جمال' }, token).expect(201)).body.id as string;
 
-  /** A customer with a username. */
-  const member = async (prefix: string, extra: object = {}) => {
+  /** A customer whose Instagram username the store has verified (unless [verify] is false). */
+  const member = async (prefix: string, extra: object = {}, verify = true) => {
     const phone = uniquePhone();
     const username = `${prefix}${tag}${++made}`;
-    const res = await http.post('/auth/customer/register', { name: `${prefix} عميلة`, phone, password: 'secret123', username, ...extra }).expect(201);
-    return { token: res.body.accessToken as string, id: res.body.customer.id as string, username, phone, customer: res.body.customer };
+    const res = await http.post('/auth/customer/register', { name: `${prefix} عميلة`, phone, password: 'secret123', username, gender: 'FEMALE', ...extra }).expect(201);
+    const id = res.body.customer.id as string;
+    if (verify) await http.post(`/admin/customers/${id}/instagram/verify`, { code: res.body.customer.igCode }, admin).expect(200);
+    return { token: res.body.accessToken as string, id, username, phone, customer: res.body.customer };
   };
 
   const credit = (customerId: string, amount: string, currency = 'SAR') =>
@@ -53,6 +55,7 @@ describe('Round 9 (e2e)', () => {
     http = api(app);
     admin = await staffToken(app);
     await http.put('/admin/shipping-zones', { governorate: 'تعز', fee: 20 }, admin).expect(200);
+    await http.put('/admin/store-app', { socialEnabled: true }, admin).expect(200);
     categoryId = (await http.post('/admin/categories', { nameAr: `جولة ٩ ${run}`, nameEn: `Round9 ${run}`, slug: `round9-${run}` }, admin).expect(201)).body.id;
   });
   afterAll(async () => {
@@ -152,25 +155,63 @@ describe('Round 9 (e2e)', () => {
     expect((await http.get('/store/me/wallet/statement', c.token).expect(200)).body.currencies).toHaveLength(2);
   });
 
-  it('takes Instagram-style usernames and verifies them with the code sent from Instagram', async () => {
-    await http.post('/auth/customer/register', { name: 'يوزر خطأ', phone: uniquePhone(), password: 'secret123', username: '1abc' }).expect(400);
-    const m = await member('ig', { usernameIsInstagram: true, birthDate: '1999-05-14' });
-    expect(m.customer).toMatchObject({ username: m.username, igStatus: 'PENDING' });
+  it('takes an Instagram handle as the username, shown only after the store checks the code', async () => {
+    await http.post('/auth/customer/register', { name: 'يوزر خطأ', phone: uniquePhone(), password: 'secret123', username: 'bad..name' }).expect(400);
+    // A username may start with a digit.
+    const m = await member('9ig', { birthDate: '1999-05-14' }, false);
+    expect(m.customer).toMatchObject({ username: null, pendingUsername: m.username, igStatus: 'PENDING', gender: 'FEMALE' });
     expect(m.customer.igCode).toMatch(/^\d{4}$/);
-    await http.post('/auth/customer/register', { name: 'مكرر', phone: uniquePhone(), password: 'secret123', username: m.username.toUpperCase() }).expect(409);
-    expect((await http.get(`/store/usernames/check?u=${m.username}`).expect(200)).body).toMatchObject({ available: false, reason: 'اليوزر مستخدم' });
-    expect((await http.get(`/store/usernames/check?u=${m.username}zz`).expect(200)).body.available).toBe(true);
+    // Waiting: nobody sees it, and it reserves nothing.
+    await http.get(`/store/social/users/${m.username}`).expect(404);
+    expect((await http.get(`/store/usernames/check?u=${m.username}`).expect(200)).body.available).toBe(true);
+    const rival = await member('x', { username: m.username }, false).catch(() => null);
+    expect(rival?.customer.pendingUsername).toBe(m.username);
 
-    const pending = (await http.get('/admin/instagram-verifications', admin).expect(200)).body as { id: string }[];
-    expect(pending.map((x) => x.id)).toContain(m.id);
+    const pending = (await http.get('/admin/instagram-verifications', admin).expect(200)).body as { id: string; username: string }[];
+    expect(pending.find((x) => x.id === m.id)?.username).toBe(m.username);
     await http.post(`/admin/customers/${m.id}/instagram/verify`, { code: m.customer.igCode === '0000' ? '1111' : '0000' }, admin).expect(400);
     await http.post(`/admin/customers/${m.id}/instagram/verify`, { code: m.customer.igCode }, admin).expect(200);
-    expect((await http.get('/store/me/profile', m.token).expect(200)).body.igStatus).toBe('VERIFIED');
+    const mine = (await http.get('/store/me/profile', m.token).expect(200)).body;
+    expect(mine).toMatchObject({ username: m.username, pendingUsername: null, igStatus: 'VERIFIED' });
+    await http.get(`/store/social/users/${m.username}`).expect(200);
+    // Now taken: the rival's request cannot be verified, and new sign-ups are refused.
+    await http.post('/auth/customer/register', { name: 'مكرر', phone: uniquePhone(), password: 'secret123', username: m.username.toUpperCase() }).expect(409);
+    if (rival) await http.post(`/admin/customers/${rival.id}/instagram/verify`, { code: rival.customer.igCode }, admin).expect(409);
+    expect((await http.get(`/store/usernames/check?u=${m.username}`).expect(200)).body.available).toBe(false);
 
-    // Changing the username drops the badge.
+    // Asking for another one hides the old username until the new one is checked.
     const renamed = `${m.username}x`;
     const prof = (await http.patch('/store/me/profile', { username: renamed }, m.token).expect(200)).body;
-    expect(prof).toMatchObject({ username: renamed, igStatus: 'NONE' });
+    expect(prof).toMatchObject({ username: null, pendingUsername: renamed, igStatus: 'PENDING' });
+    await http.get(`/store/social/users/${m.username}`).expect(404);
+  });
+
+  it('finds people by username or by their full number, and respects "do not find me"', async () => {
+    const seeker = await member('sk');
+    const target = await member('tg');
+    const byName = (await http.get(`/store/me/find?q=${target.username.slice(0, 5)}`, seeker.token).expect(200)).body as { id: string }[];
+    expect(byName.map((x) => x.id)).toContain(target.id);
+    const byPhone = (await http.get(`/store/me/find?q=${encodeURIComponent(target.phone)}`, seeker.token).expect(200)).body as { id: string; username: string }[];
+    expect(byPhone).toHaveLength(1);
+    expect(byPhone[0]).toMatchObject({ id: target.id, username: target.username });
+    // Part of a number finds nobody; opting out hides the number.
+    expect((await http.get(`/store/me/find?q=${target.phone.slice(0, 8)}`, seeker.token).expect(200)).body).toEqual([]);
+    await http.patch('/store/me/profile', { findableByPhone: false }, target.token).expect(200);
+    expect((await http.get(`/store/me/find?q=${encodeURIComponent(target.phone)}`, seeker.token).expect(200)).body).toEqual([]);
+  });
+
+  it('hides the community when it is switched off, keeping usernames and wishlists', async () => {
+    const a = await member('so');
+    await http.put('/admin/store-app', { socialEnabled: false }, admin).expect(200);
+    try {
+      expect((await http.get('/store/config').expect(200)).body.socialEnabled).toBe(false);
+      await http.get('/store/social/feed?tab=EXPLORE', a.token).expect(403);
+      await http.post('/store/social/posts', { images: ['https://example.com/a.jpg'] }, a.token).expect(403);
+      await http.get(`/store/social/users/${a.username}`).expect(200);
+      await http.get(`/store/social/users/${a.username}/wishlist`).expect(200);
+    } finally {
+      await http.put('/admin/store-app', { socialEnabled: true }, admin).expect(200);
+    }
   });
 
   it('blocks a customer and their number for good, and shows what people have in their carts', async () => {
@@ -323,6 +364,18 @@ describe('Round 9 (e2e)', () => {
     const p = await product('أمنية', 90, 4);
     await http.post(`/store/wishlist/${p.id}`, {}, owner.token).expect((r) => expect([200, 201]).toContain(r.status));
     const wl = (await http.get(`/store/social/users/${owner.username}/wishlist`).expect(200)).body;
-    expect(wl.items[0]).toMatchObject({ productId: p.id, giftVariantId: p.variants[0].id });
+    expect(wl.items[0]).toMatchObject({ productId: p.id, giftVariantId: p.variants[0].id, pendingGift: false });
+
+    // A friend starts collecting for it: it shows as "being gifted", and a second collection is refused.
+    const friend = await member('fr');
+    const other = await member('fo');
+    await credit(friend.id, '200');
+    const g = (await http.post('/store/group-gifts', { to: owner.username, variantId: p.variants[0].id }, friend.token).expect(201)).body;
+    expect(((await http.get(`/store/social/users/${owner.username}/wishlist`).expect(200)).body.items[0]).pendingGift).toBe(true);
+    await http.post('/store/group-gifts', { to: owner.username, variantId: p.variants[0].id }, other.token).expect(422);
+
+    // Once it is paid in full the piece leaves her wishlist.
+    await http.post(`/store/group-gifts/${g.id}/contribute`, { amount: '90' }, friend.token).expect(200);
+    expect(((await http.get(`/store/social/users/${owner.username}/wishlist`).expect(200)).body.items)).toEqual([]);
   });
 });

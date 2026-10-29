@@ -103,16 +103,14 @@ data class AuthForm(
     val otpChannel: String = "SMS",
     /** Sign-up only: optional username (Instagram style), and whether it is their Instagram account. */
     val username: String = "",
-    val usernameIsInstagram: Boolean = false,
+    /** Sign-up: required, MALE or FEMALE. */
+    val gender: String? = null,
     /** Sign-up: required, yyyy-mm-dd (friends are told on the day, and can gift). */
     val birthDate: String = "",
     val submitted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
 )
-
-/** Two English letters, then letters, digits, "." or "_" (like Instagram). */
-private val USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
 
 /** The number as the server takes it (+967…, +966…). */
 val AuthForm.full: String get() = country.full(phone)
@@ -197,8 +195,9 @@ class AuthViewModel(
         if (registering) {
             Validators.name(f.name)?.let { put("name", it) }
             if (f.birthDate.isBlank()) put("birthDate", "اختر تاريخ ميلادك")
-            if (f.username.isNotBlank() && !USERNAME.matches(f.username.trim())) {
-                put("username", "اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _")
+            if (f.gender == null) put("gender", "اختر الجنس")
+            if (f.username.isNotBlank() && !com.dejavu.core.model.UsernameRule.valid(f.username)) {
+                put("username", com.dejavu.core.model.UsernameRule.HINT)
             }
             // Only Yemeni customers pick their governorate.
             if (f.country == Country.YE) {
@@ -351,8 +350,8 @@ class AuthViewModel(
             area = f.area.takeIf { yemen },
             otpChannel = f.otpChannel,
             username = f.username.takeIf { it.isNotBlank() },
-            usernameIsInstagram = f.usernameIsInstagram,
             birthDate = f.birthDate,
+            gender = f.gender,
         )
             .onSuccess { r ->
                 val c = r.customer
@@ -467,25 +466,21 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Input("اسم المستخدم (اختياري)", form.username, errors["username"], placeholder = "مثل: sara.ali") { v ->
-                            vm.update { copy(username = v.filter { c -> !c.isWhitespace() }.take(30)) }
+                        Text("الجنس", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            androidx.compose.material3.FilterChip(selected = form.gender == "FEMALE", onClick = { vm.update { copy(gender = "FEMALE") } }, label = { Text("أنثى") })
+                            androidx.compose.material3.FilterChip(selected = form.gender == "MALE", onClick = { vm.update { copy(gender = "MALE") } }, label = { Text("ذكر") })
+                        }
+                        errors["gender"]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                        Input("يوزر انستجرام (اختياري)", form.username, errors["username"], placeholder = "مثل: sara.ali") { v ->
+                            vm.update { copy(username = v.filter { c -> !c.isWhitespace() }.take(31)) }
                         }
                         if (form.username.isNotBlank()) {
-                            Row(
-                                Modifier.fillMaxWidth().toggleable(value = form.usernameIsInstagram, role = Role.Checkbox, onValueChange = { c -> vm.update { copy(usernameIsInstagram = c) } }),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(checked = form.usernameIsInstagram, onCheckedChange = null, colors = CheckboxDefaults.colors(checkedColor = Liquid.GoldDeep))
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text("هذا يوزري في انستجرام", style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        "يصلك كود من 4 أرقام ترسله لحساب ديجافو في انستجرام، فيظهر بجانب اسمك شعار انستجرام ونجمة التوثيق. حسابك يعمل عادي حتى يتم التوثيق.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
+                            Text(
+                                "بعد إنشاء الحساب يصلك كود من 4 أرقام ترسله لحساب ديجافو في انستجرام ليتأكد فريقنا أن اليوزر لك، وعندها يظهر اليوزر بشارة التوثيق. حسابك يعمل عادي حتى ذلك الحين.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         if (form.country == Country.YE) RegionFields(vm, form, errors)
                         CodeChannel(form) { c -> vm.update { copy(otpChannel = c) } }

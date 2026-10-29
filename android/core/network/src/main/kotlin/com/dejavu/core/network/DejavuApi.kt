@@ -433,4 +433,7 @@ interface DejavuApi {
 
     @GET("store/usernames/search")
     suspend fun searchUsers(@Query("q") q: String): List<com.dejavu.core.model.Poster>
+
+    @GET("store/me/find")
+    suspend fun findPeople(@Query("q") q: String): List<com.dejavu.core.model.FoundPerson>
 }

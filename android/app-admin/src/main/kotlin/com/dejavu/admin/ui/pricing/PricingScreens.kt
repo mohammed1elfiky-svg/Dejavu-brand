@@ -303,7 +303,7 @@ fun BulkPriceScreen(onBack: () -> Unit) {
         topBar = { BackTopBar("تعديل الأسعار جماعياً", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             applied?.let { r ->
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {

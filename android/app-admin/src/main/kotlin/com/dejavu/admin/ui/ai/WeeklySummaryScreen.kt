@@ -115,7 +115,7 @@ fun WeeklySummaryScreen(onBack: () -> Unit) {
 @Composable
 private fun SummaryContent(s: WeeklySummary, regenerating: Boolean, onRegenerate: () -> Unit, modifier: Modifier) {
     val st = s.stats
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text(
                 "الفترة: ${formatDate(st.from)} – ${formatDate(st.to)}",

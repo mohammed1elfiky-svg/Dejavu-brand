@@ -77,8 +77,6 @@ class GiftViewModel(private val repo: WalletRepository) : BaseViewModel() {
     }
 }
 
-private val GIFT_USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
-
 /** "إهداء رصيد": number or username, currency, amount, a note, and the password to confirm. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -96,7 +94,7 @@ fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.
     var password by rememberSaveable { mutableStateOf("") }
     var byUsername by rememberSaveable { mutableStateOf(initialUsername != null) }
     var username by rememberSaveable { mutableStateOf(initialUsername.orEmpty()) }
-    val phoneOk = if (byUsername) GIFT_USERNAME.matches(username.trim()) else country.isValid(number)
+    val phoneOk = if (byUsername) com.dejavu.core.model.UsernameRule.valid(username) else country.isValid(number)
     val full = if (byUsername) username.trim().removePrefix("@") else country.full(number)
     LaunchedEffect(full, phoneOk) { if (phoneOk) vm.check(full) }
     val chosen = spendable.firstOrNull { it.currency.code == currencyCode }

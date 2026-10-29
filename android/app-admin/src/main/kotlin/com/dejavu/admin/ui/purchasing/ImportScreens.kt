@@ -256,7 +256,7 @@ fun SuppliersScreen(canManage: Boolean, onBack: () -> Unit, openSupplier: (Strin
                         onAction = { adding = true },
                     )
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(list, key = { it.id }) { s ->
                             GlassCard(Modifier.fillMaxWidth(), elevation = 8.dp, contentPadding = 14.dp, onClick = { openSupplier(s.id) }) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -391,7 +391,7 @@ fun SupplierScreen(
         },
     ) { padding ->
         LoadContent(state, onRetry = vm::load, modifier = Modifier.padding(padding)) { (s, pending) ->
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("${s.code}${s.phone?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
@@ -1467,7 +1467,7 @@ fun ImportReceiveScreen(id: String, onBack: () -> Unit, done: () -> Unit) {
     ) { padding ->
         LoadContent(order, onRetry = vm::load, modifier = Modifier.padding(padding)) { po ->
             val cur = po.foreignCurrency ?: "CNY"
-            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("${po.number} · ${po.supplier.name}", style = MaterialTheme.typography.titleSmall)

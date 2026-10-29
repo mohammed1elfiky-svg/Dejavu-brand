@@ -121,7 +121,10 @@ fun UserScreen(username: String, initialTab: Int, onBack: () -> Unit, openUser: 
     val wishlist by vm.wishlist.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val socialOn = appContainer().extras.config.collectAsStateWithLifecycle().value.socialEnabled
     var tab by rememberSaveable { mutableStateOf(initialTab) }
+    // With the community off only the wishes remain.
+    val shownTab = if (socialOn) tab else 1
     var people by remember { mutableStateOf<Pair<String, List<Poster>>?>(null) }
     var giftItem by remember { mutableStateOf<WishlistOf.Item?>(null) }
     val scope = rememberCoroutineScope()
@@ -165,13 +168,13 @@ fun UserScreen(username: String, initialTab: Int, onBack: () -> Unit, openUser: 
                             }
                         }
                     }
-                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (socialOn) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("المنشورات") })
                         FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("🎁 أمنياتي") })
                     }
                 }
             }
-            if (tab == 0) {
+            if (shownTab == 0) {
                 PostList(vm, signedIn, mine, openUser = { if (it != username) openUser(it) }, openProduct, login, openCart, snackbar, emptyText = "لا توجد منشورات بعد", ui = postsUi, onRefresh = vm::load, onRetry = vm::load)
             } else {
                 WishlistTab(wishlist, ownerIsMe = (profile as? Load.Ready)?.value?.isMe == true, username = username, openProduct = openProduct, onGift = { if (signedIn) giftItem = it else login() }, onRetry = vm::load, share = {
@@ -230,7 +233,11 @@ private fun WishlistTab(state: Load<WishlistOf>, ownerIsMe: Boolean, username: S
                                 Text(Money.format(it.price), style = MaterialTheme.typography.bodyMedium, color = Liquid.GoldDeep)
                             }
                             if (!ownerIsMe) {
-                                if (it.giftVariantId != null) Button(onClick = { onGift(it) }) { Text("🎁 أهدِه") } else Text("غير متوفر", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                                when {
+                                    it.pendingGift -> Text("قيد الإهداء 🎁", style = MaterialTheme.typography.labelMedium, color = Liquid.GoldDeep)
+                                    it.giftVariantId != null -> Button(onClick = { onGift(it) }) { Text("🎁 أهدِه") }
+                                    else -> Text("غير متوفر", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     }

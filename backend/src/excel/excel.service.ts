@@ -152,7 +152,7 @@ export class ExcelService {
       const customers = await this.prisma.customer.findMany({
         where: { code: { not: 'CUS-WALKIN' } },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, code: true, name: true, phone: true, governorate: true, isMerchant: true, createdAt: true, username: true, birthDate: true, status: true, loyaltyPoints: true, email: true },
+        select: { id: true, code: true, name: true, phone: true, governorate: true, isMerchant: true, createdAt: true, username: true, pendingUsername: true, gender: true, birthDate: true, status: true, loyaltyPoints: true, email: true },
       });
       const last = new Map(
         (await this.prisma.order.groupBy({ by: ['customerId'], where: { status: { not: 'CANCELLED' } }, _max: { placedAt: true } })).map((s) => [s.customerId, s._max.placedAt]),
@@ -174,6 +174,7 @@ export class ExcelService {
           { header: 'إجمالي المشتريات (ر.س)', key: 'spent', width: 18 },
           { header: 'تاريخ التسجيل', key: 'joined', width: 14 },
           { header: 'اليوزر', key: 'username', width: 16 },
+          { header: 'الجنس', key: 'gender', width: 9 },
           { header: 'تاريخ الميلاد', key: 'birth', width: 14 },
           { header: 'البريد', key: 'email', width: 20 },
           { header: 'نقاط الولاء', key: 'points', width: 12 },
@@ -190,6 +191,7 @@ export class ExcelService {
           spent: Number(spent.get(c.id)?._sum.grandTotal ?? 0),
           joined: c.createdAt.toISOString().slice(0, 10),
           username: c.username ? `@${c.username}` : '',
+          gender: c.gender === 'MALE' ? 'ذكر' : c.gender === 'FEMALE' ? 'أنثى' : '',
           birth: c.birthDate ? c.birthDate.toISOString().slice(0, 10) : '',
           email: c.email ?? '',
           points: c.loyaltyPoints,

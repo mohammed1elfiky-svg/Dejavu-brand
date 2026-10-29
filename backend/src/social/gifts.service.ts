@@ -3,7 +3,7 @@ import { CustomerStatus, DeliveryMethod, GiftSource, GiftStatus, GroupGiftStatus
 import { normalizePhone, PHONE_REGEX } from '../auth/dto/auth.dto';
 import { activePromotions, promotedPrice } from '../catalog/promotions';
 import { SequenceService } from '../common/sequence.service';
-import { isUsername, normalizeUsername } from '../common/username';
+import { isUsername, looksLikePhone, normalizeUsername } from '../common/username';
 import { dec, Decimal, money } from '../common/utils/money';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService, Tx } from '../prisma/prisma.service';
@@ -52,7 +52,7 @@ export class GiftsService implements OnModuleInit, OnModuleDestroy {
   /** A customer by mobile number or username. */
   async findCustomer(who: string) {
     const raw = who.trim();
-    const byName = /^@?[A-Za-z]/.test(raw);
+    const byName = !looksLikePhone(raw);
     if (byName ? !isUsername(raw) : !PHONE_REGEX.test(raw.replace(/[\s-]/g, ''))) throw new BadRequestException(byName ? 'اليوزر غير صحيح' : 'رقم الجوال غير صحيح');
     const c = byName
       ? await this.prisma.customer.findUnique({ where: { username: normalizeUsername(raw) } })
@@ -86,10 +86,17 @@ export class GiftsService implements OnModuleInit, OnModuleDestroy {
           createdById: userId,
         },
       });
+      await this.fulfilWishes(tx, to.id, sale.items.map((i) => i.variantId));
       await this.tellReceiver(tx, g.id, to.id, dto.giverName, dto.occasion);
       return g;
     });
     return this.get(gift.id);
+  }
+
+  /** A piece bought for someone leaves their wish list. */
+  private async fulfilWishes(tx: Tx, recipientId: string, variantIds: string[]) {
+    const products = await tx.productVariant.findMany({ where: { id: { in: variantIds } }, select: { productId: true } });
+    if (products.length) await tx.wishlistItem.deleteMany({ where: { customerId: recipientId, productId: { in: products.map((p) => p.productId) } } });
   }
 
   private async tellReceiver(tx: Tx, giftId: string, recipientId: string, from: string, occasion?: string | null) {
@@ -209,6 +216,10 @@ export class GiftsService implements OnModuleInit, OnModuleDestroy {
     if (!v || !v.isActive || v.product.status !== ProductStatus.ACTIVE) throw new NotFoundException('القطعة غير متاحة');
     const promo = (await activePromotions(this.prisma, [v.product.id])).get(v.product.id);
     const target = promotedPrice(v.price ?? v.product.basePrice, promo);
+    const sameProduct = await this.prisma.productVariant.findMany({ where: { productId: v.product.id }, select: { id: true } });
+    if (await this.prisma.groupGift.count({ where: { recipientId: to.id, status: GroupGiftStatus.OPEN, endsAt: { gt: new Date() }, variantId: { in: sameProduct.map((x) => x.id) } } })) {
+      throw new UnprocessableEntityException('هذه القطعة قيد الإهداء لصاحبتها بالفعل');
+    }
     const days = Math.min(Math.max(dto.days ?? 7, 1), 30);
     const g = await this.prisma.$transaction(async (tx) =>
       tx.groupGift.create({
@@ -355,6 +366,7 @@ export class GiftsService implements OnModuleInit, OnModuleDestroy {
       },
     });
     await tx.groupGift.update({ where: { id }, data: { status: GroupGiftStatus.FUNDED, giftId: gift.id } });
+    await this.fulfilWishes(tx, g.recipientId, [g.variantId]);
     await this.tellReceiver(tx, gift.id, g.recipientId, giverName, g.occasion);
     for (const c of contributors) {
       await this.notifications.notifyCustomer(tx, c, {

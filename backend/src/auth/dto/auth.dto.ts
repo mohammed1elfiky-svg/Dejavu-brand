@@ -1,3 +1,4 @@
+import { USERNAME_MESSAGE } from '../../common/username';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsDateString, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { GOVERNORATE_NAMES } from '../../common/yemen';
@@ -61,15 +62,21 @@ export class CustomerRegisterDto {
   @IsIn(['الحوبان', 'المدينة'])
   area?: string;
 
-  @ApiPropertyOptional({ example: 'sara.ali', description: 'Public username: two English letters first, then letters, digits, . or _' })
+  @ApiPropertyOptional({ example: 'sara.ali', description: 'The customer\'s Instagram handle. It shows only after the store checks the code they send from Instagram.' })
   @IsOptional()
-  @Matches(/^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$/, { message: 'اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _' })
+  @Matches(/^@?(?!.*\.\.)(?!.*\.$)[A-Za-z0-9._]{1,30}$/, { message: USERNAME_MESSAGE })
   username?: string;
 
-  @ApiPropertyOptional({ description: 'The username is also the customer\'s Instagram handle (verified with a code sent from Instagram)' })
+  /** Older apps sent this; every username is an Instagram handle now. */
+  @ApiPropertyOptional({ deprecated: true })
   @IsOptional()
   @IsBoolean()
   usernameIsInstagram?: boolean;
+
+  @ApiPropertyOptional({ enum: ['MALE', 'FEMALE'] })
+  @IsOptional()
+  @IsIn(['MALE', 'FEMALE'])
+  gender?: 'MALE' | 'FEMALE';
 
   @ApiPropertyOptional({ example: '1998-05-14' })
   @IsOptional()

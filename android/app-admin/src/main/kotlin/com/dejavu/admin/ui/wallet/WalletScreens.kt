@@ -310,7 +310,7 @@ fun TopUpsScreen(onBack: () -> Unit, open: (String) -> Unit, openTransfers: () -
                         )
                     }
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(list, key = { it.id }) { t -> TopUpRow(t) { open(t.id) } }
                         if (hasMore) {
                             item {

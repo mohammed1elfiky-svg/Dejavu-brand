@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Injectable, NotFoundException, Param, ParseUUIDPipe, Post, Query, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, Get, HttpCode, HttpStatus, Injectable, NotFoundException, Param, ParseUUIDPipe, Post, Query, UnprocessableEntityException } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsEnum, IsInt, IsNumberString, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
@@ -210,35 +210,41 @@ export class CustomerAdminService {
     }));
   }
 
-  /** Usernames waiting for their Instagram check, oldest first. */
-  instagramPending() {
-    return this.prisma.customer.findMany({
-      where: { igStatus: InstagramStatus.PENDING },
+  /** Instagram handles waiting for their check, oldest first. [username] is the handle asked for. */
+  async instagramPending() {
+    const rows = await this.prisma.customer.findMany({
+      where: { igStatus: InstagramStatus.PENDING, pendingUsername: { not: null } },
       orderBy: { updatedAt: 'asc' },
-      select: { id: true, code: true, name: true, phone: true, username: true, avatarUrl: true, updatedAt: true },
+      select: { id: true, code: true, name: true, phone: true, pendingUsername: true, avatarUrl: true, updatedAt: true },
     });
+    return rows.map(({ pendingUsername, ...r }) => ({ ...r, username: pendingUsername }));
   }
 
-  /** The code the customer sent by Instagram DM matches: the username shows the Instagram badge. */
+  /** The code the customer sent by Instagram DM matches: the handle becomes their username, with the badge. */
   async verifyInstagram(customerId: string, code: string, userId: string) {
-    const c = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { igStatus: true, igCode: true, username: true } });
-    if (!c || c.igStatus !== InstagramStatus.PENDING) throw new UnprocessableEntityException('لا يوجد طلب توثيق لهذا العميل');
+    const c = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { igStatus: true, igCode: true, pendingUsername: true } });
+    if (!c || c.igStatus !== InstagramStatus.PENDING || !c.pendingUsername) throw new UnprocessableEntityException('لا يوجد طلب توثيق لهذا العميل');
     if (c.igCode !== code) throw new BadRequestException('الكود غير مطابق للكود المرسل للعميل');
+    const username = c.pendingUsername;
+    // Two customers may ask for the same handle; the one whose Instagram sent the code first gets it.
+    if (await this.prisma.customer.findFirst({ where: { username, id: { not: customerId } }, select: { id: true } })) {
+      throw new ConflictException('هذا اليوزر موثّق لعميل آخر؛ ارفض الطلب ليختار العميل يوزراً آخر');
+    }
     await this.prisma.$transaction(async (tx) => {
-      await tx.customer.update({ where: { id: customerId }, data: { igStatus: InstagramStatus.VERIFIED, igCode: null, igVerifiedAt: new Date() } });
+      await tx.customer.update({ where: { id: customerId }, data: { username, pendingUsername: null, igStatus: InstagramStatus.VERIFIED, igCode: null, igVerifiedAt: new Date() } });
       await this.notifications.notifyCustomer(tx, customerId, {
         type: NotificationType.SYSTEM,
         title: 'تم توثيق يوزرك ✔️',
-        body: `أصبح @${c.username} موثقاً بشارة انستجرام في ديجافو.`,
+        body: `أصبح @${username} ظاهراً للجميع بشارة انستجرام في ديجافو.`,
         data: { screen: 'profile' },
       });
     });
-    await this.audit.log({ userId, action: 'APPROVE', entityType: 'InstagramUsername', entityId: customerId, after: { username: c.username } });
+    await this.audit.log({ userId, action: 'APPROVE', entityType: 'InstagramUsername', entityId: customerId, after: { username } });
     return { verified: true };
   }
 
   async rejectInstagram(customerId: string, userId: string) {
-    const res = await this.prisma.customer.updateMany({ where: { id: customerId, igStatus: InstagramStatus.PENDING }, data: { igStatus: InstagramStatus.NONE, igCode: null } });
+    const res = await this.prisma.customer.updateMany({ where: { id: customerId, igStatus: InstagramStatus.PENDING }, data: { igStatus: InstagramStatus.NONE, igCode: null, pendingUsername: null } });
     if (!res.count) throw new UnprocessableEntityException('لا يوجد طلب توثيق لهذا العميل');
     await this.audit.log({ userId, action: 'CANCEL', entityType: 'InstagramUsername', entityId: customerId });
     return { verified: false };

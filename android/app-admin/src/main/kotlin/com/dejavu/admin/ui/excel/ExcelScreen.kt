@@ -217,7 +217,7 @@ fun ExcelScreen(session: StaffSession.LoggedIn, onBack: () -> Unit) {
             EmptyState(Icons.Filled.Lock, "لا توجد صلاحية", "لا يملك حسابك صلاحية تصدير أو استيراد الملفات", modifier = Modifier.padding(padding))
             return@Scaffold
         }
-        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (exports.isNotEmpty()) {
                 item { Text("تصدير إلى Excel", style = MaterialTheme.typography.titleMedium, color = Lux.GoldDeep) }
                 if (exports.any { it.ranged }) {

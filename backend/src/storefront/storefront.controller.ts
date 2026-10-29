@@ -42,6 +42,11 @@ export class StoreAppSettingsDto {
   @IsBoolean()
   requireLogin?: boolean;
 
+  @ApiPropertyOptional({ description: 'Show the community (customers\' posts) in the customer app' })
+  @IsOptional()
+  @IsBoolean()
+  socialEnabled?: boolean;
+
   @ApiPropertyOptional({ type: AdsSettingsDto })
   @IsOptional()
   @ValidateNested()

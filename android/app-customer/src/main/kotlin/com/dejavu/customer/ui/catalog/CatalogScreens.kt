@@ -2,6 +2,19 @@
 
 package com.dejavu.customer.ui.catalog
 
+import androidx.paging.ExperimentalPagingApi
+import androidx.paging.LoadState
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.filter
+import androidx.paging.map
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import com.dejavu.core.ui.theme.GlassTopBar
 import com.dejavu.core.ui.theme.Liquid
 import com.dejavu.core.ui.theme.glass
@@ -155,46 +168,44 @@ data class ProductListState(
     val sort: ProductSort = ProductSort.STORE,
 )
 
+/**
+ * A product list (category, search, brand…) paged with Paging 3 over Room: saved pages show at
+ * once and offline, fresh ones come from the server as the list scrolls.
+ */
+@OptIn(ExperimentalCoroutinesApi::class, ExperimentalPagingApi::class)
 class ProductListViewModel(
     private val catalog: CatalogRepository,
+    private val db: com.dejavu.customer.data.CatalogDb,
     private val category: String?,
     private val featured: Boolean,
     initialQuery: String?,
     private val brand: String? = null,
 ) : BaseViewModel() {
+    private data class Params(val query: String?, val sort: ProductSort)
+
+    private val params = MutableStateFlow(Params(initialQuery, ProductSort.STORE))
     private val _state = MutableStateFlow(ProductListState())
     val state = _state.asStateFlow()
-    var query: String? = initialQuery
-        private set
+    val query: String? get() = params.value.query
 
-    init { reload() }
+    val products: Flow<PagingData<StoreProduct>> = params.flatMapLatest { p ->
+        val key = listOf(category, featured, brand, p.query, p.sort).joinToString("|")
+        Pager(
+            config = PagingConfig(pageSize = 20, prefetchDistance = 8, enablePlaceholders = false),
+            remoteMediator = com.dejavu.customer.data.ProductsMediator(key, db) { page ->
+                catalog.products(p.query, category, featured.takeIf { it }, p.sort, page = page, brand = brand)
+            },
+            pagingSourceFactory = { db.dao().products(key) },
+        ).flow.map { data -> data.map { it.product() }.filter { it != null }.map { it!! } }
+    }.cachedIn(viewModelScope)
 
     fun search(text: String) {
-        query = text.ifBlank { null }
-        reload()
+        params.value = params.value.copy(query = text.ifBlank { null })
     }
 
     fun sortBy(sort: ProductSort) {
         _state.value = _state.value.copy(sort = sort)
-        reload()
-    }
-
-    fun reload() {
-        _state.value = ProductListState(sort = _state.value.sort)
-        loadMore()
-    }
-
-    fun loadMore() {
-        val s = _state.value
-        if (s.loading || !s.hasMore) return
-        _state.value = s.copy(loading = true, error = null)
-        viewModelScope.launch {
-            catalog.products(query, category, featured.takeIf { it }, s.sort, page = s.page + 1, brand = brand)
-                .onSuccess { page ->
-                    _state.value = _state.value.copy(items = _state.value.items + page.items, page = page.page, hasMore = page.hasMore, loading = false)
-                }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = it.userMessage()) }
-        }
+        params.value = params.value.copy(sort = sort)
     }
 }
 
@@ -209,9 +220,10 @@ fun ProductListScreen(
     brand: String? = null,
 ) {
     val vm = appViewModel(key = "products:$category:$initialQuery:$featured:$brand") {
-        ProductListViewModel(it.catalog, category, featured, initialQuery, brand)
+        ProductListViewModel(it.catalog, it.catalogDb, category, featured, initialQuery, brand)
     }
     val state by vm.state.collectAsStateWithLifecycle()
+    val products = vm.products.collectAsLazyPagingItems()
     var query by rememberSaveable { mutableStateOf(initialQuery.orEmpty()) }
     var sortMenu by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
@@ -222,9 +234,6 @@ fun ProductListScreen(
         vm.search(text)
     }
 
-    // Load the next page when the last items scroll into view.
-    val nearEnd by remember { derivedStateOf { (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= grid.layoutInfo.totalItemsCount - 4 } }
-    LaunchedEffect(nearEnd, state.items.size) { if (nearEnd) vm.loadMore() }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -269,13 +278,20 @@ fun ProductListScreen(
                     })
                 }
             }
-            items(state.items, key = { it.id }) { p -> ProductCard(p, onClick = { openProduct(p.slug) }) }
+            items(products.itemCount, key = { i -> "$i" }) { i ->
+                products[i]?.let { p -> ProductCard(p, onClick = { openProduct(p.slug) }) }
+            }
             item(span = { GridItemSpan(2) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                    val refresh = products.loadState.refresh
+                    val append = products.loadState.append
+                    val error = (refresh as? LoadState.Error ?: append as? LoadState.Error)?.error
                     when {
-                        state.loading -> CircularProgressIndicator()
-                        state.error != null -> TextButton(onClick = vm::loadMore) { Text("${state.error}\nإعادة المحاولة") }
-                        state.items.isEmpty() -> EmptyState(Icons.Filled.Search, "لا توجد منتجات", "جرّب كلمة بحث أخرى")
+                        refresh is LoadState.Loading && products.itemCount == 0 -> CircularProgressIndicator()
+                        append is LoadState.Loading -> CircularProgressIndicator()
+                        error != null && products.itemCount == 0 -> TextButton(onClick = products::retry) { Text("${error.userMessage()}\nإعادة المحاولة") }
+                        error != null -> TextButton(onClick = products::retry) { Text("أنت تتصفح بدون اتصال · إعادة المحاولة") }
+                        products.itemCount == 0 && refresh is LoadState.NotLoading -> EmptyState(Icons.Filled.Search, "لا توجد منتجات", "جرّب كلمة بحث أخرى")
                     }
                 }
             }

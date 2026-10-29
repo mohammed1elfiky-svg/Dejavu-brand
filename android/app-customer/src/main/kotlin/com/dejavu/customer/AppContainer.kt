@@ -41,6 +41,8 @@ class AppContainer(private val context: Context) {
 
     /** The last home page and categories, for an instant start. */
     val offline = OfflineCache(context)
+    /** Product lists kept on the phone (offline-first, paged). */
+    val catalogDb by lazy { com.dejavu.customer.data.CatalogDb.open(context) }
 
     /** Moves the app to another server address when this one cannot be reached. */
     val failover = ServerFailover(
@@ -312,6 +314,7 @@ class AppContainer(private val context: Context) {
         pushToken?.let { notifications.unregisterDevice(it) }
         session.logout()
         offline.clear()
+        catalogDb.forget()
     }
 
     companion object {

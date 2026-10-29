@@ -273,6 +273,11 @@ data class AdminOrderDetail(
     /** A merchant's order on credit waiting for the owner: approve, change quantities or reject. */
     val needsApproval: Boolean = false,
     val approvedAt: String? = null,
+    /** HOME, OFFICE (a carrier office the customer picks it up from) or PICKUP (from the store). */
+    val deliveryMethod: String = "HOME",
+    /** The shipping company the customer chose. */
+    val carrier: OrderCarrier? = null,
+    val carrierOffice: Carrier.Office? = null,
 ) {
     val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
 

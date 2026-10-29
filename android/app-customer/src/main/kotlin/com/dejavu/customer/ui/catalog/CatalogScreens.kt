@@ -188,7 +188,7 @@ class ProductListViewModel(
     val state = _state.asStateFlow()
     val query: String? get() = params.value.query
 
-    val products: Flow<PagingData<StoreProduct>> = params.flatMapLatest { p ->
+    val products: Flow<PagingData<StoreProduct>> = params.flatMapLatest<Params, PagingData<StoreProduct>> { p ->
         val key = listOf(category, featured, brand, p.query, p.sort).joinToString("|")
         Pager(
             config = PagingConfig(pageSize = 20, prefetchDistance = 8, enablePlaceholders = false),
@@ -196,7 +196,9 @@ class ProductListViewModel(
                 catalog.products(p.query, category, featured.takeIf { it }, p.sort, page = page, brand = brand)
             },
             pagingSourceFactory = { db.dao().products(key) },
-        ).flow.map { data -> data.map { it.product() }.filter { it != null }.map { it!! } }
+        ).flow.map { data: PagingData<com.dejavu.customer.data.CachedProduct> ->
+            data.filter { it.product() != null }.map { cached: com.dejavu.customer.data.CachedProduct -> cached.product()!! }
+        }
     }.cachedIn(viewModelScope)
 
     fun search(text: String) {

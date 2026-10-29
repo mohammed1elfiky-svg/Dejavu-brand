@@ -292,6 +292,7 @@ class OrderRepository(private val api: DejavuApi, private val cart: CartReposito
             .onSuccess { cart.refresh() }
 
     suspend fun orders(page: Int = 1): Result<Page<OrderSummary>> = apiCall { api.orders(page) }
+    suspend fun markReceived(number: String): Result<OrderDetail> = apiCall { api.orderReceived(number) }
     suspend fun order(number: String): Result<OrderDetail> = apiCall { api.order(number) }
     suspend fun cancel(number: String, reason: String): Result<OrderDetail> = apiCall { api.cancelOrder(number, ReasonRequest(reason)) }
 
@@ -385,6 +386,9 @@ class WalletRepository(private val api: DejavuApi) {
         apiCall { api.sendGift(com.dejavu.core.model.GiftRequest(phone.filterNot { it.isWhitespace() }, currency.code, amount.trim(), password, note?.trim()?.ifBlank { null })) }
 
     suspend fun bankAccounts(): Result<List<StoreBankAccount>> = apiCall { api.bankAccounts() }
+
+    /** One wallet movement in detail (the items of a purchase, how a top-up was paid…). */
+    suspend fun entry(id: String) = apiCall { api.walletEntry(id) }
 
     suspend fun topUps(): Result<List<TopUp>> = apiCall { api.topUps() }
 
@@ -566,4 +570,29 @@ class MembersRepository(private val api: DejavuApi) {
     suspend fun startGroupGift(request: com.dejavu.core.model.StartGroupGiftRequest) = apiCall { api.startGroupGift(request) }
     suspend fun contribute(id: String, amount: String, message: String?) = apiCall { api.contribute(id, com.dejavu.core.model.ContributeRequest(amount, message?.ifBlank { null })) }
     suspend fun cancelGroupGift(id: String) = apiCall { api.cancelGroupGift(id) }
+}
+
+/** The social side: feed, posts, likes, comments, follows, birthdays and friends' wish lists. */
+class SocialRepository(private val api: DejavuApi) {
+    suspend fun feed(tab: String, page: Int = 1) = apiCall { api.feed(tab, page) }
+    suspend fun post(id: String) = apiCall { api.post(id) }
+    suspend fun createPost(request: com.dejavu.core.model.NewPostRequest) = apiCall { api.createPost(request) }
+    suspend fun deletePost(id: String) = apiCall { api.deletePost(id).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+
+    suspend fun like(id: String, on: Boolean) = apiCall { if (on) api.like(id) else api.unlike(id) }
+    suspend fun comments(id: String) = apiCall { api.comments(id) }
+    suspend fun comment(id: String, body: String) = apiCall { api.addComment(id, com.dejavu.core.model.CommentRequest(body.trim())) }
+    suspend fun deleteComment(id: String) = apiCall { api.deleteComment(id).let { if (!it.isSuccessful) throw retrofit2.HttpException(it) } }
+    suspend fun shopTheLook(id: String) = apiCall { api.shopTheLook(id) }
+
+    suspend fun profile(username: String) = apiCall { api.socialProfile(username.removePrefix("@")) }
+    suspend fun posts(username: String) = apiCall { api.userPosts(username.removePrefix("@")) }
+    suspend fun followers(username: String) = apiCall { api.followers(username.removePrefix("@")) }
+    suspend fun following(username: String) = apiCall { api.following(username.removePrefix("@")) }
+    suspend fun wishlistOf(username: String) = apiCall { api.wishlistOf(username.removePrefix("@")) }
+    suspend fun follow(username: String, on: Boolean) = apiCall { if (on) api.follow(username.removePrefix("@")) else api.unfollow(username.removePrefix("@")) }
+
+    suspend fun birthdaysToday() = apiCall { api.birthdaysToday() }
+    suspend fun rewards() = apiCall { api.myRewards() }
+    suspend fun searchUsers(q: String) = apiCall { api.searchUsers(q.trim().removePrefix("@")) }
 }

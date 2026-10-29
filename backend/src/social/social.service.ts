@@ -180,6 +180,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
     const liked = viewerId && ids.length ? new Set((await this.prisma.postLike.findMany({ where: { customerId: viewerId, postId: { in: ids } }, select: { postId: true } })).map((l) => l.postId)) : new Set<string>();
     const stylists = await this.stylists([...new Set(rows.map((r) => r.authorId))]);
     const mentionIds = [...new Set(rows.flatMap((r) => r.mentions.map((m) => m.customerId)))];
+    const giftVariants = await this.giftVariants([...new Set(rows.flatMap((r) => r.tags.map((t) => t.productId)))]);
     const mentionNames = new Map((await this.prisma.customer.findMany({ where: { id: { in: mentionIds } }, select: { id: true, username: true } })).map((c) => [c.id, c.username]));
     return rows.map((r) => ({
       id: r.id,
@@ -196,6 +197,7 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
         id: t.id,
         productId: t.productId,
         variantId: t.variantId,
+        giftVariantId: t.variantId ?? giftVariants.get(t.productId) ?? null,
         imageIndex: t.imageIndex,
         x: t.x,
         y: t.y,
@@ -342,7 +344,8 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
       orderBy: { createdAt: 'desc' },
       select: { product: { select: { id: true, nameAr: true, slug: true, basePrice: true, images: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true } } } } },
     });
-    return { owner: publicCard(c), items: rows.map((r) => ({ productId: r.product.id, name: r.product.nameAr, slug: r.product.slug, price: r.product.basePrice, imageUrl: r.product.images[0]?.url ?? null })) };
+    const variants = await this.giftVariants(rows.map((r) => r.product.id));
+    return { owner: publicCard(c), items: rows.map((r) => ({ giftVariantId: variants.get(r.product.id) ?? null, productId: r.product.id, name: r.product.nameAr, slug: r.product.slug, price: r.product.basePrice, imageUrl: r.product.images[0]?.url ?? null })) };
   }
 
   // ------------------------------------------------------------ birthdays ---
@@ -405,6 +408,19 @@ export class SocialService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ------------------------------------------------------- shop the look ---
+
+  /** For each product, the size to gift: the first one in stock (so "gift this" needs no choice). */
+  private async giftVariants(productIds: string[]) {
+    const out = new Map<string, string>();
+    if (!productIds.length) return out;
+    const rows = await this.prisma.productVariant.findMany({
+      where: { productId: { in: productIds }, isActive: true, stockLevels: { some: { onHand: { gt: 0 } } } },
+      orderBy: { sku: 'asc' },
+      select: { id: true, productId: true },
+    });
+    for (const r of rows) if (!out.has(r.productId)) out.set(r.productId, r.id);
+    return out;
+  }
 
   /** Every product tagged on the post into the cart (one each, the tagged size or the first in stock). */
   async shopTheLook(customerId: string, postId: string) {

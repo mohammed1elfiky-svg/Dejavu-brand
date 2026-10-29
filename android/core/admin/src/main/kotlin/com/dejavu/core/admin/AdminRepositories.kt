@@ -168,8 +168,13 @@ class AdminOrderRepository(private val api: AdminApi) {
         api.shippingReceipt(id, MultipartBody.Part.createFormData("file", "receipt.jpg", bytes.toRequestBody(mimeType.toMediaType())))
     }
 
-    suspend fun changeStatus(id: String, status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null) =
-        apiCall { api.changeStatus(id, ChangeStatusRequest(status, note?.ifBlank { null }, carrier?.ifBlank { null }, tracking?.ifBlank { null })) }
+    suspend fun changeStatus(id: String, status: OrderStatus, note: String? = null, carrier: String? = null, tracking: String? = null, photoUrls: List<String>? = null) =
+        apiCall { api.changeStatus(id, ChangeStatusRequest(status, note?.ifBlank { null }, carrier?.ifBlank { null }, tracking?.ifBlank { null }, photoUrls?.takeIf { it.isNotEmpty() })) }
+
+    /** Uploads a photo anyone with the link can see (e.g. of a packed order) and returns its address. */
+    suspend fun uploadPhoto(bytes: ByteArray, mimeType: String = "image/jpeg") = apiCall {
+        api.uploadImage(MultipartBody.Part.createFormData("file", "order.jpg", bytes.toRequestBody(mimeType.toMediaType()))).url
+    }
 
     /** [amount] is in [currency]: SAR, or the order's own currency at its locked rate. */
     suspend fun recordPayment(

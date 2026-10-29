@@ -453,6 +453,9 @@ data class Shipment(
     val status: String,
     val shippedAt: String? = null,
     val deliveredAt: String? = null,
+    /** The carrier's receipt photo and photos of the packed order, taken when it was shipped. */
+    val receiptImageUrl: String? = null,
+    val photoUrls: List<String> = emptyList(),
 )
 
 @Serializable
@@ -510,6 +513,9 @@ data class OrderDetail(
     val awaitingApproval: Boolean get() = needsApproval && approvedAt == null && status == OrderStatus.PENDING
 
     val canCancel: Boolean get() = status == OrderStatus.PENDING || status == OrderStatus.CONFIRMED
+
+    /** Shipped and not yet confirmed by the customer: shows "استلمت الطلب". */
+    val canMarkReceived: Boolean get() = status == OrderStatus.SHIPPED
 
     /** Card orders can be paid (or the payment retried) online until fully paid. */
     val canPayByCard: Boolean

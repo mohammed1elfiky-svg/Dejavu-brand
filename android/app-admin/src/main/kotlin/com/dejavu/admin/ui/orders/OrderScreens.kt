@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -91,6 +92,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -429,7 +431,7 @@ class OrderDetailViewModel(
         }
 
     /** Hands the order to the carrier; a receipt photo taken in the dialog is sent right after. */
-    fun ship(carrier: String, tracking: String, receipt: ByteArray?) =
+    fun ship(carrier: String, tracking: String, receipt: ByteArray?, photos: List<ByteArray>) =
         act("تم: ${OrderStatus.SHIPPED.label}", then = { o ->
             if (receipt != null) {
                 sendShippingReceipt(receipt)
@@ -437,7 +439,13 @@ class OrderDetailViewModel(
                 _suggestReceipt.value = true
             }
         }) {
-            repo.changeStatus(id, OrderStatus.SHIPPED, null, carrier, tracking)
+            // Photos of the packed order go up first; the customer sees them on the order.
+            val urls = photos.mapNotNull { repo.uploadPhoto(it).getOrNull() }
+            if (photos.isNotEmpty() && urls.isEmpty()) {
+                Result.failure(IllegalStateException("تعذّر رفع صور الطلب، تحقق من الاتصال وحاول مرة أخرى"))
+            } else {
+                repo.changeStatus(id, OrderStatus.SHIPPED, null, carrier, tracking, urls)
+            }
         }
 
     fun approve() = act("تمت الموافقة على طلب التاجر وتسجيله على حسابه") { repo.approve(id) }
@@ -709,7 +717,7 @@ fun OrderDetailScreen(id: String, session: StaffSession.LoggedIn, onBack: () -> 
 
             when (val d = dialog) {
                 is OrderDialog.Confirm -> ConfirmDialog(d.status.actionLabel, "${o.number} · ${o.customer.name}", "تأكيد", { dialog = null }) { vm.changeStatus(d.status) }
-                OrderDialog.Ship -> ShipDialog(o, onDismiss = { dialog = null }) { carrier, tracking, receipt -> vm.ship(carrier, tracking, receipt) }
+                OrderDialog.Ship -> ShipDialog(o, onDismiss = { dialog = null }) { carrier, tracking, receipt, photos -> vm.ship(carrier, tracking, receipt, photos) }
                 OrderDialog.Cancel -> TextDialog("إلغاء الطلب", "سبب الإلغاء", "إلغاء الطلب", { dialog = null }) { vm.changeStatus(OrderStatus.CANCELLED, note = it) }
                 OrderDialog.Refuse -> TextDialog(
                     "رفض العميل الاستلام",
@@ -872,7 +880,7 @@ private fun PhotoZoomDialog(image: ImageBitmap, onDismiss: () -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (carrier: String, tracking: String, receipt: ByteArray?) -> Unit) {
+private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (carrier: String, tracking: String, receipt: ByteArray?, photos: List<ByteArray>) -> Unit) {
     val repo = adminContainer().round9
     var carriers by remember { mutableStateOf<List<com.dejavu.core.admin.Carrier>>(emptyList()) }
     LaunchedEffect(Unit) { carriers = repo.carriers().getOrNull().orEmpty().filter { it.isActive } }
@@ -880,6 +888,10 @@ private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (
     var tracking by rememberSaveable { mutableStateOf("") }
     var receipt by remember { mutableStateOf<ByteArray?>(null) }
     val picker = rememberImagePicker { bytes -> receipt = bytes }
+    // The packed order itself: a photo or several, so the customer sees it left ready.
+    val photos = remember { androidx.compose.runtime.mutableStateListOf<ByteArray>() }
+    val photoCamera = rememberImagePicker { bytes -> if (photos.size < 5) photos.add(bytes) }
+    val photoGallery = com.dejavu.core.ui.media.rememberMultiImagePicker(maxCount = { 5 - photos.size }) { list -> photos.addAll(list) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("تسليم لشركة الشحن") },
@@ -902,10 +914,27 @@ private fun ShipDialog(order: AdminOrderDetail, onDismiss: () -> Unit, onShip: (
                     OutlinedButton(onClick = picker.fromGallery) { Text("من المعرض") }
                     if (receipt != null) Text("✓ أُرفقت", color = Success)
                 }
-                if (order.isAppOrder) Text("تُرسل صورة السند للعميل ويراها في تفاصيل طلبه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
+                Text("صورة الطلب جاهزاً", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = photoCamera.fromCamera, enabled = photos.size < 5) { Text("📷 تصوير") }
+                    OutlinedButton(onClick = photoGallery.open, enabled = photos.size < 5) { Text("من المعرض") }
+                    if (photos.isNotEmpty()) Text("✓ ${photos.size}", color = Success)
+                }
+                if (photos.isNotEmpty()) {
+                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        itemsIndexed(photos.toList()) { i, bytes ->
+                            Box {
+                                val bmp = remember(bytes) { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 120, (120f * b.height / b.width).toInt().coerceAtLeast(1), true).asImageBitmap() } }
+                                bmp?.let { androidx.compose.foundation.Image(it, null, Modifier.size(64.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+                                Text("✕", Modifier.align(Alignment.TopEnd).clickable { photos.removeAt(i) }.padding(4.dp), color = Color.White)
+                            }
+                        }
+                    }
+                }
+                if (order.isAppOrder) Text("يرى العميل صور الطلب وسند الشحن في تفاصيل طلبه.", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
             }
         },
-        confirmButton = { TextButton(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim(), receipt) }, enabled = carrier.isNotBlank()) { Text("شحن") } },
+        confirmButton = { TextButton(onClick = { onDismiss(); onShip(carrier.trim(), tracking.trim(), receipt, photos.toList()) }, enabled = carrier.isNotBlank()) { Text("شحن") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("تراجع") } },
     )
 }

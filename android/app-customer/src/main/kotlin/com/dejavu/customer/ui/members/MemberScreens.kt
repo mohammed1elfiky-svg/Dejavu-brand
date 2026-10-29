@@ -217,15 +217,7 @@ fun ProfileScreen(onBack: () -> Unit) {
                                 }
                             }
                             OutlinedTextField(value = bio, onValueChange = { bio = it.take(160) }, label = { Text("نبذة (اختياري)") }, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(
-                                value = birth,
-                                onValueChange = { birth = it.filter { c -> c.isDigit() || c == '-' }.take(10) },
-                                label = { Text("تاريخ الميلاد (yyyy-mm-dd)") },
-                                isError = birthError,
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                            com.dejavu.customer.ui.components.BirthDateField(value = birth, onChange = { birth = it }, error = null, modifier = Modifier.fillMaxWidth())
                         }
                     }
                     Button(

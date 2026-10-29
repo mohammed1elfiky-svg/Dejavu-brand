@@ -335,6 +335,36 @@ class ProductFormViewModel(
         }
     }
 
+    /**
+     * New product from several photos at once: each photo is one colour. The first fills the name,
+     * description and category; every photo's colour is read, added to the colours and tied to
+     * that photo, so the customer app shows the right picture when a colour is chosen.
+     */
+    fun draftFromPhotos(photos: List<ByteArray>) {
+        if (_drafting.value || photos.isEmpty()) return
+        _drafting.value = true
+        viewModelScope.launch {
+            var filled = false
+            var aiProblem: String? = null
+            for (bytes in photos) {
+                val file = repo.uploadImage(bytes).orSay() ?: continue
+                val draft = offerRepo.productDraft(file.id).getOrElse { e -> aiProblem = aiError(e); null }
+                val color = draft?.color?.trim()?.takeIf { it.isNotEmpty() }
+                edit { f ->
+                    var next = f
+                    if (next.images.size < MAX_IMAGES && next.images.none { it.url == file.url }) next = next.copy(images = next.images + ImageUrl(file.url, color))
+                    if (draft != null && !filled) next = next.fillFrom(draft)
+                    if (color != null && color !in VariantPlanner.split(next.colors)) next = next.copy(colors = (VariantPlanner.split(next.colors) + color).joinToString("، "))
+                    next
+                }
+                if (draft != null) filled = true
+            }
+            if (VariantPlanner.split(_form.value.sizes).isNotEmpty()) generate()
+            say(aiProblem ?: "أُضيفت الصور وألوانها. راجع البيانات، وأدخل المقاسات ثم «توليد» لإنشاء كل الأصناف")
+            _drafting.value = false
+        }
+    }
+
     /** The stored-file id of the first photo uploaded here ("…/files/<id>"); null for other links. */
     fun firstPhotoFileId(f: ProductForm): String? =
         f.images.firstOrNull()?.url?.let { FILE_ID.find(it)?.groupValues?.get(1) }
@@ -547,6 +577,7 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
     val drafting by vm.drafting.collectAsStateWithLifecycle()
     var choosingDraftPhoto by remember { mutableStateOf(false) }
     val draftPicker = rememberImagePicker { bytes -> vm.draftFromPhoto(bytes) }
+    val draftMulti = com.dejavu.core.ui.media.rememberMultiImagePicker(maxCount = { MAX_IMAGES - form.images.size }) { vm.draftFromPhotos(it) }
     val snackbar = remember { SnackbarHostState() }
     var scanRow by rememberSaveable { mutableStateOf(-1) }
     var managingCategories by rememberSaveable { mutableStateOf(false) }
@@ -696,12 +727,17 @@ fun ProductFormScreen(productId: String?, onBack: () -> Unit, saved: (String) ->
                                 enabled = !drafting && !busy,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("✨ تعبئة من صورة") }
+                            OutlinedButton(
+                                onClick = draftMulti.open,
+                                enabled = !drafting && !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("✨ عدة صور: كل صورة لون") }
                             if (drafting) {
                                 LinearProgressIndicator(Modifier.fillMaxWidth())
                                 Text("يحلّل الذكاء الاصطناعي الصورة…", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
                             } else {
                                 Text(
-                                    "صوّر المنتج ليقترح الاسم والوصف والقسم والماركة، وتُضاف الصورة لصور المنتج",
+                                    "صوّر المنتج ليقترح الاسم والوصف والقسم والماركة. ولعدة ألوان: اختر صورة لكل لون فتُقرأ الألوان وتُضاف كلها",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Lux.InkSoft,
                                 )

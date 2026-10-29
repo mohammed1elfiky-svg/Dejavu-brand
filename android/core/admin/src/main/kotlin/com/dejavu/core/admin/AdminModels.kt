@@ -182,6 +182,8 @@ data class AdminShipment(
     val shippedAt: String? = null,
     val deliveredAt: String? = null,
     val settlementId: String? = null,
+    val receiptImageUrl: String? = null,
+    val photoUrls: List<String> = emptyList(),
 )
 
 @Serializable
@@ -314,7 +316,14 @@ data class AdminOrderDetail(
 }
 
 @Serializable
-data class ChangeStatusRequest(val status: OrderStatus, val note: String? = null, val carrier: String? = null, val trackingNumber: String? = null)
+data class ChangeStatusRequest(
+    val status: OrderStatus,
+    val note: String? = null,
+    val carrier: String? = null,
+    val trackingNumber: String? = null,
+    /** SHIPPED: photos of the packed order (public addresses from admin/files). */
+    val photoUrls: List<String>? = null,
+)
 
 @Serializable
 data class PaymentRequest(

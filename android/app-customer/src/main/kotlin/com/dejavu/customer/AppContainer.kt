@@ -143,6 +143,7 @@ class AppContainer(private val context: Context) {
     /** App settings from the owner, wish list, suggestions, assistant, gift cards, analytics. */
     val extras = StoreExtrasRepository(api)
     val members = com.dejavu.core.data.MembersRepository(api)
+    val social = com.dejavu.core.data.SocialRepository(api)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

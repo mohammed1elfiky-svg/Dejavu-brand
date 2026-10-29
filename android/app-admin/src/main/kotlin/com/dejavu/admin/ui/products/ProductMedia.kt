@@ -103,6 +103,8 @@ fun ProductGallery(
     modifier: Modifier = Modifier,
 ) {
     val picker = rememberImagePicker { bytes -> onPicked(bytes) }
+    // Several photos at once, from a gallery that remembers where it was left.
+    val multi = com.dejavu.core.ui.media.rememberMultiImagePicker(maxCount = { MAX_IMAGES - images.size }) { list -> list.forEach(onPicked) }
     var tagging by remember { mutableStateOf<Int?>(null) }
     val full = images.size >= MAX_IMAGES
 
@@ -147,7 +149,7 @@ fun ProductGallery(
             Text("جارٍ رفع الصورة…", style = MaterialTheme.typography.bodySmall, color = Lux.InkSoft)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = picker.fromGallery, enabled = !full && !uploading, modifier = Modifier.weight(1f)) { Text("من المعرض") }
+            OutlinedButton(onClick = multi.open, enabled = !full && !uploading, modifier = Modifier.weight(1f)) { Text("من المعرض (عدة صور)") }
             OutlinedButton(onClick = picker.fromCamera, enabled = !full && !uploading, modifier = Modifier.weight(1f)) { Text("الكاميرا") }
         }
         if (full) Text("وصلت للحد الأقصى ($MAX_IMAGES صور)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)

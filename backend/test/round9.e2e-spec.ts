@@ -300,4 +300,29 @@ describe('Round 9 (e2e)', () => {
     expect(saved).toMatchObject({ prompt: 'اكتب الاسم بأسلوب فخم', isDefault: false });
     expect((await http.put('/admin/ai/product-prompt', { prompt: '' }, admin).expect(200)).body.prompt).toBe(def.defaultPrompt);
   });
+
+  it('explains each wallet movement: the pieces of a purchase, how a top-up was paid', async () => {
+    const p = await product('تفاصيل حركة', 70, 5);
+    const c = await customerToken(app, 'تفاصيل');
+    await credit(c.customerId, '30');
+    await http.post('/admin/pos/sales', { items: [{ variantId: p.variants[0].id, quantity: 3 }], customerId: c.customerId, saleType: 'CREDIT' }, admin).expect(201);
+    const entries = (await http.get('/store/me/wallet', c.token).expect(200)).body.entries as { id: string; sourceType: string }[];
+    const sale = entries.find((e) => e.sourceType === 'CUSTOMER_PAYMENT')!;
+    const detail = (await http.get(`/store/me/wallet/entries/${sale.id}`, c.token).expect(200)).body;
+    expect(detail.kind).toBe('ORDER');
+    expect(detail.order.items[0]).toMatchObject({ quantity: 3 });
+    // Someone else's movement is not visible.
+    const other = await customerToken(app, 'غريب');
+    await http.get(`/store/me/wallet/entries/${sale.id}`, other.token).expect(404);
+    const opening = entries.find((e) => e.sourceType === 'OPENING_BALANCE')!;
+    expect((await http.get(`/store/me/wallet/entries/${opening.id}`, c.token).expect(200)).body.kind).toBe('OTHER');
+  });
+
+  it('gives the wishlist and tagged products a size to gift', async () => {
+    const owner = await member('wl');
+    const p = await product('أمنية', 90, 4);
+    await http.post(`/store/wishlist/${p.id}`, {}, owner.token).expect((r) => expect([200, 201]).toContain(r.status));
+    const wl = (await http.get(`/store/social/users/${owner.username}/wishlist`).expect(200)).body;
+    expect(wl.items[0]).toMatchObject({ productId: p.id, giftVariantId: p.variants[0].id });
+  });
 });

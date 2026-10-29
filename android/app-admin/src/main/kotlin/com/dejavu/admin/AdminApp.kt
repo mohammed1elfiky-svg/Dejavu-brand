@@ -3,7 +3,7 @@ package com.dejavu.admin
 import android.app.Application
 import com.dejavu.admin.ui.sms.SmsGateway
 
-class AdminApp : Application() {
+class AdminApp : Application(), coil3.SingletonImageLoader.Factory {
     lateinit var container: AdminContainer
         private set
 
@@ -17,4 +17,8 @@ class AdminApp : Application() {
         // Daily automatic backup switched on: keep its work scheduled.
         com.dejavu.admin.ui.system.AutoBackup.restoreSchedule(this)
     }
+
+    /** Strong memory + disk cache for pictures, shared with the customer app's setup. */
+    override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
+        com.dejavu.core.ui.dejavuImageLoader(context) { okhttp3.OkHttpClient() }
 }

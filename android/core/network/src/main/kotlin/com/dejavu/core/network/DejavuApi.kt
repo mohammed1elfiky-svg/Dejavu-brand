@@ -324,6 +324,12 @@ interface DejavuApi {
     suspend fun redeemGiftCard(@Body body: com.dejavu.core.model.GiftCardRedeemRequest): com.dejavu.core.model.GiftCardRedeemed
 
     // ---- round 9 ----
+    @POST("store/orders/{number}/received")
+    suspend fun orderReceived(@Path("number") number: String): OrderDetail
+
+    @GET("store/me/wallet/entries/{id}")
+    suspend fun walletEntry(@Path("id") id: String): com.dejavu.core.model.WalletEntryDetail
+
     @GET("store/carriers")
     suspend fun carriers(): List<com.dejavu.core.model.StoreCarrier>
 
@@ -366,4 +372,65 @@ interface DejavuApi {
 
     @POST("store/group-gifts/{id}/cancel")
     suspend fun cancelGroupGift(@Path("id") id: String): com.dejavu.core.model.GroupGift
+
+    // ---- social ----
+    @GET("store/social/feed")
+    suspend fun feed(@Query("tab") tab: String, @Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 20): com.dejavu.core.model.PostPage
+
+    @GET("store/social/posts/{id}")
+    suspend fun post(@Path("id") id: String): com.dejavu.core.model.Post
+
+    @POST("store/social/posts")
+    suspend fun createPost(@Body body: com.dejavu.core.model.NewPostRequest): com.dejavu.core.model.Post
+
+    @DELETE("store/social/posts/{id}")
+    suspend fun deletePost(@Path("id") id: String): Response<Unit>
+
+    @POST("store/social/posts/{id}/like")
+    suspend fun like(@Path("id") id: String): com.dejavu.core.model.PostCounts
+
+    @DELETE("store/social/posts/{id}/like")
+    suspend fun unlike(@Path("id") id: String): com.dejavu.core.model.PostCounts
+
+    @GET("store/social/posts/{id}/comments")
+    suspend fun comments(@Path("id") id: String): List<com.dejavu.core.model.Comment>
+
+    @POST("store/social/posts/{id}/comments")
+    suspend fun addComment(@Path("id") id: String, @Body body: com.dejavu.core.model.CommentRequest): com.dejavu.core.model.Comment
+
+    @DELETE("store/social/comments/{id}")
+    suspend fun deleteComment(@Path("id") id: String): Response<Unit>
+
+    @POST("store/social/posts/{id}/shop")
+    suspend fun shopTheLook(@Path("id") id: String): com.dejavu.core.model.ShopResult
+
+    @GET("store/social/users/{username}")
+    suspend fun socialProfile(@Path("username") username: String): com.dejavu.core.model.SocialProfile
+
+    @GET("store/social/users/{username}/posts")
+    suspend fun userPosts(@Path("username") username: String): List<com.dejavu.core.model.Post>
+
+    @GET("store/social/users/{username}/followers")
+    suspend fun followers(@Path("username") username: String): List<com.dejavu.core.model.Poster>
+
+    @GET("store/social/users/{username}/following")
+    suspend fun following(@Path("username") username: String): List<com.dejavu.core.model.Poster>
+
+    @GET("store/social/users/{username}/wishlist")
+    suspend fun wishlistOf(@Path("username") username: String): com.dejavu.core.model.WishlistOf
+
+    @POST("store/social/users/{username}/follow")
+    suspend fun follow(@Path("username") username: String): com.dejavu.core.model.SocialProfile
+
+    @DELETE("store/social/users/{username}/follow")
+    suspend fun unfollow(@Path("username") username: String): com.dejavu.core.model.SocialProfile
+
+    @GET("store/social/birthdays/today")
+    suspend fun birthdaysToday(): List<com.dejavu.core.model.Poster>
+
+    @GET("store/social/me/rewards")
+    suspend fun myRewards(): com.dejavu.core.model.MyRewards
+
+    @GET("store/usernames/search")
+    suspend fun searchUsers(@Query("q") q: String): List<com.dejavu.core.model.Poster>
 }

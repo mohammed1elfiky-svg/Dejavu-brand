@@ -293,6 +293,12 @@ export class StoreWalletController {
     return this.accounts.wallet(u.id);
   }
 
+  /** One movement in detail: the items of a purchase, how a top-up was paid… */
+  @Get('entries/:id')
+  entry(@CurrentUser() u: AuthPrincipal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.accounts.entryDetail(u.id, id);
+  }
+
   /** Every movement per currency with its invoice number, to look each one up. */
   @Get('statement')
   statement(@CurrentUser() u: AuthPrincipal) {

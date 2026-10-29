@@ -180,6 +180,45 @@ export class CustomerAccountsService {
     };
   }
 
+  /**
+   * What one wallet movement was, for the customer: the pieces and count of a purchase, how a
+   * top-up was paid, what came back in a return, or the reservation.
+   */
+  async entryDetail(customerId: string, entryId: string) {
+    const e = await this.prisma.customerAccountEntry.findFirst({ where: { id: entryId, customerId } });
+    if (!e) throw new NotFoundException('Movement not found');
+    const base = { id: e.id, sourceType: e.sourceType, currency: e.currency, amount: dec(e.amount).neg(), createdAt: e.createdAt, note: e.note, title: STATEMENT_LABELS[e.sourceType] ?? walletNote(e.sourceType) };
+    const orderSelect = {
+      id: true, number: true, status: true, paymentMethod: true, subtotal: true, discountTotal: true, shippingFee: true, grandTotal: true, currency: true, placedAt: true,
+      items: { select: { productName: true, size: true, color: true, quantity: true, unitPrice: true, lineTotal: true } },
+    } as const;
+    const id = e.sourceId;
+    if (!id) return { ...base, kind: 'OTHER' as const };
+    const order = await this.prisma.order.findFirst({ where: { id, customerId }, select: orderSelect });
+    if (order) return { ...base, kind: 'ORDER' as const, order };
+    const payment = await this.prisma.payment.findFirst({ where: { id, order: { customerId } }, select: { number: true, method: true, order: { select: orderSelect } } });
+    if (payment) return { ...base, kind: 'ORDER' as const, paymentNumber: payment.number, paymentMethod: payment.method, order: payment.order };
+    const topUp = await this.prisma.walletTopUp.findFirst({
+      where: { id, customerId },
+      select: { number: true, status: true, amount: true, currency: true, reference: true, createdAt: true, bankAccount: { select: { bankName: true, accountName: true } } },
+    });
+    if (topUp) return { ...base, kind: 'TOP_UP' as const, topUp: { ...topUp, bankName: topUp.bankAccount?.bankName ?? null, bankAccount: undefined } };
+    const ret = await this.prisma.salesReturn.findFirst({
+      where: { id, customerId },
+      select: { number: true, status: true, refundAmount: true, order: { select: { number: true } }, items: { select: { quantity: true, refundAmount: true, orderItem: { select: { productName: true, size: true, color: true } } } } },
+    });
+    if (ret) {
+      return {
+        ...base,
+        kind: 'RETURN' as const,
+        return: { number: ret.number, status: ret.status, refundAmount: ret.refundAmount, orderNumber: ret.order.number, items: ret.items.map((i) => ({ productName: i.orderItem.productName, size: i.orderItem.size, color: i.orderItem.color, quantity: i.quantity, lineTotal: i.refundAmount })) },
+      };
+    }
+    const lay = await this.prisma.layaway.findFirst({ where: { id, customerId }, select: { number: true, status: true, total: true, items: true } });
+    if (lay) return { ...base, kind: 'LAYAWAY' as const, layaway: lay };
+    return { ...base, kind: 'OTHER' as const };
+  }
+
   /** Customer's wallet: spendable balances and recent movements. */
   async wallet(customerId: string) {
     const [balances, recent, buyer] = await Promise.all([

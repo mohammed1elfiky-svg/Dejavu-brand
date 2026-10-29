@@ -200,6 +200,22 @@ class OrderDetailViewModel(private val number: String, private val orders: Order
         }
     }
 
+    private val _receiving = MutableStateFlow(false)
+    val receiving = _receiving.asStateFlow()
+
+    /** "استلمت الطلب": the order is delivered and the store is told. */
+    fun received() {
+        if (_receiving.value) return
+        _receiving.value = true
+        viewModelScope.launch {
+            orders.markReceived(number).orSay()?.let {
+                _state.value = Load.Ready(it)
+                say("شكراً! سعيدون بخدمتك 💛")
+            }
+            _receiving.value = false
+        }
+    }
+
     fun cancel(reason: String) {
         _cancelling.value = true
         viewModelScope.launch {
@@ -218,6 +234,7 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
     val state by vm.state.collectAsStateWithLifecycle()
     val cancelling by vm.cancelling.collectAsStateWithLifecycle()
     val paying by vm.paying.collectAsStateWithLifecycle()
+    val receiving by vm.receiving.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var askCancel by rememberSaveable { mutableStateOf(false) }
     CollectMessages(vm, snackbar)
@@ -264,6 +281,32 @@ fun OrderDetailScreen(number: String, justPlaced: Boolean, onBack: () -> Unit, o
                         GlassCard(Modifier.fillMaxWidth()) {
                             Text("الشحن مع ${s.carrier}", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
                             s.trackingNumber?.let { Text("رقم التتبع: $it", style = MaterialTheme.typography.bodyMedium) }
+                            // Photos of the packed order, taken when it was handed to the carrier.
+                            val photos = listOfNotNull(s.receiptImageUrl) + s.photoUrls
+                            if (photos.isNotEmpty()) {
+                                Text("صور طلبك قبل الشحن", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                                    items(photos) { url ->
+                                        coil3.compose.AsyncImage(
+                                            model = url,
+                                            contentDescription = null,
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (order.canMarkReceived) {
+                    item {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Text("هل وصلك الطلب؟", style = MaterialTheme.typography.titleSmall, color = Liquid.GoldDeep)
+                            Text("اضغط الزر عند استلام طلبك لنُغلقه ونُضيف نقاطك.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Button(onClick = vm::received, enabled = !receiving, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                                Text(if (receiving) "…" else "استلمت الطلب ✓")
+                            }
                         }
                     }
                 }

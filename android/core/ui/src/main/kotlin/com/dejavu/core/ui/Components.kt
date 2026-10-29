@@ -116,8 +116,8 @@ fun EmptyState(
 @Composable
 fun <T> LoadContent(state: Load<T>, onRetry: () -> Unit, modifier: Modifier = Modifier, content: @Composable (T) -> Unit) {
     when (state) {
-        Load.Loading -> LoadingBox(modifier)
-        is Load.Failed -> ErrorBox(state.message, onRetry, modifier)
+        Load.Loading -> ShimmerList(modifier = modifier)
+        is Load.Failed -> if (isOfflineMessage(state.message)) OfflineState(onRetry, modifier) else ErrorBox(state.message, onRetry, modifier)
         is Load.Ready -> content(state.value)
     }
 }

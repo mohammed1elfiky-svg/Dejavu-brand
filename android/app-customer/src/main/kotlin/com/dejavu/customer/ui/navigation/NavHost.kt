@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
@@ -97,6 +98,12 @@ object Routes {
     const val ABOUT = "about"
     const val WISHLIST = "wishlist"
     const val PRE_ORDERS = "pre-orders"
+    const val FEED = "feed"
+    const val USER = "user/{username}?tab={tab}"
+    const val POST = "post/{id}"
+    const val NEW_POST = "new-post"
+    const val BIRTHDAYS = "birthdays"
+    const val BIRTHDAY_CARD = "birthday-card"
     const val PROFILE = "profile"
     const val LOYALTY = "loyalty"
     const val GIFTS = "gifts"
@@ -111,6 +118,8 @@ object Routes {
     fun products(title: String, category: String? = null, query: String? = null, featured: Boolean = false, brand: String? = null) =
         "products?title=${enc(title)}&category=${enc(category)}&q=${enc(query)}&featured=$featured&brand=${enc(brand)}"
     fun product(slug: String) = "product/${enc(slug)}"
+    fun user(username: String, tab: Int = 0) = "user/${enc(username)}?tab=$tab"
+    fun post(id: String) = "post/${enc(id)}"
     fun productReviews(slug: String) = "product/${enc(slug)}/reviews"
     fun order(number: String, placed: Boolean = false) = "order/${enc(number)}?placed=$placed"
     fun addressForm(id: String? = null) = "address?id=${enc(id)}"
@@ -127,6 +136,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab(Routes.HOME, "الرئيسية", Icons.Filled.Home),
     Tab(Routes.CATEGORIES, "الأقسام", Icons.Filled.Menu),
+    Tab(Routes.FEED, "المجتمع", Icons.Filled.Face),
     Tab(Routes.CART, "السلة", Icons.Filled.ShoppingCart),
     Tab(Routes.ORDERS, "طلباتي", Icons.AutoMirrored.Filled.List),
     Tab(Routes.ACCOUNT, "حسابي", Icons.Filled.Person),
@@ -355,7 +365,62 @@ fun DejavuNavHost() {
                     loyalty = { nav.navigate(Routes.LOYALTY) },
                     gifts = { nav.navigate(Routes.GIFTS) },
                     groupGifts = { nav.navigate(Routes.GROUP_GIFTS) },
+                    birthdays = { nav.navigate(Routes.BIRTHDAYS) },
+                    birthdayCard = { nav.navigate(Routes.BIRTHDAY_CARD) },
                 )
+            }
+            page(Routes.FEED) {
+                com.dejavu.customer.ui.social.FeedScreen(
+                    openUser = { nav.navigate(Routes.user(it)) },
+                    openProduct = { nav.navigate(Routes.product(it)) },
+                    newPost = { nav.navigate(Routes.NEW_POST) },
+                    birthdays = { nav.navigate(Routes.BIRTHDAYS) },
+                    login = { nav.navigate(Routes.LOGIN) },
+                    openCart = { nav.switchTab(Routes.CART) },
+                )
+            }
+            page(
+                Routes.USER,
+                arguments = listOf(navArgument("username") { type = NavType.StringType }, navArgument("tab") { type = NavType.IntType; defaultValue = 0 }),
+            ) { entry ->
+                com.dejavu.customer.ui.social.UserScreen(
+                    username = entry.arguments?.getString("username").orEmpty(),
+                    initialTab = entry.arguments?.getInt("tab") ?: 0,
+                    onBack = { nav.popBackStack() },
+                    openUser = { nav.navigate(Routes.user(it)) },
+                    openProduct = { nav.navigate(Routes.product(it)) },
+                    login = { nav.navigate(Routes.LOGIN) },
+                    openCart = { nav.switchTab(Routes.CART) },
+                    editProfile = { nav.navigate(Routes.PROFILE) },
+                    birthdayCard = { nav.navigate(Routes.BIRTHDAY_CARD) },
+                )
+            }
+            page(Routes.POST) { entry ->
+                com.dejavu.customer.ui.social.PostScreen(
+                    id = entry.arguments?.getString("id").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    openUser = { nav.navigate(Routes.user(it)) },
+                    openProduct = { nav.navigate(Routes.product(it)) },
+                    login = { nav.navigate(Routes.LOGIN) },
+                    openCart = { nav.switchTab(Routes.CART) },
+                )
+            }
+            page(Routes.NEW_POST) {
+                com.dejavu.customer.ui.social.CreatePostScreen(
+                    onBack = { nav.popBackStack() },
+                    posted = { id -> nav.navigate(Routes.post(id)) { popUpTo(Routes.NEW_POST) { inclusive = true } } },
+                    editProfile = { nav.navigate(Routes.PROFILE) },
+                )
+            }
+            page(Routes.BIRTHDAYS) {
+                com.dejavu.customer.ui.social.BirthdaysScreen(
+                    onBack = { nav.popBackStack() },
+                    openUser = { name, tab -> nav.navigate(Routes.user(name, tab)) },
+                    login = { nav.navigate(Routes.LOGIN) },
+                )
+            }
+            page(Routes.BIRTHDAY_CARD) {
+                com.dejavu.customer.ui.social.BirthdayCardScreen(onBack = { nav.popBackStack() }, openMyPage = { nav.navigate(Routes.user(it, tab = 1)) })
             }
             page(Routes.PROFILE) { com.dejavu.customer.ui.members.ProfileScreen(onBack = { nav.popBackStack() }) }
             page(Routes.LOYALTY) { com.dejavu.customer.ui.members.LoyaltyScreen(onBack = { nav.popBackStack() }) }
@@ -404,15 +469,19 @@ fun DejavuNavHost() {
                     openCart = { nav.switchTab(Routes.CART) },
                     openReviews = { nav.navigate(Routes.productReviews(it)) },
                     openCategory = { container.requestCategory(it) },
-                    openScreen = { screen ->
-                        nav.navigate(
-                            when (screen) {
-                                "gifts" -> Routes.GIFTS
-                                "group-gift" -> Routes.GROUP_GIFTS
-                                "loyalty" -> Routes.LOYALTY
-                                else -> Routes.PROFILE
-                            },
-                        )
+                    openScreen = { screen, data ->
+                        val me = (session as? SessionState.LoggedIn)?.customer?.username
+                        val target = when (screen) {
+                            "gifts" -> Routes.GIFTS
+                            "group-gift" -> Routes.GROUP_GIFTS
+                            "loyalty" -> Routes.LOYALTY
+                            "post" -> data["post"]?.let(Routes::post) ?: Routes.FEED
+                            "user" -> data["username"]?.let { Routes.user(it) } ?: Routes.FEED
+                            // My own birthday: the card to share. A friend's: their wishes, to gift.
+                            "birthday" -> data["username"]?.takeIf { it != me }?.let { Routes.user(it, tab = 1) } ?: Routes.BIRTHDAY_CARD
+                            else -> Routes.PROFILE
+                        }
+                        nav.navigate(target)
                     },
                 )
             }

@@ -281,6 +281,7 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
     val redeeming by vm.redeeming.collectAsStateWithLifecycle()
     var giftCard by rememberSaveable { mutableStateOf(false) }
     var giving by rememberSaveable { mutableStateOf(false) }
+    var openEntry by rememberSaveable { mutableStateOf<String?>(null) }
     val state by vm.state.collectAsStateWithLifecycle()
     val editing by vm.editing.collectAsStateWithLifecycle()
     val editReceipt by vm.editReceipt.collectAsStateWithLifecycle()
@@ -356,11 +357,13 @@ fun WalletScreen(onBack: () -> Unit, topUp: () -> Unit) {
                         )
                     }
                 } else {
-                    items(data.wallet.entries, key = { "e" + it.id }) { e -> EntryRow(e) }
+                    items(data.wallet.entries, key = { "e" + it.id }) { e -> EntryRow(e, onClick = { openEntry = e.id }) }
                 }
             }
         }
     }
+
+    openEntry?.let { id -> EntryDetailSheet(id, onDismiss = { openEntry = null }) }
 
     editing?.let { e ->
         EditTopUpDialog(
@@ -615,9 +618,9 @@ private fun TopUpRow(t: TopUp, onEdit: () -> Unit, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun EntryRow(e: WalletEntry) {
+private fun EntryRow(e: WalletEntry, onClick: () -> Unit) {
     val amount = Money.parse(e.amount)
-    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), elevation = 8.dp, contentPadding = 14.dp) {
+    GlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), elevation = 8.dp, contentPadding = 14.dp, onClick = onClick) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(e.note, style = MaterialTheme.typography.bodyMedium)

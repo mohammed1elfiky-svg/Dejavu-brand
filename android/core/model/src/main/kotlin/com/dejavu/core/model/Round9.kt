@@ -161,3 +161,148 @@ data class ContributeRequest(val amount: String, val message: String? = null)
 
 @Serializable
 data class Contributed(val funded: Boolean = false, val groupGift: GroupGift)
+
+// ------------------------------------------------------- wallet details ---
+
+/** GET store/me/wallet/entries/{id}. [kind]: ORDER, TOP_UP, RETURN, LAYAWAY or OTHER. [amount]: + money in, − out. */
+@Serializable
+data class WalletEntryDetail(
+    val id: String,
+    val kind: String,
+    val sourceType: String = "",
+    val title: String = "",
+    val currency: String = "SAR",
+    val amount: String = "0",
+    val createdAt: String,
+    val note: String? = null,
+    val order: Order? = null,
+    val paymentNumber: String? = null,
+    val paymentMethod: String? = null,
+    val topUp: TopUpInfo? = null,
+    @kotlinx.serialization.SerialName("return") val returnInfo: ReturnInfo? = null,
+    val layaway: LayawayInfo? = null,
+) {
+    @Serializable
+    data class Line(val productName: String = "", val size: String? = null, val color: String? = null, val quantity: Int = 1, val unitPrice: String? = null, val lineTotal: String = "0")
+
+    @Serializable
+    data class Order(
+        val id: String,
+        val number: String,
+        val status: String = "",
+        val paymentMethod: String = "",
+        val subtotal: String = "0",
+        val discountTotal: String = "0",
+        val shippingFee: String = "0",
+        val grandTotal: String = "0",
+        val currency: String = "SAR",
+        val placedAt: String? = null,
+        val items: List<Line> = emptyList(),
+    )
+
+    @Serializable
+    data class TopUpInfo(val number: String, val status: String = "", val amount: String = "0", val currency: String = "SAR", val reference: String? = null, val bankName: String? = null, val createdAt: String? = null)
+
+    @Serializable
+    data class ReturnInfo(val number: String, val status: String = "", val refundAmount: String = "0", val orderNumber: String = "", val items: List<Line> = emptyList())
+
+    @Serializable
+    data class LayawayInfo(val number: String, val status: String = "", val total: String = "0")
+}
+
+// ---------------------------------------------------------------- social ---
+
+/** A customer on the social side. [stylist]: the "مُنسِّق متميز" badge. */
+@Serializable
+data class Poster(
+    val id: String,
+    val username: String? = null,
+    val name: String = "",
+    val avatarUrl: String? = null,
+    val bio: String? = null,
+    val instagramVerified: Boolean = false,
+    val stylist: Boolean = false,
+    /** Birthday list only: I follow them. */
+    val isFollowing: Boolean = false,
+)
+
+/** A product pinned on a photo: [x] / [y] are 0..1 from the left / top of image [imageIndex]. */
+@Serializable
+data class PostTag(
+    val id: String = "",
+    val productId: String,
+    val variantId: String? = null,
+    /** The size to gift/add: the tagged one, or the first in stock. */
+    val giftVariantId: String? = null,
+    val imageIndex: Int = 0,
+    val x: Double? = null,
+    val y: Double? = null,
+    val name: String = "",
+    val slug: String = "",
+    val price: String = "0",
+    val imageUrl: String? = null,
+    val available: Boolean = true,
+)
+
+/** [kind]: LOOK (a styled outfit) or WISHLIST ("my birthday wishes"). */
+@Serializable
+data class Post(
+    val id: String,
+    val kind: String = "LOOK",
+    val caption: String? = null,
+    val images: List<String> = emptyList(),
+    val likeCount: Int = 0,
+    val commentCount: Int = 0,
+    val createdAt: String,
+    val liked: Boolean = false,
+    val author: Poster,
+    val mentions: List<String> = emptyList(),
+    val tags: List<PostTag> = emptyList(),
+)
+
+@Serializable
+data class PostPage(val items: List<Post> = emptyList(), val page: Int = 1, val pageSize: Int = 20, val hasMore: Boolean = false)
+
+@Serializable
+data class PostCounts(val likeCount: Int = 0, val commentCount: Int = 0, val liked: Boolean = false)
+
+@Serializable
+data class Comment(val id: String, val body: String, val createdAt: String, val author: Poster? = null)
+
+@Serializable
+data class CommentRequest(val body: String)
+
+@Serializable
+data class NewPostTag(val productId: String, val variantId: String? = null, val imageIndex: Int = 0, val x: Double? = null, val y: Double? = null)
+
+@Serializable
+data class NewPostRequest(val kind: String = "LOOK", val caption: String? = null, val images: List<String>, val tags: List<NewPostTag> = emptyList())
+
+@Serializable
+data class SocialProfile(
+    val id: String,
+    val username: String? = null,
+    val name: String = "",
+    val avatarUrl: String? = null,
+    val bio: String? = null,
+    val instagramVerified: Boolean = false,
+    val stylist: Boolean = false,
+    /** MM-DD, when the customer set one. */
+    val birthday: String? = null,
+    val counts: MyProfile.Counts = MyProfile.Counts(),
+    val isFollowing: Boolean = false,
+    val isMe: Boolean = false,
+)
+
+@Serializable
+data class WishlistOf(val owner: Poster, val items: List<Item> = emptyList()) {
+    @Serializable
+    data class Item(val productId: String, val name: String = "", val slug: String = "", val price: String = "0", val imageUrl: String? = null, val giftVariantId: String? = null)
+}
+
+@Serializable
+data class ShopResult(val added: Int = 0, val skipped: List<String> = emptyList())
+
+/** Ambassador rewards from my posts: [paid] and [pending] in SAR. */
+@Serializable
+data class MyRewards(val paid: String = "0", val pending: String = "0")

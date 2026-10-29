@@ -289,7 +289,10 @@ fun ProductListScreen(
                     val append = products.loadState.append
                     val error = (refresh as? LoadState.Error ?: append as? LoadState.Error)?.error
                     when {
-                        refresh is LoadState.Loading && products.itemCount == 0 -> CircularProgressIndicator()
+                        refresh is LoadState.Loading && products.itemCount == 0 -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            com.dejavu.core.ui.ShimmerCard(Modifier.weight(1f))
+                            com.dejavu.core.ui.ShimmerCard(Modifier.weight(1f))
+                        }
                         append is LoadState.Loading -> CircularProgressIndicator()
                         error != null && products.itemCount == 0 -> TextButton(onClick = products::retry) { Text("${error.userMessage()}\nإعادة المحاولة") }
                         error != null -> TextButton(onClick = products::retry) { Text("أنت تتصفح بدون اتصال · إعادة المحاولة") }

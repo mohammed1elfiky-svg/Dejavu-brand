@@ -142,6 +142,8 @@ fun AccountScreen(
     loyalty: () -> Unit = {},
     gifts: () -> Unit = {},
     groupGifts: () -> Unit = {},
+    birthdays: () -> Unit = {},
+    birthdayCard: () -> Unit = {},
 ) {
     val container = appContainer()
     val session by container.session.state.collectAsStateWithLifecycle()
@@ -209,6 +211,8 @@ fun AccountScreen(
                     MenuRow(Icons.Filled.Star, "نقاطي", loyalty)
                     MenuRow(Icons.Filled.Favorite, "هداياي", gifts)
                     MenuRow(Icons.Filled.Favorite, "الهدايا الجماعية", groupGifts)
+                    MenuRow(Icons.Filled.DateRange, "أعياد ميلاد اليوم 🎂", birthdays)
+                    MenuRow(Icons.Filled.Star, "بطاقة عيد ميلادي للمشاركة", birthdayCard)
                     MenuHeader("المتجر")
                     if (config.chat.enabled) MenuRow(Icons.Filled.Face, "مساعد التسوق", chat)
                     MenuRow(Icons.Filled.Info, "عن المتجر", about)

@@ -104,6 +104,8 @@ data class AuthForm(
     /** Sign-up only: optional username (Instagram style), and whether it is their Instagram account. */
     val username: String = "",
     val usernameIsInstagram: Boolean = false,
+    /** Sign-up: required, yyyy-mm-dd (friends are told on the day, and can gift). */
+    val birthDate: String = "",
     val submitted: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
@@ -194,6 +196,7 @@ class AuthViewModel(
         Validators.password(f.password)?.let { put("password", it) }
         if (registering) {
             Validators.name(f.name)?.let { put("name", it) }
+            if (f.birthDate.isBlank()) put("birthDate", "اختر تاريخ ميلادك")
             if (f.username.isNotBlank() && !USERNAME.matches(f.username.trim())) {
                 put("username", "اليوزر يبدأ بحرفين إنجليزيين ثم حروف أو أرقام أو . أو _")
             }
@@ -349,6 +352,7 @@ class AuthViewModel(
             otpChannel = f.otpChannel,
             username = f.username.takeIf { it.isNotBlank() },
             usernameIsInstagram = f.usernameIsInstagram,
+            birthDate = f.birthDate,
         )
             .onSuccess { r ->
                 val c = r.customer
@@ -452,6 +456,17 @@ private fun AuthScreen(registering: Boolean, onBack: () -> Unit, done: () -> Uni
                     PhoneField(form.country, form.phone, errors["phone"], onCountry = { c -> vm.update { copy(country = c) } }, onNumber = { v -> vm.update { copy(phone = v) } })
                     Input("كلمة المرور", form.password, errors["password"], KeyboardType.Password, password = true) { v -> vm.update { copy(password = v) } }
                     if (registering) {
+                        com.dejavu.customer.ui.components.BirthDateField(
+                            value = form.birthDate,
+                            onChange = { v -> vm.update { copy(birthDate = v) } },
+                            error = errors["birthDate"],
+                            label = "تاريخ الميلاد (إلزامي)",
+                        )
+                        Text(
+                            "يعرف أصدقاؤك بعيد ميلادك ويهدونك، ويصلك تهنئة من ديجافو.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Input("اسم المستخدم (اختياري)", form.username, errors["username"], placeholder = "مثل: sara.ali") { v ->
                             vm.update { copy(username = v.filter { c -> !c.isWhitespace() }.take(30)) }
                         }

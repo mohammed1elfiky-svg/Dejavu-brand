@@ -82,7 +82,7 @@ private val GIFT_USERNAME = Regex("^@?[A-Za-z]{2}[A-Za-z0-9._]{1,28}$")
 /** "إهداء رصيد": number or username, currency, amount, a note, and the password to confirm. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.material3.SnackbarHostState, onSent: () -> Unit, onDismiss: () -> Unit) {
+fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.material3.SnackbarHostState, onSent: () -> Unit, onDismiss: () -> Unit, initialUsername: String? = null) {
     val vm = appViewModel { GiftViewModel(it.wallet) }
     val recipient by vm.recipient.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -94,8 +94,8 @@ fun GiftBalanceDialog(balances: List<WalletBalance>, snackbar: androidx.compose.
     var amount by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    var byUsername by rememberSaveable { mutableStateOf(false) }
-    var username by rememberSaveable { mutableStateOf("") }
+    var byUsername by rememberSaveable { mutableStateOf(initialUsername != null) }
+    var username by rememberSaveable { mutableStateOf(initialUsername.orEmpty()) }
     val phoneOk = if (byUsername) GIFT_USERNAME.matches(username.trim()) else country.isValid(number)
     val full = if (byUsername) username.trim().removePrefix("@") else country.full(number)
     LaunchedEffect(full, phoneOk) { if (phoneOk) vm.check(full) }

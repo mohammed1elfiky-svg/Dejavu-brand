@@ -21,7 +21,7 @@ fun dejavuImageLoader(context: Context, callFactory: () -> Call.Factory): ImageL
         .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.25).build() }
         .diskCache {
             DiskCache.Builder()
-                .directory(context.cacheDir.resolve("images"))
+                .directory(okio.Path.Companion.run { context.cacheDir.resolve("images").absolutePath.toPath() })
                 .maxSizeBytes(300L * 1024 * 1024)
                 .build()
         }
